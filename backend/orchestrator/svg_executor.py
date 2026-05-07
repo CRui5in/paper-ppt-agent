@@ -154,24 +154,73 @@ def _estimate_capacity(width: int, height: int, font_size: int = 16) -> int:
     return max_lines * chars_per_line
 
 
+# Width presets for common layout scenarios (content area = 1200×520)
+_LAYOUT_WIDTHS = {
+    "full": 1200,          # full-width body text
+    "half_left": 560,      # left column in two-column
+    "half_right": 560,     # right column in two-column
+    "card": 480,           # card content area
+    "card_narrow": 380,    # narrow card (3-column)
+}
+
+# Regex to identify structural elements in manuscript Markdown
+_HEADING_RE = re.compile(r"^(#{1,3})\s+(.+)$", re.MULTILINE)
+_BULLET_RE = re.compile(r"^[\s]*[-*•]\s+(.+)$", re.MULTILINE)
+
+
 def _char_budget_block(manuscript_page: str) -> str:
-    """Return a density warning if the page content seems too large."""
-    est_chars = len(manuscript_page.strip())
-    capacity = _estimate_capacity(
+    """Return a per-element character budget guide for the page.
+
+    Instead of a single whole-page estimate, this analyses the manuscript
+    structure (headings, bullets, paragraphs) and tells the LLM how many
+    characters fit per line for each common layout scenario.
+    """
+    text = manuscript_page.strip()
+    est_chars = len(text)
+
+    # Whole-page capacity for density warning
+    total_capacity = _estimate_capacity(
         _DEFAULT_CONTENT_AREA["width"],
         _DEFAULT_CONTENT_AREA["height"],
     )
-    ratio = est_chars / capacity if capacity else 0
+    ratio = est_chars / total_capacity if total_capacity else 0
+
+    # Per-layout character-per-line estimates at common font sizes
+    lines = []
+    lines.append("## Character Budget Per Line")
+    lines.append("Use these limits to decide when to wrap text. "
+                 "Do NOT wrap prematurely when >40% of line width is unused.")
+    lines.append("")
+    lines.append("| Layout | Width | font 16 cpl | font 18 cpl | font 22 cpl |")
+    lines.append("|--------|-------|-------------|-------------|-------------|")
+    for name, w in _LAYOUT_WIDTHS.items():
+        cpl16 = int(w / (16 * 0.75))
+        cpl18 = int(w / (18 * 0.75))
+        cpl22 = int(w / (22 * 0.75))
+        lines.append(f"| {name} | {w}px | {cpl16} | {cpl18} | {cpl22} |")
+
+    # Count structural elements for a concrete hint
+    headings = _HEADING_RE.findall(text)
+    bullets = _BULLET_RE.findall(text)
+    if headings or bullets:
+        lines.append("")
+        lines.append(f"Page structure: {len(headings)} heading(s), "
+                     f"{len(bullets)} bullet(s), ~{est_chars} total chars.")
+
+    # Density warning
     if ratio > 0.8:
-        return (
-            f"**Content density warning**: ~{est_chars} chars estimated, "
-            f"capacity ~{capacity}. Consider splitting across multiple slides "
-            "or condensing the text."
+        lines.append("")
+        lines.append(
+            f"⚠ **Density warning**: ~{est_chars} chars / ~{total_capacity} capacity "
+            f"({ratio:.0%}). Consider splitting across multiple slides or condensing."
         )
-    return (
-        f"**Content density**: ~{est_chars} chars / ~{capacity} capacity "
-        f"({ratio:.0%})."
-    )
+    else:
+        lines.append("")
+        lines.append(
+            f"Density: ~{est_chars} chars / ~{total_capacity} capacity ({ratio:.0%})."
+        )
+
+    return "\n".join(lines)
 
 
 def _figure_layout_guidance(used_figures: list[dict]) -> str:
