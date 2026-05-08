@@ -5,6 +5,7 @@ Ties together: parsing → research → strategist → SVG executor → finalize
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import datetime
@@ -12,11 +13,14 @@ from pathlib import Path
 from typing import Literal
 
 from backend.config import settings
+from backend.api.schemas import ResearchConfig
 from backend.generator.svg_critic import CriticReport
 from backend.usage.tracker import reset_usage_context, set_usage_context
 
 from .manuscript import count_manuscript_pages
 from . import research_agent, strategist_agent, svg_executor
+from .research_agent import ResearchContext
+from .research_enrichment import enrich_context
 
 
 @dataclass
@@ -28,6 +32,33 @@ class ProgressEvent:
     message: str = ""
     progress: float = 0.0  # 0.0 to 1.0
     data: dict | None = None
+
+
+def _format_enrichment_message(stats) -> str:
+    """One-line summary of enrichment results for the progress channel.
+
+    Translation happens on the frontend via i18nStatus — keep this string
+    structural and English-source so the translator can pattern-match.
+    """
+    bits: list[str] = []
+    if stats.arxiv_found or stats.arxiv_error is not None:
+        if stats.arxiv_error:
+            bits.append(f"arXiv: {stats.arxiv_error}")
+        else:
+            bits.append(f"arXiv: {stats.arxiv_found}")
+    if stats.scholar_found or stats.scholar_error is not None:
+        if stats.scholar_error:
+            bits.append(f"Semantic Scholar: {stats.scholar_error}")
+        else:
+            bits.append(f"Semantic Scholar: {stats.scholar_found}")
+    if stats.web_found or stats.web_error is not None:
+        if stats.web_error:
+            bits.append(f"Web: {stats.web_error}")
+        else:
+            bits.append(f"Web: {stats.web_found}")
+    if not bits:
+        return "External research returned no results"
+    return f"External research — {', '.join(bits)}"
 
 
 @dataclass
@@ -56,6 +87,7 @@ class GenerationRequest:
     enable_icon_rag: bool = False
     gemini_api_key: str | None = None
     template_id: str | None = None  # Template ID from assets/templates/layouts/
+    research_config: ResearchConfig | None = None  # Optional external research enrichment
 
 
 async def run_pipeline(
@@ -131,22 +163,98 @@ async def run_pipeline(
             data={"parse_info": parse_info} if parse_info else None,
         )
 
-        # Stage 2: Research agent
+        # Stage 2: Research agent (multi-pass deep analysis)
         set_usage_context(stage="research")
-        yield ProgressEvent("research", "started", "Analyzing paper content...")
-        manuscript = await research_agent.analyze_paper(
-            paper,
-            llm,
-            request.model,
-            instruction=request.instruction,
-            num_pages=request.num_pages,
-            language=request.language,
-            detail_level=request.detail_level,
-        )
+        yield ProgressEvent("research", "started", "Deep reading: analyzing paper content...")
 
-        # Save manuscript
+        # Optional Stage 2a: external enrichment runs BEFORE Pass 1 so the
+        # related-work context is available where it actually matters
+        # (gap analysis, contribution framing). We surface per-source stats
+        # via ProgressEvent.data so the frontend can show users that the
+        # toggles they enabled actually returned something.
+        research_ctx = ResearchContext()
+        research_cfg = getattr(request, "research_config", None)
+        any_source_enabled = bool(
+            research_cfg
+            and (
+                research_cfg.arxiv_search_enabled
+                or research_cfg.semantic_scholar_enabled
+                or research_cfg.web_search_enabled
+            )
+        )
+        if any_source_enabled:
+            yield ProgressEvent(
+                "research",
+                "progress",
+                "Querying external research sources...",
+                0.10,
+                data={"enrichment": {"phase": "querying"}},
+            )
+            stats = await enrich_context(
+                research_ctx,
+                paper_title=paper.title,
+                paper_abstract=paper.abstract,
+                config=research_cfg,
+            )
+            yield ProgressEvent(
+                "research",
+                "progress",
+                _format_enrichment_message(stats),
+                0.12,
+                data={"enrichment": stats.to_dict()},
+            )
+
+        yield ProgressEvent("research", "progress", "Pass 1/4 — Deep reading", 0.13)
+
+        # Collect progress events from research_agent via queue for real-time yielding
+        _research_progress_queue: asyncio.Queue[ProgressEvent | None] = asyncio.Queue()
+
+        def _on_research_progress(message: str, fraction: float) -> None:
+            _research_progress_queue.put_nowait(
+                ProgressEvent("research", "progress", message, fraction)
+            )
+
+        async def _run_analysis() -> str:
+            try:
+                result = await research_agent.analyze_paper(
+                    paper,
+                    llm,
+                    request.model,
+                    instruction=request.instruction,
+                    num_pages=request.num_pages,
+                    language=request.language,
+                    detail_level=request.detail_level,
+                    research_context=research_ctx,
+                    on_progress=_on_research_progress,
+                )
+                return result
+            finally:
+                # ALWAYS unblock the consumer, even if analyze_paper raised.
+                # Without this sentinel the outer ``await queue.get()`` loop
+                # would block forever on auth errors / network failures and
+                # the user would see the pipeline frozen on Pass 1 with no
+                # error in the UI until they manually cancel the job.
+                await _research_progress_queue.put(None)
+
+        analysis_task = asyncio.create_task(_run_analysis())
+        manuscript: str | None = None
+
+        # Drain progress events; the producer always posts the sentinel in
+        # its `finally`, so this loop terminates whether analysis succeeded
+        # or raised.
+        while True:
+            event = await _research_progress_queue.get()
+            if event is None:
+                break
+            yield event
+
+        # Now surface the actual result (or re-raise the exception so the
+        # outer try/except in run_pipeline emits a proper error event).
+        manuscript = analysis_task.result()
+
+        # Save manuscript and deep analysis artifacts
         (project_dir / "manuscript.md").write_text(manuscript, encoding="utf-8")
-        yield ProgressEvent("research", "complete", "Manuscript generated", 0.30)
+        yield ProgressEvent("research", "complete", "Deep analysis complete (4-pass)", 0.30)
 
         # Stage 3: Strategist agent
         set_usage_context(stage="strategy")

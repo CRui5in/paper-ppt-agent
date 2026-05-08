@@ -580,7 +580,11 @@ export function ResultPage() {
       {jobId === activeJobId ? (
         <section className="result-refine-monitor">
           <div className="column-stack">
-            <ProgressPanel job={liveJob} connectionStatus={connectionStatus} />
+            <ProgressPanel
+              job={liveJob}
+              connectionStatus={connectionStatus}
+              enrichmentStats={jobId ? runs[jobId]?.enrichmentStats : undefined}
+            />
           </div>
         </section>
       ) : null}
@@ -654,6 +658,7 @@ function ConfigViewer({
   if (options?.enable_visual_critic !== undefined) entries.push({ label: t("config.visualCritic"), value: options.enable_visual_critic ? "ON" : "OFF" });
   if (options?.enable_icon !== undefined) entries.push({ label: t("config.enableIcon"), value: options.enable_icon ? "ON" : "OFF" });
   if (options?.enable_icon_rag !== undefined) entries.push({ label: t("config.iconRag"), value: options.enable_icon_rag ? "ON" : "OFF" });
+  if (options?.research_config && (options.research_config.arxiv_search_enabled || options.research_config.semantic_scholar_enabled || options.research_config.web_search_enabled)) entries.push({ label: t("config.researchEnrichment"), value: "ON" });
   if (options?.template_id) entries.push({ label: t("config.template"), value: options.template_id });
   if (options?.style_overrides?.palette?.length) entries.push({ label: t("config.palette"), value: options.style_overrides.palette.join(", ") });
   if (options?.style_overrides?.font) entries.push({ label: t("config.font"), value: options.style_overrides.font });

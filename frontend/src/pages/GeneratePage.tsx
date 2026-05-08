@@ -13,7 +13,7 @@ import { UploadZone } from "../components/upload/UploadZone";
 import { useGeneration } from "../hooks/useGeneration";
 import { useLocale } from "../i18n";
 import { fetchTemplates } from "../lib/api";
-import type { DeepSeekSettings, OpenAISettings, TemplateInfo } from "../lib/types";
+import type { DeepSeekSettings, OpenAISettings, ResearchConfig, TemplateInfo } from "../lib/types";
 import { TemplateManager } from "../components/template/TemplateManager";
 
 const ROUTING_PROFILE_STORAGE_KEY = "paper-ppt-agent-routing-profiles-v1";
@@ -77,6 +77,7 @@ export function GeneratePage() {
     slides,
     logs,
     criticEvents,
+    enrichmentStats,
     selectedSlide,
     connectionStatus,
     error,
@@ -119,6 +120,7 @@ export function GeneratePage() {
   const [enableVisualCritic, setEnableVisualCritic] = useState(false);
   const [enableIcon, setEnableIcon] = useState(false);
   const [enableIconRag, setEnableIconRag] = useState(false);
+  const [researchConfig, setResearchConfig] = useState<ResearchConfig>({});
   const [geminiApiKey, setGeminiApiKey] = useState(() => {
     try { return window.localStorage.getItem(GEMINI_KEY_STORAGE) ?? ""; } catch { return ""; }
   });
@@ -285,7 +287,7 @@ export function GeneratePage() {
         <div className="studio-column studio-column-left">
           <UploadZone onFileSelect={(file) => void uploadFile(file)} />
           <FilePreview session={uploadSession} />
-          <ProgressPanel job={job} connectionStatus={connectionStatus} />
+          <ProgressPanel job={job} connectionStatus={connectionStatus} enrichmentStats={enrichmentStats} />
         </div>
 
         <div className="studio-column studio-column-preview">
@@ -350,6 +352,8 @@ export function GeneratePage() {
             onBodyFontChange={setBodyFont}
             onCjkHeadingFontChange={setCjkHeadingFont}
             onCjkBodyFontChange={setCjkBodyFont}
+            researchConfig={researchConfig}
+            onResearchConfigChange={setResearchConfig}
           />
           <div className="studio-secondary-actions">
             <button
@@ -420,6 +424,9 @@ export function GeneratePage() {
                   enable_icon_rag: enableIconRag,
                   gemini_api_key: geminiApiKey || undefined,
                   template_id: templateId || undefined,
+                  research_config: (researchConfig.arxiv_search_enabled || researchConfig.semantic_scholar_enabled || researchConfig.web_search_enabled)
+                    ? researchConfig
+                    : undefined,
                 },
               });
               connect(jobId);

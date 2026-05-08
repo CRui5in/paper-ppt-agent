@@ -12,6 +12,7 @@ import type {
   PreviewSlide,
   ProviderListItem,
   RefineRequestPayload,
+  ResearchEnrichmentStats,
   UploadResponse,
 } from "../lib/types";
 import { openJobSocket } from "../lib/ws";
@@ -78,6 +79,10 @@ interface RunSnapshot {
   currentRunConfig?: RunConfigSnapshot;
   connectionStatus: ConnectionStatus;
   lastSeq?: number;
+  // Latest external-research enrichment stats received via the progress
+  // channel. Used by ProgressPanel to confirm to the user that the
+  // toggles they enabled actually returned data (or to show why not).
+  enrichmentStats?: ResearchEnrichmentStats;
 }
 
 type StoredRunSnapshot = Partial<RunSnapshot> & { jobId: string };
@@ -90,6 +95,7 @@ interface GenerationState {
   slides: PreviewSlide[];
   logs: string[];
   criticEvents: CriticEvent[];
+  enrichmentStats?: ResearchEnrichmentStats;
   selectedSlide?: PreviewSlide;
   connectionStatus: ConnectionStatus;
   error?: string;
@@ -297,6 +303,7 @@ function applyRunToCurrent(run?: RunSnapshot) {
     slides: run.slides,
     logs: run.logs,
     criticEvents: run.criticEvents,
+    enrichmentStats: run.enrichmentStats,
     selectedSlide: run.selectedSlide,
     connectionStatus: run.connectionStatus,
     error: run.error,
@@ -603,11 +610,28 @@ export const useGeneration = create<GenerationState>()(
                 }
               }
 
+              // Capture external-research enrichment stats. Pipeline emits
+              // these once per run during the research stage so users see
+              // that the toggles they enabled actually returned data.
+              let enrichmentStats = currentRun.enrichmentStats;
+              const rawEnrichment = (event.data as { enrichment?: unknown }).enrichment;
+              if (rawEnrichment && typeof rawEnrichment === "object") {
+                const candidate = rawEnrichment as ResearchEnrichmentStats & { phase?: string };
+                if (candidate.phase !== "querying") {
+                  enrichmentStats = candidate;
+                } else if (!enrichmentStats) {
+                  // Show a placeholder so the panel renders the section
+                  // immediately instead of waiting for the result frame.
+                  enrichmentStats = { total_findings: 0 };
+                }
+              }
+
               const updatedRun: RunSnapshot = {
                 ...currentRun,
                 job: nextJob,
                 slides,
                 criticEvents,
+                enrichmentStats,
                 selectedSlide:
                   event.type === "slide_ready"
                     ? pickLiveSelectedSlide(currentRun.slides, slides, currentRun.selectedSlide)

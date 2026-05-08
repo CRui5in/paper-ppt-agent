@@ -1077,7 +1077,6 @@ html[lang="zh-CN"] .panel-title {
 .panel {
   padding: 1.15rem;
   position: relative;
-  overflow: hidden;
 }
 
 .panel::after {
@@ -1367,7 +1366,9 @@ html[lang="zh-CN"] .panel-title {
 
 .visual-qa-copy {
   display: flex;
-  align-items: baseline;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
   min-width: 0;
 }
 
@@ -1495,29 +1496,44 @@ html[lang="zh-CN"] .panel-title {
 
 .monitor-metrics {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 0.8fr) minmax(0, 1fr);
   gap: 0.75rem;
   margin: 1rem 0;
 }
 
 .monitor-metrics div {
-  padding: 0.85rem 0.95rem;
+  padding: 0.65rem 0.6rem;
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.03);
   display: flex;
   flex-direction: column;
-  gap: 0.3rem;
+  gap: 0.2rem;
 }
 
 .monitor-metrics span {
   color: var(--muted);
   text-transform: uppercase;
-  letter-spacing: 0.16em;
+  letter-spacing: 0.06em;
   font-size: 0.68rem;
 }
 
 .monitor-metrics strong {
   font-size: 1.15rem;
+}
+
+.monitor-metric-status {
+  /* The status cell hosts a one-word + occasional medium-length label.
+     Without min-width: 0 CSS grid will refuse to shrink it below the
+     intrinsic content width, forcing the parent grid track to overflow
+     and squashing the long value column. */
+  min-width: 0;
+}
+
+/* Wrapper around <strong>: must shrink inside the grid cell. */
+.monitor-status-value-wrap {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .monitor-status-value {
@@ -1526,6 +1542,201 @@ html[lang="zh-CN"] .panel-title {
   font-size: 0.95rem;
   line-height: 1.15;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Stage row text ─ make the message column flex and shrinkable so long
+   messages (e.g. template-loading status) don't push the layout into a
+   one-character-per-line vertical squash. */
+.stage-item-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex: 0 0 auto;
+}
+
+.stage-item-status {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex: 1 1 auto;
+  min-width: 0;
+  justify-content: flex-end;
+}
+
+/* HoverTooltip wrapper inside the stage row — shrinks so ellipsis kicks in. */
+.stage-status-tooltip-wrap {
+  display: inline-block;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-align: right;
+}
+
+.stage-status-text {
+  display: inline-block;
+  max-width: 100%;
+  font-size: 0.8rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: right;
+}
+
+/* ── Research enrichment options (subsection in OptionsPanel) ─────── */
+.visual-qa-experimental,
+.visual-qa-tag {
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 999px;
+  line-height: 1.4;
+  font-weight: 600;
+}
+
+.visual-qa-experimental {
+  background: rgba(255, 184, 74, 0.18);
+  color: #ffb84a;
+}
+
+.visual-qa-tag-free {
+  background: rgba(120, 220, 160, 0.16);
+  color: #7adfa1;
+}
+
+.visual-qa-tag-key {
+  background: rgba(120, 170, 255, 0.16);
+  color: #88aaff;
+}
+
+.research-explainer {
+  margin: 0 0 0.5rem;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: var(--muted);
+  padding: 0.55rem 0.7rem;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.025);
+  border-left: 2px solid var(--accent);
+}
+
+.research-warning {
+  margin: 0.4rem 0 0;
+  font-size: 0.74rem;
+  color: #ffb84a;
+  display: inline-flex;
+  align-items: center;
+}
+
+.research-sub {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+/* ── External-research enrichment summary ─────────────────────────── */
+.enrichment-summary {
+  margin-top: 0.85rem;
+  padding: 0.75rem 0.9rem;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  overflow: hidden;
+}
+
+.enrichment-summary-title {
+  margin: 0;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.enrichment-summary-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.enrichment-summary-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  font-size: 0.82rem;
+  color: var(--text);
+  min-width: 0;
+}
+
+.enrichment-row-name-wrap {
+  display: inline-flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 60%;
+  overflow: hidden;
+}
+
+.enrichment-row-name {
+  display: inline-flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.enrichment-row-status-wrap {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 50%;
+  overflow: hidden;
+  justify-content: flex-end;
+}
+
+.enrichment-row-extra {
+  font-style: normal;
+  color: var(--muted);
+  font-size: 0.74rem;
+}
+
+.enrichment-row-status {
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.enrichment-row-status-warn {
+  color: var(--warning, #ffb84a);
+}
+
+.enrichment-row-warn .enrichment-row-name {
+  color: var(--warning, #ffb84a);
+}
+
+.enrichment-summary-empty,
+.enrichment-summary-total {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--muted);
 }
 
 .progress-bar {
@@ -2924,4 +3135,32 @@ html[lang="zh-CN"] .refine-header h2 {
 .template-preview-frame svg { width: 100%; height: 100%; }
 .template-preview-actions {
   display: flex; gap: 12px; justify-content: flex-end;
+}
+
+/* ── Floating hover tooltip (rendered via portal) ─────────────────── */
+.hover-tooltip {
+  position: fixed;
+  z-index: 9999;
+  /* Centered above the target — JS sets `top`/`left`; we offset so the
+     tooltip's bottom edge sits on the target's top edge. */
+  transform: translate(-50%, -100%);
+  padding: 0.5rem 0.7rem;
+  border-radius: 8px;
+  background: rgba(20, 22, 28, 0.96);
+  color: #f5f7fb;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  letter-spacing: 0.01em;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  white-space: normal;
+  word-break: break-word;
+  text-align: left;
+  animation: hover-tooltip-fade 120ms ease-out;
+}
+
+@keyframes hover-tooltip-fade {
+  from { opacity: 0; transform: translate(-50%, calc(-100% + 4px)); }
+  to   { opacity: 1; transform: translate(-50%, -100%); }
 }

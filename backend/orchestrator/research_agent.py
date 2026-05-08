@@ -1,8 +1,26 @@
-"""Research agent: analyzes a parsed paper and produces a slide-structured manuscript."""
+"""Research agent: multi-pass deep analysis of academic papers for slide manuscripts.
+
+Architecture:
+    Pass 1 — Deep Reading: structured critical analysis of the paper.
+             Optional external enrichment (related papers, citations, web
+             discussions) is injected here so the LLM can position the paper
+             against existing literature and sharpen the gap analysis.
+    Pass 2 — Narrative Arc: design a story-driven slide plan.
+    Pass 3 — Manuscript: generate the actual slide manuscript.
+    Pass 4 — Self-Review: evaluate quality and revise if needed.
+
+When no external sources are configured, the pipeline runs in pure-LLM mode
+and Pass 1 simply has no enrichment block. The 4-pass structure remains the
+authoritative quality contract — external sources sharpen Pass 1, they do
+not replace it.
+"""
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from backend.llm import LLMMessage, LLMProvider, LLMResponse
 from backend.orchestrator.provider_guidance import (
@@ -11,8 +29,27 @@ from backend.orchestrator.provider_guidance import (
 )
 from backend.parser.paper_model import ParsedPaper
 
-PROMPT_PATH = Path(__file__).parent / "prompts" / "research.md"
-DEEPSEEK_RESEARCH_MAX_TOKENS = 24576
+if TYPE_CHECKING:
+    from backend.orchestrator.research_enrichment import ResearchFinding
+
+logger = logging.getLogger(__name__)
+
+PROMPTS_DIR = Path(__file__).parent / "prompts"
+
+# Prompt files for each pass
+PASS1_PROMPT = PROMPTS_DIR / "research_pass1_analysis.md"
+PASS2_PROMPT = PROMPTS_DIR / "research_pass2_narrative.md"
+PASS3_PROMPT = PROMPTS_DIR / "research_pass3_manuscript.md"
+PASS4_PROMPT = PROMPTS_DIR / "research_pass4_review.md"
+
+# Legacy single-pass prompt (kept for revise_manuscript backward compat)
+LEGACY_PROMPT = PROMPTS_DIR / "research.md"
+
+DEEPSEEK_MAX_TOKENS = 24576
+QUALITY_THRESHOLD = 28  # out of 35 (7 dimensions × 5 points each)
+
+
+# ── Language guidance ───────────────────────────────────────────────────────────
 
 
 def _language_guidance(language: str) -> str:
@@ -39,6 +76,122 @@ def _language_guidance(language: str) -> str:
     )
 
 
+# ── Detail level guidance ──────────────────────────────────────────────────────
+
+
+DETAIL_GUIDANCE = {
+    "normal": (
+        "Produce a concise but faithful reading of the paper. Capture the core "
+        "problem, method, evidence, and conclusions without overloading each slide."
+    ),
+    "high": (
+        "Read the paper more deeply before writing. Surface the paper's reasoning, "
+        "method design choices, assumptions, experimental logic, and non-obvious takeaways. "
+        "Slides may be moderately denser when that improves understanding."
+    ),
+    "very_high": (
+        "Perform a thorough reading rather than a surface summary. Explicitly cover the "
+        "paper's motivation, mechanism, architecture, training or inference flow, assumptions, "
+        "limitations, and the significance of the results. It is acceptable for slides to be "
+        "denser and richer so the deck reflects a complete understanding of the paper."
+    ),
+}
+
+
+# ── Research context (optional external enrichment) ─────────────────────────────
+
+
+class ResearchContext:
+    """External enrichment findings injected into Pass 1.
+
+    Empty by default — populated by `research_enrichment.enrich_context` when
+    the user enables one or more sources. Even when populated, the 4-pass
+    pipeline remains the authoritative analysis path; enrichment only sharpens
+    Pass 1 (gap analysis, related-work positioning).
+    """
+
+    def __init__(self) -> None:
+        self.findings: list["ResearchFinding"] = []
+        # Errors are surfaced to the LLM (so it can note unavailable sources
+        # in the gap analysis) AND to the frontend via the progress channel.
+        self.errors: list[str] = []
+        # Audit trail of the actual queries we sent — useful when debugging
+        # zero-result enrichment runs.
+        self.queries_used: list[str] = []
+
+    @property
+    def has_enrichment(self) -> bool:
+        return bool(self.findings)
+
+    def enrichment_block_for_pass1(self) -> str:
+        """Format enrichment as a markdown block injected before Pass 1.
+
+        Pass 1 is where related-work context actually changes the LLM's
+        reasoning (gap analysis, contribution framing). Earlier versions of
+        this code injected into Pass 2/3, which is too late — by then the
+        analysis is fixed and the related work is just decoration.
+        """
+        if not self.findings and not self.errors:
+            return ""
+
+        parts: list[str] = ["## Supplementary Related-Work Context\n"]
+        parts.append(
+            "Use the entries below to: (a) identify what THIS paper extends, "
+            "challenges, or supersedes; (b) sharpen the Pass 1 gap analysis with "
+            "concrete prior art; (c) flag if a related paper contradicts THIS "
+            "paper's claim. Do NOT copy these abstracts into the manuscript — "
+            "they are for your reasoning only.\n"
+        )
+
+        # Group by source for readability.
+        by_source: dict[str, list["ResearchFinding"]] = {}
+        for f in self.findings:
+            by_source.setdefault(f.source, []).append(f)
+
+        labels = {
+            "arxiv": "### Related Papers (arXiv)",
+            "semantic_scholar": "### Cited / Citing Work (Semantic Scholar)",
+            "web": "### Web Discussions",
+        }
+        for source, items in by_source.items():
+            parts.append(labels.get(source, f"### {source}"))
+            for f in items[:5]:
+                meta_bits: list[str] = []
+                if f.year:
+                    meta_bits.append(str(f.year))
+                if f.citation_count is not None:
+                    meta_bits.append(f"{f.citation_count} citations")
+                if f.authors:
+                    head = ", ".join(f.authors[:3])
+                    if len(f.authors) > 3:
+                        head += " et al."
+                    meta_bits.append(head)
+                meta = " · ".join(meta_bits)
+                abstract = (f.abstract or "").strip()
+                if len(abstract) > 600:
+                    abstract = abstract[:600].rstrip() + "…"
+                parts.append(f"- **{f.title or 'Untitled'}**" + (f" ({meta})" if meta else ""))
+                if abstract:
+                    parts.append(f"  {abstract}")
+                if f.url:
+                    parts.append(f"  <{f.url}>")
+            parts.append("")
+
+        if self.errors:
+            parts.append("### Notes on Unavailable Sources")
+            for err in self.errors:
+                parts.append(f"- {err}")
+            parts.append(
+                "\nProceed with the analysis; do not fabricate replacements for "
+                "sources that failed to load."
+            )
+
+        return "\n".join(parts)
+
+
+# ── Main multi-pass analysis ───────────────────────────────────────────────────
+
+
 async def analyze_paper(
     paper: ParsedPaper,
     llm: LLMProvider,
@@ -48,8 +201,10 @@ async def analyze_paper(
     num_pages: int | None = None,
     language: str = "en",
     detail_level: str = "normal",
+    research_context: ResearchContext | None = None,
+    on_progress: Callable[[str, float], None] | None = None,
 ) -> str:
-    """Analyze a paper and produce a slide-structured manuscript.
+    """Analyze a paper and produce a slide-structured manuscript via multi-pass.
 
     Args:
         paper: Parsed paper data.
@@ -58,85 +213,200 @@ async def analyze_paper(
         instruction: Optional user instruction.
         num_pages: Target number of slides (None = auto).
         language: Target language for visible slide text.
-        detail_level: Controls how detailed each slide manuscript should be.
+        detail_level: Controls analysis depth (normal/high/very_high).
+        research_context: Optional enrichment from external tools.
+        on_progress: Optional callback invoked as (message, progress_fraction) after each pass.
 
     Returns:
         Manuscript markdown with --- page separators.
     """
-    system_prompt = PROMPT_PATH.read_text(encoding="utf-8")
-
-    # Build user message with paper content
+    is_deepseek = is_deepseek_provider(llm, model)
     paper_md = paper.to_markdown()
 
-    user_parts = [f"## Paper Content\n\n{paper_md}"]
+    # External enrichment is injected into Pass 1 specifically — that's where
+    # related-work context actually changes the analysis (gap framing,
+    # contribution delta). Injecting later just decorates the manuscript.
+    enrichment_block = ""
+    if research_context and (research_context.has_enrichment or research_context.errors):
+        enrichment_block = research_context.enrichment_block_for_pass1()
+        logger.info("Research: Pass 1 enrichment block (%d chars)", len(enrichment_block))
 
-    detail_guidance = {
-        "normal": (
-            "Produce a concise but faithful reading of the paper. Capture the core "
-            "problem, method, evidence, and conclusions without overloading each slide."
-        ),
-        "high": (
-            "Read the paper more deeply before writing. Surface the paper's reasoning, "
-            "method design choices, assumptions, experimental logic, and non-obvious takeaways. "
-            "Slides may be moderately denser when that improves understanding."
-        ),
-        "very_high": (
-            "Perform a thorough reading rather than a surface summary. Explicitly cover the "
-            "paper's motivation, mechanism, architecture, training or inference flow, assumptions, "
-            "limitations, and the significance of the results. It is acceptable for slides to be "
-            "denser and richer so the deck reflects a complete understanding of the paper."
-        ),
-    }
+    # ── Pass 1: Deep Reading ───────────────────────────────────────────────
+    logger.info("Research Pass 1: Deep reading...")
+    pass1_system = PASS1_PROMPT.read_text(encoding="utf-8")
 
+    pass1_user_parts = [
+        f"## Paper Content\n\n{paper_md}",
+        f"\n## Detail Level\n\n{detail_level}\n\n{DETAIL_GUIDANCE.get(detail_level, DETAIL_GUIDANCE['normal'])}",
+    ]
+    if enrichment_block:
+        pass1_user_parts.append(f"\n{enrichment_block}")
     if instruction:
-        user_parts.append(f"\n## User Instruction\n\n{instruction}")
+        pass1_user_parts.append(f"\n## User Instruction\n\n{instruction}")
+    if is_deepseek:
+        pass1_user_parts.append("\n" + deepseek_research_guidance(detail_level))
+    pass1_user_parts.append(
+        "\n\nAnalyze this paper following the structured format above. Be specific and insightful. "
+        "When supplementary related-work context is provided, use it to ground the gap analysis "
+        "in concrete prior art rather than vague claims."
+    )
 
+    pass1_response = await llm.chat(
+        [LLMMessage.system(pass1_system), LLMMessage.user("\n".join(pass1_user_parts))],
+        model,
+        temperature=0.4,
+        max_tokens=DEEPSEEK_MAX_TOKENS if is_deepseek else None,
+    )
+    deep_analysis = pass1_response.content
+    logger.info("Research Pass 1 complete (%d chars)", len(deep_analysis))
+    if on_progress:
+        on_progress("Pass 1/4 — Deep reading", 0.15)
+
+    # ── Pass 2: Narrative Arc Design ───────────────────────────────────────
+    logger.info("Research Pass 2: Narrative arc design...")
+    pass2_system = PASS2_PROMPT.read_text(encoding="utf-8")
+
+    pass2_user_parts = [
+        f"## Deep Analysis of the Paper\n\n{deep_analysis}",
+        f"\n## Target Slides\n\n{_target_slides_guidance(num_pages)}",
+        f"\n## Detail Level\n\n{detail_level}",
+    ]
+    pass2_user_parts.append(
+        "\n\nDesign the narrative arc for this paper's presentation. Choose the best narrative strategy "
+        "and specify each slide's role, core insight, and visual strategy."
+    )
+
+    pass2_response = await llm.chat(
+        [LLMMessage.system(pass2_system), LLMMessage.user("\n".join(pass2_user_parts))],
+        model,
+        temperature=0.5,
+        max_tokens=DEEPSEEK_MAX_TOKENS if is_deepseek else None,
+    )
+    narrative_plan = pass2_response.content
+    logger.info("Research Pass 2 complete (%d chars)", len(narrative_plan))
+    if on_progress:
+        on_progress("Pass 2/4 — Narrative arc", 0.20)
+
+    # ── Pass 3: Manuscript Generation ──────────────────────────────────────
+    logger.info("Research Pass 3: Manuscript generation...")
+    pass3_system = PASS3_PROMPT.read_text(encoding="utf-8")
+
+    pass3_user_parts = [
+        f"## Deep Analysis\n\n{deep_analysis}",
+        f"\n## Narrative Arc Plan\n\n{narrative_plan}",
+        f"\n## Target Language\n\n{language}\n\n{_language_guidance(language)}",
+        f"\n## Target Slides\n\n{_target_slides_guidance(num_pages)}",
+        f"\n## Detail Level\n\n{detail_level}\n\n{DETAIL_GUIDANCE.get(detail_level, DETAIL_GUIDANCE['normal'])}",
+    ]
+    if instruction:
+        pass3_user_parts.append(f"\n## User Instruction\n\n{instruction}")
+    # NOTE: enrichment_block is intentionally injected only into Pass 1 above.
+    # Pass 3 sees the deep_analysis (which already absorbed the enrichment),
+    # so re-injecting here would just burn context for no benefit.
+    if is_deepseek:
+        pass3_user_parts.append("\n" + deepseek_research_guidance(detail_level))
+    pass3_user_parts.append(
+        "\n\nGenerate the complete slide manuscript now. Use `---` to separate slides. "
+        "Follow the narrative arc plan and the information aesthetics principles."
+    )
+
+    pass3_response = await llm.chat(
+        [LLMMessage.system(pass3_system), LLMMessage.user("\n".join(pass3_user_parts))],
+        model,
+        temperature=0.5,
+        max_tokens=DEEPSEEK_MAX_TOKENS if is_deepseek else None,
+    )
+    manuscript = pass3_response.content
+    logger.info("Research Pass 3 complete (%d chars)", len(manuscript))
+    if on_progress:
+        on_progress("Pass 3/4 — Manuscript", 0.25)
+
+    # ── Pass 4: Self-Evaluation & Revision ─────────────────────────────────
+    logger.info("Research Pass 4: Self-evaluation...")
+    pass4_system = PASS4_PROMPT.read_text(encoding="utf-8")
+
+    pass4_user_parts = [
+        f"## Slide Manuscript to Evaluate\n\n{manuscript}",
+        f"\n## Original Deep Analysis\n\n{deep_analysis[:3000]}",  # Truncate to avoid excessive context
+        f"\n## Narrative Plan\n\n{narrative_plan[:2000]}",
+        f"\n## Target Language\n\n{language}",
+        f"\n## Detail Level\n\n{detail_level}",
+    ]
+    pass4_user_parts.append(
+        "\n\nEvaluate the manuscript against the seven dimensions. "
+        "If the total score is below 28/35 or any dimension is below 3, "
+        "revise the problematic slides and output the complete revised manuscript. "
+        "Otherwise, output QUALITY_CHECK_PASSED followed by the unchanged manuscript."
+    )
+
+    pass4_response = await llm.chat(
+        [LLMMessage.system(pass4_system), LLMMessage.user("\n".join(pass4_user_parts))],
+        model,
+        temperature=0.3,
+        max_tokens=DEEPSEEK_MAX_TOKENS if is_deepseek else None,
+    )
+    final_output = _extract_manuscript_from_review(pass4_response.content, manuscript)
+    logger.info("Research Pass 4 complete. Final manuscript: %d chars", len(final_output))
+    if on_progress:
+        on_progress("Pass 4/4 — Quality review", 0.28)
+
+    return final_output
+
+
+def _extract_manuscript_from_review(review_output: str, original_manuscript: str) -> str:
+    """Extract the final manuscript from Pass 4 review output.
+
+    The review may output:
+    1. "QUALITY_CHECK_PASSED" followed by the manuscript
+    2. A revised manuscript (after the assessment section)
+    3. Just the assessment with no manuscript changes needed
+
+    In all cases, we try to extract the manuscript (content after the last `---`
+    slide separator pattern, or the full content if it looks like a manuscript).
+    """
+    # If the review explicitly passed, return the original
+    if review_output.strip().startswith("QUALITY_CHECK_PASSED"):
+        # Remove the prefix and return the rest (which should be the manuscript)
+        remainder = review_output.replace("QUALITY_CHECK_PASSED", "", 1).strip()
+        if "---" in remainder:
+            return remainder
+        return original_manuscript
+
+    # If the review contains a full revised manuscript (has slide separators)
+    if review_output.count("---") >= 2:
+        # Try to find where the manuscript starts (after the assessment)
+        # Look for the first ## heading followed by --- pattern
+        lines = review_output.split("\n")
+        manuscript_start = None
+        for i, line in enumerate(lines):
+            if line.strip().startswith("## ") and i > 0:
+                # Check if there's a --- separator within the next 30 lines
+                for j in range(i, min(i + 30, len(lines))):
+                    if lines[j].strip() == "---":
+                        manuscript_start = i
+                        break
+                if manuscript_start is not None:
+                    break
+
+        if manuscript_start is not None:
+            return "\n".join(lines[manuscript_start:]).strip()
+
+    # Fallback: if we can't parse the review output, return the original
+    logger.warning("Could not extract revised manuscript from review; using original")
+    return original_manuscript
+
+
+def _target_slides_guidance(num_pages: int | None) -> str:
     if num_pages:
-        user_parts.append(
-            f"\n## Target Slides\n\n"
+        return (
             f"Produce exactly {num_pages} slides. Use exactly {num_pages - 1} slide delimiter "
             "lines. A slide delimiter is a line containing only `---`. Do not use standalone "
             "`---` anywhere else."
         )
-    else:
-        user_parts.append(
-            "\n## Target Slides: Auto-determine based on content "
-            "(typically 8-15 slides for a standard paper)"
-        )
+    return "Auto-determine based on content (typically 8-15 slides for a standard paper)"
 
-    user_parts.append(
-        "\n## Target Language\n\n"
-        f"{language}\n\n"
-        f"{_language_guidance(language)}"
-    )
 
-    user_parts.append(
-        "\n## Detail Level\n\n"
-        f"{detail_level}\n\n"
-        f"{detail_guidance.get(detail_level, detail_guidance['normal'])}"
-    )
-
-    is_deepseek = is_deepseek_provider(llm, model)
-    if is_deepseek:
-        user_parts.append("\n" + deepseek_research_guidance(detail_level))
-
-    user_parts.append(
-        "\n\nPlease analyze this paper and produce a slide manuscript. "
-        "Separate each slide only with a standalone `---` line. Start now."
-    )
-
-    messages = [
-        LLMMessage.system(system_prompt),
-        LLMMessage.user("\n".join(user_parts)),
-    ]
-
-    response: LLMResponse = await llm.chat(
-        messages,
-        model,
-        temperature=0.5,
-        max_tokens=DEEPSEEK_RESEARCH_MAX_TOKENS if is_deepseek else None,
-    )
-    return response.content
+# ── Legacy single-pass for backward compat (revise pipeline) ────────────────
 
 
 async def revise_manuscript(
@@ -156,7 +426,7 @@ async def revise_manuscript(
     revise only the requested scope. When true, the model may insert, remove,
     or reorder slides to satisfy the feedback.
     """
-    system_prompt = PROMPT_PATH.read_text(encoding="utf-8")
+    system_prompt = LEGACY_PROMPT.read_text(encoding="utf-8")
     target_pages = sorted({page for page in (target_pages or []) if page > 0})
 
     scope_guidance = (

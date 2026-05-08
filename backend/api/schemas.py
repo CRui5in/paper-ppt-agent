@@ -47,6 +47,26 @@ class StyleOverrides(BaseModel):
     density: str | None = None        # "compact" | "normal" | "spacious"
 
 
+class ResearchConfig(BaseModel):
+    """Optional external research enrichment.
+
+    All sources default to OFF. When any source is enabled, related work and/or
+    web discussions are fetched and injected into Pass 1 of the deep analysis
+    so the LLM can position the paper against existing literature. When all
+    sources are OFF, the pipeline runs in pure-LLM mode.
+    """
+
+    arxiv_search_enabled: bool = False
+    semantic_scholar_enabled: bool = False
+    web_search_enabled: bool = False
+    tavily_api_key: str | None = None
+    serpapi_key: str | None = None
+    # Maximum candidates to fetch per source before relevance filtering.
+    max_results_per_source: int = 5
+    # When True, run a lightweight relevance filter pass before injecting findings.
+    relevance_filter: bool = True
+
+
 class GenerationOptions(BaseModel):
     canvas_format: str = "ppt169"
     style: str = "academic"
@@ -61,6 +81,7 @@ class GenerationOptions(BaseModel):
     enable_icon_rag: bool = False
     gemini_api_key: str | None = None
     template_id: str | None = None  # Template ID from assets/templates/layouts/
+    research_config: ResearchConfig | None = None
 
 
 class GenerateRequest(BaseModel):
