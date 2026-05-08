@@ -117,6 +117,7 @@ export function GeneratePage() {
   const [timeoutSeconds, setTimeoutSeconds] = useState("");
   const [instruction, setInstruction] = useState("");
   const GEMINI_KEY_STORAGE = "paper-ppt-agent-gemini-api-key";
+  const [enableDeepResearch, setEnableDeepResearch] = useState(false);
   const [enableVisualCritic, setEnableVisualCritic] = useState(false);
   const [enableIcon, setEnableIcon] = useState(false);
   const [enableIconRag, setEnableIconRag] = useState(false);
@@ -260,6 +261,7 @@ export function GeneratePage() {
     setNumPages(options.num_pages ? String(options.num_pages) : "");
     setDetailLevel(options.detail_level || "normal");
     setTimeoutSeconds(options.timeout_seconds ? String(options.timeout_seconds) : "");
+    setEnableDeepResearch(Boolean(options.enable_deep_research));
     setEnableVisualCritic(Boolean(options.enable_visual_critic));
     setEnableIcon(options.enable_icon !== false);
     setEnableIconRag(options.enable_icon_rag !== false);
@@ -321,6 +323,7 @@ export function GeneratePage() {
             detailLevel={detailLevel}
             timeoutSeconds={timeoutSeconds}
             instruction={instruction}
+            enableDeepResearch={enableDeepResearch}
             enableVisualCritic={enableVisualCritic}
             enableIcon={enableIcon}
             enableIconRag={enableIconRag}
@@ -334,6 +337,7 @@ export function GeneratePage() {
             onDetailLevelChange={setDetailLevel}
             onTimeoutSecondsChange={setTimeoutSeconds}
             onInstructionChange={setInstruction}
+            onEnableDeepResearchChange={setEnableDeepResearch}
             onEnableVisualCriticChange={setEnableVisualCritic}
             onEnableIconChange={setEnableIcon}
             onEnableIconRagChange={setEnableIconRag}
@@ -420,6 +424,7 @@ export function GeneratePage() {
                         }
                       : undefined,
                   enable_visual_critic: enableVisualCritic,
+                  enable_deep_research: enableDeepResearch,
                   enable_icon: enableIcon,
                   enable_icon_rag: enableIconRag,
                   gemini_api_key: geminiApiKey || undefined,

@@ -11,6 +11,7 @@ interface OptionsPanelProps {
   detailLevel: string;
   timeoutSeconds: string;
   instruction: string;
+  enableDeepResearch: boolean;
   enableVisualCritic: boolean;
   enableIcon: boolean;
   enableIconRag: boolean;
@@ -31,6 +32,7 @@ interface OptionsPanelProps {
   onDetailLevelChange: (value: string) => void;
   onTimeoutSecondsChange: (value: string) => void;
   onInstructionChange: (value: string) => void;
+  onEnableDeepResearchChange: (value: boolean) => void;
   onEnableVisualCriticChange: (value: boolean) => void;
   onEnableIconChange: (value: boolean) => void;
   onEnableIconRagChange: (value: boolean) => void;
@@ -166,6 +168,43 @@ export function OptionsPanel(props: OptionsPanelProps) {
               className="visual-qa-help"
               data-tooltip={t("options.visualCriticTooltip")}
               aria-label={t("options.visualCriticTooltip")}
+              tabIndex={0}
+              onClick={(event) => event.preventDefault()}
+            >
+              <HelpCircle size={14} />
+            </span>
+            <span className="visual-qa-switch" aria-hidden="true">
+              <span />
+            </span>
+          </span>
+        </label>
+      </div>
+
+      {/* Deep research section */}
+      <div className="options-icon-section">
+        <label className="visual-qa-field">
+          <span
+            className={`visual-qa-control ${
+              props.enableDeepResearch ? "visual-qa-control-active" : ""
+            }`}
+          >
+            <input
+              className="visual-qa-input"
+              type="checkbox"
+              checked={props.enableDeepResearch}
+              onChange={(event) => props.onEnableDeepResearchChange(event.target.checked)}
+            />
+            <span className="visual-qa-icon" aria-hidden="true">
+              <BookOpen size={16} />
+            </span>
+            <span className="visual-qa-copy">
+              <span className="visual-qa-name">{t("options.deepResearch")}</span>
+              <span className="visual-qa-experimental">{t("common.experimental")}</span>
+            </span>
+            <span
+              className="visual-qa-help"
+              data-tooltip={t("options.deepResearchTooltip")}
+              aria-label={t("options.deepResearchTooltip")}
               tabIndex={0}
               onClick={(event) => event.preventDefault()}
             >

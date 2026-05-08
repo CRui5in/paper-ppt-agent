@@ -106,6 +106,9 @@ const translations: Record<Locale, Dictionary> = {
     "options.detailVeryHigh": "Highest",
     "options.timeout": "Job timeout (seconds)",
     "options.timeoutPlaceholder": "No limit",
+    "options.deepResearch": "Deep Research",
+    "options.deepResearchTooltip":
+      "Use the 4-pass research workflow: deep reading, narrative planning, manuscript drafting, and quality review. Turn off for a faster single-pass manuscript closer to the previous workflow.",
     "options.visualCritic": "Visual QA",
     "options.visualCriticTooltip":
       "Render each slide as an image and have a multimodal LLM inspect it for layout, contrast, and decorative-line issues. Adds one extra LLM call per slide. Requires a vision-capable model. Text-only models will silently skip this step.",
@@ -117,7 +120,7 @@ const translations: Record<Locale, Dictionary> = {
       "Use Gemini Embedding to semantically match icons to slide content. Requires GEMINI_API_KEY. When disabled, the executor picks icons directly from the library. (Disabling may cause icon mismatch)",
     "options.researchEnrichment": "External Research",
     "options.researchEnrichmentTooltip":
-      "Inject related-work context into Pass 1 (deep reading) so the LLM can position the paper against existing literature, sharpen the gap analysis, and cite real follow-ups.",
+      "Inject related-work context into the manuscript analysis so the LLM can position the paper against existing literature.",
     "options.researchExplainer":
       "These sources feed Pass 1 of the deep analysis. Free sources (arxiv, Semantic Scholar) are recommended; web search is opt-in and best used to surface discussions or critiques, not facts.",
     "options.arxivSearch": "arXiv related papers",
@@ -276,6 +279,7 @@ const translations: Record<Locale, Dictionary> = {
     "config.enableIcon": "Icon Decoration",
     "config.iconRag": "RAG Search",
     "config.researchEnrichment": "External Research",
+    "config.deepResearch": "Deep Research",
     "config.template": "Template",
     "config.palette": "Palette",
     "config.font": "Font",
@@ -412,6 +416,9 @@ const translations: Record<Locale, Dictionary> = {
     "options.detailVeryHigh": "极高",
     "options.timeout": "任务超时（秒）",
     "options.timeoutPlaceholder": "不限制",
+    "options.deepResearch": "深度研究",
+    "options.deepResearchTooltip":
+      "启用 4 轮研究流程：深度研读、叙事规划、文稿生成和质量复核。关闭后使用更快的单轮文稿生成，更接近旧流程。",
     "options.visualCritic": "视觉 QA",
     "options.visualCriticTooltip":
       "把每页渲染成图像，再调用多模态 LLM 检查布局、对比度和装饰线等视觉问题。每页会多一次 LLM 调用。需要支持视觉的模型，纯文本模型会自动跳过此步骤。",
@@ -423,7 +430,7 @@ const translations: Record<Locale, Dictionary> = {
       "使用 Gemini Embedding 语义匹配图标与幻灯片内容。需要配置 GEMINI_API_KEY。关闭后由 executor 直接从图标库中选取。（关闭可能导致 icon 丢失）",
     "options.researchEnrichment": "外部研究增强",
     "options.researchEnrichmentTooltip":
-      "将相关工作信息注入到深度研读的第 1 轮（Pass 1），让 LLM 将本文与已有文献对比、强化研究空白分析、引用真实后续工作。",
+      "将相关工作信息注入文稿分析，让 LLM 将本文与已有文献对比定位。",
     "options.researchExplainer":
       "这些信息源会被注入到 Pass 1 深度研读阶段。免费源（arxiv、Semantic Scholar）推荐开启；网页搜索可选，更适合补充讨论和评论，不建议作为技术事实来源。",
     "options.arxivSearch": "arXiv 相关论文",
@@ -581,6 +588,7 @@ const translations: Record<Locale, Dictionary> = {
     "config.enableIcon": "图标装饰",
     "config.iconRag": "RAG 搜索",
     "config.researchEnrichment": "外部研究",
+    "config.deepResearch": "深度研究",
     "config.template": "模板",
     "config.palette": "配色方案",
     "config.font": "字体",

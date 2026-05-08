@@ -126,6 +126,7 @@ async def generate_presentation(request: GenerateRequest) -> GenerateResponse:
             if request.options.style_overrides
             else None
         ),
+        enable_deep_research=request.options.enable_deep_research,
         icon_library=request.options.icon_library,
         deepseek_settings=(
             request.model_settings.deepseek_settings.model_dump()

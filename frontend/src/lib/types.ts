@@ -74,6 +74,7 @@ export interface GenerationOptions {
   detail_level: string;
   timeout_seconds?: number;
   style_overrides?: StyleOverridesPayload;
+  enable_deep_research?: boolean;
   enable_visual_critic?: boolean;
   enable_icon?: boolean;
   enable_icon_rag?: boolean;

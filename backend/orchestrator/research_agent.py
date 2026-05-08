@@ -9,15 +9,14 @@ Architecture:
     Pass 3 — Manuscript: generate the actual slide manuscript.
     Pass 4 — Self-Review: evaluate quality and revise if needed.
 
-When no external sources are configured, the pipeline runs in pure-LLM mode
-and Pass 1 simply has no enrichment block. The 4-pass structure remains the
-authoritative quality contract — external sources sharpen Pass 1, they do
-not replace it.
+Deep research is opt-in. Without it, the agent writes the manuscript in a
+single pass; external enrichment can still be injected as context.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -47,6 +46,91 @@ LEGACY_PROMPT = PROMPTS_DIR / "research.md"
 
 DEEPSEEK_MAX_TOKENS = 24576
 QUALITY_THRESHOLD = 28  # out of 35 (7 dimensions × 5 points each)
+SINGLE_PASS_SYSTEM_PROMPT = (
+    "You write slide-structured manuscripts from academic papers. "
+    "Extract the paper's problem, method, evidence, and takeaway; turn them into "
+    "a clear slide sequence. Output only the manuscript, separated by standalone "
+    "`---` lines."
+)
+
+_SLIDE_HEADING_RE = re.compile(
+    r"^##\s+(?:slide|幻灯片)\s*\d+\s*[:：].*$",
+    re.IGNORECASE,
+)
+_MANUSCRIPT_MARKER_RE = re.compile(
+    r"^##\s+(?:slide\s+manuscript(?:\s*\([^)]*\))?|"
+    r"revised\s+slide\s+manuscript|final\s+slide\s+manuscript)\s*$",
+    re.IGNORECASE,
+)
+_REVIEW_HEADING_RE = re.compile(
+    r"^##\s+(?:step\s*\d+|assessment|review|quality|evaluation|consensus|issues)\b",
+    re.IGNORECASE,
+)
+
+
+def _debug_write_text(debug_dir: Path | None, filename: str, content: str) -> None:
+    if debug_dir is None:
+        return
+    try:
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        (debug_dir / filename).write_text(content, encoding="utf-8")
+    except OSError:
+        logger.exception("Failed to write research debug file %s", filename)
+
+
+def _debug_write_messages(
+    debug_dir: Path | None,
+    filename: str,
+    messages: list[LLMMessage],
+) -> None:
+    parts = [f"--- ROLE: {msg.role} ---\n\n{msg.content}" for msg in messages]
+    _debug_write_text(debug_dir, filename, "\n\n".join(parts))
+
+
+async def _run_single_pass_analysis(
+    paper: ParsedPaper,
+    llm: LLMProvider,
+    model: str,
+    *,
+    instruction: str = "",
+    num_pages: int | None = None,
+    language: str = "en",
+    detail_level: str = "normal",
+    enrichment_block: str = "",
+    is_deepseek: bool = False,
+    debug_dir: Path | None = None,
+) -> str:
+    """Generate a slide manuscript in one LLM call for the non-deep mode."""
+    user_parts = [
+        f"## Paper Content\n\n{paper.to_markdown()}",
+        f"\n## Target Language\n\n{language}\n\n{_language_guidance(language)}",
+        f"\n## Target Slides\n\n{_target_slides_guidance(num_pages)}",
+        f"\n## Detail Level\n\n{detail_level}\n\n{DETAIL_GUIDANCE.get(detail_level, DETAIL_GUIDANCE['normal'])}",
+    ]
+    if enrichment_block:
+        user_parts.append(f"\n{enrichment_block}")
+    if instruction:
+        user_parts.append(f"\n## User Instruction\n\n{instruction}")
+    if is_deepseek:
+        user_parts.append("\n" + deepseek_research_guidance(detail_level))
+    user_parts.append(
+        "\n\nProduce the final slide manuscript now. Output only the slide manuscript: "
+        "no analysis notes, no quality review, no scoring, no preface. Use standalone "
+        "`---` lines only as slide delimiters."
+    )
+    messages = [
+        LLMMessage.system(SINGLE_PASS_SYSTEM_PROMPT),
+        LLMMessage.user("\n".join(user_parts)),
+    ]
+    _debug_write_messages(debug_dir, "research_single_pass_prompt.md", messages)
+    response = await llm.chat(
+        messages,
+        model,
+        temperature=0.45,
+        max_tokens=DEEPSEEK_MAX_TOKENS if is_deepseek else None,
+    )
+    _debug_write_text(debug_dir, "research_single_pass_response.md", response.content)
+    return response.content
 
 
 # ── Language guidance ───────────────────────────────────────────────────────────
@@ -202,6 +286,8 @@ async def analyze_paper(
     language: str = "en",
     detail_level: str = "normal",
     research_context: ResearchContext | None = None,
+    enable_deep_research: bool = False,
+    debug_dir: Path | None = None,
     on_progress: Callable[[str, float], None] | None = None,
 ) -> str:
     """Analyze a paper and produce a slide-structured manuscript via multi-pass.
@@ -215,6 +301,9 @@ async def analyze_paper(
         language: Target language for visible slide text.
         detail_level: Controls analysis depth (normal/high/very_high).
         research_context: Optional enrichment from external tools.
+        enable_deep_research: When True, use the 4-pass deep workflow. When
+            False, generate the manuscript with one compatibility call.
+        debug_dir: Optional directory for prompt/response audit files.
         on_progress: Optional callback invoked as (message, progress_fraction) after each pass.
 
     Returns:
@@ -230,6 +319,25 @@ async def analyze_paper(
     if research_context and (research_context.has_enrichment or research_context.errors):
         enrichment_block = research_context.enrichment_block_for_pass1()
         logger.info("Research: Pass 1 enrichment block (%d chars)", len(enrichment_block))
+
+    if not enable_deep_research:
+        logger.info("Research single-pass mode: manuscript generation...")
+        if on_progress:
+            on_progress("Generating manuscript", 0.24)
+        manuscript = await _run_single_pass_analysis(
+            paper,
+            llm,
+            model,
+            instruction=instruction,
+            num_pages=num_pages,
+            language=language,
+            detail_level=detail_level,
+            enrichment_block=enrichment_block,
+            is_deepseek=is_deepseek,
+            debug_dir=debug_dir,
+        )
+        _debug_write_text(debug_dir, "research_final_manuscript.md", manuscript)
+        return manuscript
 
     # ── Pass 1: Deep Reading ───────────────────────────────────────────────
     logger.info("Research Pass 1: Deep reading...")
@@ -251,13 +359,19 @@ async def analyze_paper(
         "in concrete prior art rather than vague claims."
     )
 
+    pass1_messages = [
+        LLMMessage.system(pass1_system),
+        LLMMessage.user("\n".join(pass1_user_parts)),
+    ]
+    _debug_write_messages(debug_dir, "research_pass1_prompt.md", pass1_messages)
     pass1_response = await llm.chat(
-        [LLMMessage.system(pass1_system), LLMMessage.user("\n".join(pass1_user_parts))],
+        pass1_messages,
         model,
         temperature=0.4,
         max_tokens=DEEPSEEK_MAX_TOKENS if is_deepseek else None,
     )
     deep_analysis = pass1_response.content
+    _debug_write_text(debug_dir, "research_pass1_response.md", deep_analysis)
     logger.info("Research Pass 1 complete (%d chars)", len(deep_analysis))
     if on_progress:
         on_progress("Pass 1/4 — Deep reading", 0.15)
@@ -276,13 +390,19 @@ async def analyze_paper(
         "and specify each slide's role, core insight, and visual strategy."
     )
 
+    pass2_messages = [
+        LLMMessage.system(pass2_system),
+        LLMMessage.user("\n".join(pass2_user_parts)),
+    ]
+    _debug_write_messages(debug_dir, "research_pass2_prompt.md", pass2_messages)
     pass2_response = await llm.chat(
-        [LLMMessage.system(pass2_system), LLMMessage.user("\n".join(pass2_user_parts))],
+        pass2_messages,
         model,
         temperature=0.5,
         max_tokens=DEEPSEEK_MAX_TOKENS if is_deepseek else None,
     )
     narrative_plan = pass2_response.content
+    _debug_write_text(debug_dir, "research_pass2_response.md", narrative_plan)
     logger.info("Research Pass 2 complete (%d chars)", len(narrative_plan))
     if on_progress:
         on_progress("Pass 2/4 — Narrative arc", 0.20)
@@ -310,13 +430,19 @@ async def analyze_paper(
         "Follow the narrative arc plan and the information aesthetics principles."
     )
 
+    pass3_messages = [
+        LLMMessage.system(pass3_system),
+        LLMMessage.user("\n".join(pass3_user_parts)),
+    ]
+    _debug_write_messages(debug_dir, "research_pass3_prompt.md", pass3_messages)
     pass3_response = await llm.chat(
-        [LLMMessage.system(pass3_system), LLMMessage.user("\n".join(pass3_user_parts))],
+        pass3_messages,
         model,
         temperature=0.5,
         max_tokens=DEEPSEEK_MAX_TOKENS if is_deepseek else None,
     )
     manuscript = pass3_response.content
+    _debug_write_text(debug_dir, "research_pass3_response.md", manuscript)
     logger.info("Research Pass 3 complete (%d chars)", len(manuscript))
     if on_progress:
         on_progress("Pass 3/4 — Manuscript", 0.25)
@@ -339,13 +465,20 @@ async def analyze_paper(
         "Otherwise, output QUALITY_CHECK_PASSED followed by the unchanged manuscript."
     )
 
+    pass4_messages = [
+        LLMMessage.system(pass4_system),
+        LLMMessage.user("\n".join(pass4_user_parts)),
+    ]
+    _debug_write_messages(debug_dir, "research_pass4_prompt.md", pass4_messages)
     pass4_response = await llm.chat(
-        [LLMMessage.system(pass4_system), LLMMessage.user("\n".join(pass4_user_parts))],
+        pass4_messages,
         model,
         temperature=0.3,
         max_tokens=DEEPSEEK_MAX_TOKENS if is_deepseek else None,
     )
+    _debug_write_text(debug_dir, "research_pass4_response.md", pass4_response.content)
     final_output = _extract_manuscript_from_review(pass4_response.content, manuscript)
+    _debug_write_text(debug_dir, "research_final_manuscript.md", final_output)
     logger.info("Research Pass 4 complete. Final manuscript: %d chars", len(final_output))
     if on_progress:
         on_progress("Pass 4/4 — Quality review", 0.28)
@@ -364,13 +497,20 @@ def _extract_manuscript_from_review(review_output: str, original_manuscript: str
     In all cases, we try to extract the manuscript (content after the last `---`
     slide separator pattern, or the full content if it looks like a manuscript).
     """
-    # If the review explicitly passed, return the original
-    if review_output.strip().startswith("QUALITY_CHECK_PASSED"):
-        # Remove the prefix and return the rest (which should be the manuscript)
-        remainder = review_output.replace("QUALITY_CHECK_PASSED", "", 1).strip()
-        if "---" in remainder:
-            return remainder
+    # If the review explicitly passed, keep Pass 3's clean manuscript. Some
+    # models prepend a scoring report before QUALITY_CHECK_PASSED and then echo
+    # the unchanged manuscript; using the original avoids leaking that report
+    # into downstream slide splitting.
+    if "QUALITY_CHECK_PASSED" in review_output:
         return original_manuscript
+
+    marker_extract = _extract_after_manuscript_marker(review_output)
+    if marker_extract:
+        return marker_extract
+
+    slide_heading_extract = _extract_from_first_numbered_slide(review_output)
+    if slide_heading_extract:
+        return slide_heading_extract
 
     # If the review contains a full revised manuscript (has slide separators)
     if review_output.count("---") >= 2:
@@ -379,7 +519,8 @@ def _extract_manuscript_from_review(review_output: str, original_manuscript: str
         lines = review_output.split("\n")
         manuscript_start = None
         for i, line in enumerate(lines):
-            if line.strip().startswith("## ") and i > 0:
+            stripped = line.strip()
+            if stripped.startswith("## ") and i > 0 and not _REVIEW_HEADING_RE.match(stripped):
                 # Check if there's a --- separator within the next 30 lines
                 for j in range(i, min(i + 30, len(lines))):
                     if lines[j].strip() == "---":
@@ -394,6 +535,31 @@ def _extract_manuscript_from_review(review_output: str, original_manuscript: str
     # Fallback: if we can't parse the review output, return the original
     logger.warning("Could not extract revised manuscript from review; using original")
     return original_manuscript
+
+
+def _extract_after_manuscript_marker(text: str) -> str | None:
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        if not _MANUSCRIPT_MARKER_RE.match(line.strip()):
+            continue
+        start = i + 1
+        while start < len(lines) and (
+            not lines[start].strip()
+            or lines[start].strip() == "---"
+            or lines[start].strip() == "QUALITY_CHECK_PASSED"
+        ):
+            start += 1
+        if start < len(lines):
+            return "\n".join(lines[start:]).strip()
+    return None
+
+
+def _extract_from_first_numbered_slide(text: str) -> str | None:
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        if _SLIDE_HEADING_RE.match(line.strip()):
+            return "\n".join(lines[i:]).strip()
+    return None
 
 
 def _target_slides_guidance(num_pages: int | None) -> str:

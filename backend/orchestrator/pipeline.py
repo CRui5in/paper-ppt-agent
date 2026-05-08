@@ -79,6 +79,7 @@ class GenerationRequest:
     detail_level: str = "normal"
     timeout_seconds: int | None = None
     style_overrides: dict | None = None  # {palette: [...], font: "...", density: "..."}
+    enable_deep_research: bool = False
     icon_library: str = "chunk"  # chunk / tabler-filled / tabler-outline
     deepseek_settings: dict | None = None
     openai_settings: dict | None = None
@@ -163,9 +164,15 @@ async def run_pipeline(
             data={"parse_info": parse_info} if parse_info else None,
         )
 
-        # Stage 2: Research agent (multi-pass deep analysis)
+        # Stage 2: Research agent
         set_usage_context(stage="research")
-        yield ProgressEvent("research", "started", "Deep reading: analyzing paper content...")
+        yield ProgressEvent(
+            "research",
+            "started",
+            "Deep reading: analyzing paper content..."
+            if request.enable_deep_research
+            else "Analyzing paper content...",
+        )
 
         # Optional Stage 2a: external enrichment runs BEFORE Pass 1 so the
         # related-work context is available where it actually matters
@@ -225,6 +232,8 @@ async def run_pipeline(
                     language=request.language,
                     detail_level=request.detail_level,
                     research_context=research_ctx,
+                    enable_deep_research=request.enable_deep_research,
+                    debug_dir=project_dir / "debug",
                     on_progress=_on_research_progress,
                 )
                 return result
@@ -254,7 +263,14 @@ async def run_pipeline(
 
         # Save manuscript and deep analysis artifacts
         (project_dir / "manuscript.md").write_text(manuscript, encoding="utf-8")
-        yield ProgressEvent("research", "complete", "Deep analysis complete (4-pass)", 0.30)
+        yield ProgressEvent(
+            "research",
+            "complete",
+            "Deep analysis complete (4-pass)"
+            if request.enable_deep_research
+            else "Paper analysis complete",
+            0.30,
+        )
 
         # Stage 3: Strategist agent
         set_usage_context(stage="strategy")

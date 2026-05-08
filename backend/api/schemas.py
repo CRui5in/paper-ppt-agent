@@ -76,6 +76,7 @@ class GenerationOptions(BaseModel):
     icon_library: str = "chunk"  # chunk / tabler-filled / tabler-outline
     timeout_seconds: int | None = Field(default=None, ge=1)
     style_overrides: StyleOverrides | None = None
+    enable_deep_research: bool = False
     enable_visual_critic: bool = False
     enable_icon: bool = False
     enable_icon_rag: bool = False

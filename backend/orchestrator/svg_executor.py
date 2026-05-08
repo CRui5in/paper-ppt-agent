@@ -521,6 +521,14 @@ async def generate_svg_pages(
                 f"{skeleton_block}"
             )
         )
+        try:
+            debug_dir = project_dir / "debug"
+            debug_dir.mkdir(parents=True, exist_ok=True)
+            prompt_file = debug_dir / f"executor_page_{page_num:02d}_prompt.md"
+            parts = [f"--- ROLE: {msg.role} ---\n\n{msg.content}" for msg in conversation]
+            prompt_file.write_text("\n\n".join(parts), encoding="utf-8")
+        except OSError:
+            pass
 
         snapshot = set_usage_context(stage="generation", page=page_num, attempt=1)
         try:
