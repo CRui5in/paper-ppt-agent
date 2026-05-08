@@ -74,6 +74,7 @@ Every presentation needs:
 ### 2.3 Assign Content to Each Slide
 
 For each slide, specify:
+- **Page type**: cover, chapter/transition, content, or ending. These are counted slides.
 - **Core insight**: The one thing the audience must remember from this slide.
 - **Key evidence**: Data, figure, or argument that supports the insight.
 - **Visual strategy**: How to present this (comparison, flow diagram, data table, before/after, etc.)
@@ -128,11 +129,12 @@ These tokens are the only valid way to reference extracted paper figures.
 
 Produce a Markdown document where each slide is separated by `---`. Each slide section should contain:
 
-1. **Slide title** as a `## Heading`
-2. **Core insight** as the first element (a bold statement or the most important bullet)
-3. **Supporting content** — bullets, data points, or structured blocks
-4. **Visual markers** and/or **figure tokens** where appropriate
-5. **Key data/numbers** highlighted in bold
+1. `<!-- page_type: cover|chapter|content|ending -->`
+2. **Slide title** as a `## Heading`
+3. **Core insight** as the first element (a bold statement or the most important bullet)
+4. **Supporting content** — bullets, data points, or structured blocks
+5. **Visual markers** and/or **figure tokens** where appropriate
+6. **Key data/numbers** highlighted in bold
 
 ---
 

@@ -55,6 +55,7 @@ For each slide, specify in this exact format:
 
 ```
 Slide N: [Title]
+  Page type: [cover/chapter/content/ending]
   Narrative role: [Hook/Tension/Core Insight/Mechanism/Evidence/Implications/Coda]
   Core insight: [The one thing the audience must remember]
   Key evidence: [Data point, figure, or argument that supports the insight]
@@ -67,6 +68,7 @@ Slide N: [Title]
 ## Design Guidelines
 
 - **No filler slides**: Every slide must earn its place. If a slide doesn't advance understanding, merge it or cut it.
+- **Structural budget**: Cover, chapter/transition, content, and ending pages are counted slides. Keep the requested budget stable.
 - **Narrative momentum**: Each slide should create anticipation for the next. The audience should always wonder "and then what?"
 - **Adapt to paper type**: A systems paper needs more mechanism slides; an empirical paper needs more evidence slides. Let the content dictate the structure, not a formula.
 - **Respect the audience**: Assume they're smart but not already familiar with this specific work. Explain jargon in context.

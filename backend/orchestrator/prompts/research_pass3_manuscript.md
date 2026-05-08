@@ -51,6 +51,7 @@ The paper content lists available figures with stable tokens `[[FIG:fig_id]]`. W
 Produce Markdown with `---` separating each slide. Each slide:
 
 ```markdown
+<!-- page_type: cover|chapter|content|ending -->
 ## Slide Title
 
 **Core insight statement** — the key takeaway as a powerful opening line.
@@ -64,6 +65,8 @@ Produce Markdown with `---` separating each slide. Each slide:
 [[FIG:fig_id]]
 — Brief note about what this figure shows
 ```
+
+Use one page type per slide. Cover, chapter/transition, content, and ending pages must match the target slide budget.
 
 ### Density Guidelines
 

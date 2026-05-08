@@ -26,6 +26,7 @@ from backend.orchestrator.provider_guidance import (
     deepseek_research_guidance,
     is_deepseek_provider,
 )
+from backend.orchestrator.manuscript import page_type_budget_guidance
 from backend.parser.paper_model import ParsedPaper
 
 if TYPE_CHECKING:
@@ -563,13 +564,11 @@ def _extract_from_first_numbered_slide(text: str) -> str | None:
 
 
 def _target_slides_guidance(num_pages: int | None) -> str:
-    if num_pages:
-        return (
-            f"Produce exactly {num_pages} slides. Use exactly {num_pages - 1} slide delimiter "
-            "lines. A slide delimiter is a line containing only `---`. Do not use standalone "
-            "`---` anywhere else."
-        )
-    return "Auto-determine based on content (typically 8-15 slides for a standard paper)"
+    delimiter_rule = (
+        "Use standalone `---` lines only as slide delimiters; for an exact target, "
+        "the delimiter count must be one less than the slide count."
+    )
+    return f"{page_type_budget_guidance(num_pages)}\n{delimiter_rule}"
 
 
 # ── Legacy single-pass for backward compat (revise pipeline) ────────────────
