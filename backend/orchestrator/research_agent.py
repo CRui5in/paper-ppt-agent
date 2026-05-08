@@ -26,7 +26,12 @@ from backend.orchestrator.provider_guidance import (
     deepseek_research_guidance,
     is_deepseek_provider,
 )
-from backend.orchestrator.manuscript import page_type_budget_guidance
+from backend.orchestrator.manuscript import (
+    extract_page_type,
+    page_type_budget,
+    page_type_budget_guidance,
+    split_manuscript_pages,
+)
 from backend.parser.paper_model import ParsedPaper
 
 if TYPE_CHECKING:
@@ -47,6 +52,7 @@ LEGACY_PROMPT = PROMPTS_DIR / "research.md"
 
 DEEPSEEK_MAX_TOKENS = 24576
 QUALITY_THRESHOLD = 28  # out of 35 (7 dimensions × 5 points each)
+MAX_MANUSCRIPT_ATTEMPTS = 2
 SINGLE_PASS_SYSTEM_PROMPT = (
     "You write slide-structured manuscripts from academic papers. "
     "Extract the paper's problem, method, evidence, and takeaway; turn them into "
@@ -105,7 +111,7 @@ async def _run_single_pass_analysis(
     user_parts = [
         f"## Paper Content\n\n{paper.to_markdown()}",
         f"\n## Target Language\n\n{language}\n\n{_language_guidance(language)}",
-        f"\n## Target Slides\n\n{_target_slides_guidance(num_pages)}",
+        f"\n## Target Slides\n\n{_target_slides_guidance(num_pages, detail_level)}",
         f"\n## Detail Level\n\n{detail_level}\n\n{DETAIL_GUIDANCE.get(detail_level, DETAIL_GUIDANCE['normal'])}",
     ]
     if enrichment_block:
@@ -119,19 +125,44 @@ async def _run_single_pass_analysis(
         "no analysis notes, no quality review, no scoring, no preface. Use standalone "
         "`---` lines only as slide delimiters."
     )
-    messages = [
+    base_messages = [
         LLMMessage.system(SINGLE_PASS_SYSTEM_PROMPT),
         LLMMessage.user("\n".join(user_parts)),
     ]
-    _debug_write_messages(debug_dir, "research_single_pass_prompt.md", messages)
-    response = await llm.chat(
-        messages,
-        model,
-        temperature=0.45,
-        max_tokens=DEEPSEEK_MAX_TOKENS if is_deepseek else None,
-    )
-    _debug_write_text(debug_dir, "research_single_pass_response.md", response.content)
-    return response.content
+    _debug_write_messages(debug_dir, "research_single_pass_prompt.md", base_messages)
+
+    last_error = ""
+    response_content = ""
+    for attempt in range(1, MAX_MANUSCRIPT_ATTEMPTS + 1):
+        messages = list(base_messages)
+        if last_error:
+            messages.append(
+                LLMMessage.user(_structure_retry_prompt(last_error, num_pages, detail_level))
+            )
+        response = await llm.chat(
+            messages,
+            model,
+            temperature=0.35 if attempt > 1 else 0.45,
+            max_tokens=DEEPSEEK_MAX_TOKENS if is_deepseek else None,
+        )
+        response_content = response.content
+        _debug_write_text(
+            debug_dir,
+            "research_single_pass_response.md"
+            if attempt == 1
+            else f"research_single_pass_response_attempt{attempt}.md",
+            response_content,
+        )
+        last_error = _manuscript_structure_error(
+            response_content,
+            num_pages,
+            detail_level,
+        ) or ""
+        if not last_error:
+            return response_content
+
+    logger.warning("Single-pass manuscript structure invalid after retry: %s", last_error)
+    return response_content
 
 
 # ── Language guidance ───────────────────────────────────────────────────────────
@@ -274,6 +305,72 @@ class ResearchContext:
         return "\n".join(parts)
 
 
+def _expected_slide_count(num_pages: int | None, detail_level: str = "normal") -> int:
+    return sum(page_type_budget(num_pages, detail_level).values())
+
+
+def _manuscript_structure_error(
+    manuscript: str,
+    num_pages: int | None,
+    detail_level: str = "normal",
+) -> str | None:
+    pages = split_manuscript_pages(manuscript)
+    expected_count = _expected_slide_count(num_pages, detail_level)
+    if len(pages) != expected_count:
+        return f"expected {expected_count} slides, got {len(pages)}"
+
+    expected_budget = page_type_budget(num_pages, detail_level)
+    seen = dict.fromkeys(expected_budget, 0)
+    missing_meta = []
+    for index, page in enumerate(pages, start=1):
+        if "page_type" not in page:
+            missing_meta.append(str(index))
+        page_type = extract_page_type(page)
+        if page_type in seen:
+            seen[page_type] += 1
+        else:
+            return f"slide {index} has unsupported page_type `{page_type}`"
+
+    if missing_meta:
+        return "missing page_type metadata on slides " + ", ".join(missing_meta[:8])
+
+    drift = [
+        f"{name}: expected {expected_budget[name]}, got {seen.get(name, 0)}"
+        for name in expected_budget
+        if seen.get(name, 0) != expected_budget[name]
+    ]
+    if drift:
+        return "page type budget mismatch (" + "; ".join(drift) + ")"
+
+    if pages and extract_page_type(pages[-1]) == "ending":
+        ending_text = pages[-1].lower()
+        closing_markers = (
+            "谢谢",
+            "thank you",
+            "thanks",
+            "q&a",
+            "questions",
+            "致谢",
+            "交流",
+        )
+        if not any(marker in ending_text for marker in closing_markers):
+            return "ending slide must be a closing/thanks page"
+    return None
+
+
+def _structure_retry_prompt(
+    error: str,
+    num_pages: int | None,
+    detail_level: str = "normal",
+) -> str:
+    return (
+        "The previous manuscript did not match the slide structure contract: "
+        f"{error}.\n\n"
+        "Regenerate the full slide manuscript only.\n"
+        f"{page_type_budget_guidance(num_pages, detail_level)}"
+    )
+
+
 # ── Main multi-pass analysis ───────────────────────────────────────────────────
 
 
@@ -383,7 +480,7 @@ async def analyze_paper(
 
     pass2_user_parts = [
         f"## Deep Analysis of the Paper\n\n{deep_analysis}",
-        f"\n## Target Slides\n\n{_target_slides_guidance(num_pages)}",
+        f"\n## Target Slides\n\n{_target_slides_guidance(num_pages, detail_level)}",
         f"\n## Detail Level\n\n{detail_level}",
     ]
     pass2_user_parts.append(
@@ -416,7 +513,7 @@ async def analyze_paper(
         f"## Deep Analysis\n\n{deep_analysis}",
         f"\n## Narrative Arc Plan\n\n{narrative_plan}",
         f"\n## Target Language\n\n{language}\n\n{_language_guidance(language)}",
-        f"\n## Target Slides\n\n{_target_slides_guidance(num_pages)}",
+        f"\n## Target Slides\n\n{_target_slides_guidance(num_pages, detail_level)}",
         f"\n## Detail Level\n\n{detail_level}\n\n{DETAIL_GUIDANCE.get(detail_level, DETAIL_GUIDANCE['normal'])}",
     ]
     if instruction:
@@ -431,19 +528,44 @@ async def analyze_paper(
         "Follow the narrative arc plan and the information aesthetics principles."
     )
 
-    pass3_messages = [
+    pass3_base_messages = [
         LLMMessage.system(pass3_system),
         LLMMessage.user("\n".join(pass3_user_parts)),
     ]
-    _debug_write_messages(debug_dir, "research_pass3_prompt.md", pass3_messages)
-    pass3_response = await llm.chat(
-        pass3_messages,
-        model,
-        temperature=0.5,
-        max_tokens=DEEPSEEK_MAX_TOKENS if is_deepseek else None,
-    )
-    manuscript = pass3_response.content
-    _debug_write_text(debug_dir, "research_pass3_response.md", manuscript)
+    _debug_write_messages(debug_dir, "research_pass3_prompt.md", pass3_base_messages)
+    manuscript = ""
+    last_structure_error = ""
+    for attempt in range(1, MAX_MANUSCRIPT_ATTEMPTS + 1):
+        pass3_messages = list(pass3_base_messages)
+        if last_structure_error:
+            pass3_messages.append(
+                LLMMessage.user(
+                    _structure_retry_prompt(last_structure_error, num_pages, detail_level)
+                )
+            )
+        pass3_response = await llm.chat(
+            pass3_messages,
+            model,
+            temperature=0.35 if attempt > 1 else 0.5,
+            max_tokens=DEEPSEEK_MAX_TOKENS if is_deepseek else None,
+        )
+        manuscript = pass3_response.content
+        _debug_write_text(
+            debug_dir,
+            "research_pass3_response.md"
+            if attempt == 1
+            else f"research_pass3_response_attempt{attempt}.md",
+            manuscript,
+        )
+        last_structure_error = _manuscript_structure_error(
+            manuscript,
+            num_pages,
+            detail_level,
+        ) or ""
+        if not last_structure_error:
+            break
+    if last_structure_error:
+        logger.warning("Pass 3 manuscript structure invalid after retry: %s", last_structure_error)
     logger.info("Research Pass 3 complete (%d chars)", len(manuscript))
     if on_progress:
         on_progress("Pass 3/4 — Manuscript", 0.25)
@@ -479,6 +601,11 @@ async def analyze_paper(
     )
     _debug_write_text(debug_dir, "research_pass4_response.md", pass4_response.content)
     final_output = _extract_manuscript_from_review(pass4_response.content, manuscript)
+    final_error = _manuscript_structure_error(final_output, num_pages, detail_level)
+    manuscript_error = _manuscript_structure_error(manuscript, num_pages, detail_level)
+    if final_error and not manuscript_error:
+        logger.warning("Pass 4 changed manuscript structure; keeping Pass 3 output: %s", final_error)
+        final_output = manuscript
     _debug_write_text(debug_dir, "research_final_manuscript.md", final_output)
     logger.info("Research Pass 4 complete. Final manuscript: %d chars", len(final_output))
     if on_progress:
@@ -563,12 +690,15 @@ def _extract_from_first_numbered_slide(text: str) -> str | None:
     return None
 
 
-def _target_slides_guidance(num_pages: int | None) -> str:
+def _target_slides_guidance(
+    num_pages: int | None,
+    detail_level: str = "normal",
+) -> str:
     delimiter_rule = (
         "Use standalone `---` lines only as slide delimiters; for an exact target, "
         "the delimiter count must be one less than the slide count."
     )
-    return f"{page_type_budget_guidance(num_pages)}\n{delimiter_rule}"
+    return f"{page_type_budget_guidance(num_pages, detail_level)}\n{delimiter_rule}"
 
 
 # ── Legacy single-pass for backward compat (revise pipeline) ────────────────

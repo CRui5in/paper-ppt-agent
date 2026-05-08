@@ -66,7 +66,7 @@ Produce Markdown with `---` separating each slide. Each slide:
 — Brief note about what this figure shows
 ```
 
-Use one page type per slide. Cover, chapter/transition, content, and ending pages must match the target slide budget.
+Use one page type per slide. Match the target slide budget. The ending page should be a closing/thanks page.
 
 ### Density Guidelines
 

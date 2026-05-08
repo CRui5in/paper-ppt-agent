@@ -11,6 +11,12 @@ _PAGE_TYPE_RE = re.compile(
 _HEADING_RE = re.compile(r"(?m)^#{1,3}\s+(.+?)\s*$")
 
 PageType = str
+DEFAULT_AUTO_SLIDE_COUNT = 18
+DETAIL_AUTO_SLIDE_COUNTS = {
+    "normal": 18,
+    "high": 22,
+    "very_high": 26,
+}
 
 
 def split_manuscript_pages(manuscript: str) -> list[str]:
@@ -54,17 +60,25 @@ def page_title(page_content: str) -> str:
     return first[:80] or "Untitled"
 
 
-def page_type_budget(num_pages: int | None) -> dict[PageType, int]:
+def auto_slide_count(detail_level: str = "normal") -> int:
+    return DETAIL_AUTO_SLIDE_COUNTS.get(detail_level, DEFAULT_AUTO_SLIDE_COUNT)
+
+
+def page_type_budget(
+    num_pages: int | None,
+    detail_level: str = "normal",
+) -> dict[PageType, int]:
     """Return the structural slide budget included in the total slide count."""
     if not num_pages:
-        return {"cover": 1, "chapter": 2, "content": 8, "ending": 1}
+        total = auto_slide_count(detail_level)
+        return {"cover": 1, "chapter": 3, "content": total - 5, "ending": 1}
     if num_pages <= 1:
         return {"cover": 0, "chapter": 0, "content": 1, "ending": 0}
     if num_pages == 2:
         return {"cover": 1, "chapter": 0, "content": 0, "ending": 1}
 
     chapter_count = 1
-    if num_pages >= 14:
+    if num_pages >= 12:
         chapter_count = 3
     elif num_pages >= 9:
         chapter_count = 2
@@ -78,18 +92,26 @@ def page_type_budget(num_pages: int | None) -> dict[PageType, int]:
     }
 
 
-def page_type_budget_guidance(num_pages: int | None) -> str:
-    budget = page_type_budget(num_pages)
+def page_type_budget_guidance(
+    num_pages: int | None,
+    detail_level: str = "normal",
+) -> str:
+    budget = page_type_budget(num_pages, detail_level)
     if num_pages:
         lead = f"Produce exactly {num_pages} slides; the structural pages are included in that total."
     else:
-        lead = "Auto-determine the final count, defaulting to 12-15 slides when the paper has enough content."
+        lead = (
+            f"Produce exactly {auto_slide_count(detail_level)} slides for detail level `{detail_level}`; "
+            "the structural pages are included in that total."
+        )
     return (
         f"{lead}\n"
         f"- Budget: cover {budget['cover']}, chapter/transition {budget['chapter']}, "
         f"content {budget['content']}, ending {budget['ending']}.\n"
         "- Put `<!-- page_type: cover|chapter|content|ending -->` at the top of every slide.\n"
-        "- Cover, chapter/transition, and ending pages are real slides, not styling guesses."
+        "- Cover, chapter/transition, and ending pages are real slides, not styling guesses.\n"
+        "- Place chapter/transition pages before major chapter blocks.\n"
+        "- The ending page is a closing/thanks slide, not another content summary."
     )
 
 

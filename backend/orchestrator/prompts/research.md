@@ -136,6 +136,8 @@ Produce a Markdown document where each slide is separated by `---`. Each slide s
 5. **Visual markers** and/or **figure tokens** where appropriate
 6. **Key data/numbers** highlighted in bold
 
+The ending page should be a closing/thanks page, not a final content summary.
+
 ---
 
 ## Pass 4: Self-Evaluation & Revision
