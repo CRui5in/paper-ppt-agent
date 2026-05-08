@@ -1,6 +1,6 @@
-import { AlertCircle, CheckCircle2, Circle, Download, FileSearch, Globe, GraduationCap, Loader2, Search, Settings, Sparkles, Target, Wand2 } from "lucide-react";
-import type { ComponentType, CSSProperties } from "react";
-import type { JobStatus, ResearchEnrichmentStats } from "../../lib/types";
+import { AlertCircle, CheckCircle2, ChevronDown, ChevronRight, Circle, Download, FileSearch, Globe, GraduationCap, Loader2, Search, Settings, Sparkles, Target, Wand2 } from "lucide-react";
+import { type ComponentType, type CSSProperties, useState } from "react";
+import type { JobStatus, ResearchEnrichmentStats, ResearchFinding } from "../../lib/types";
 import { useLocale } from "../../i18n";
 import { normalizeProgressStage, translateJobMessage, translateStageStatus } from "../../lib/i18nStatus";
 import { HoverTooltip } from "../common/HoverTooltip";
@@ -142,6 +142,7 @@ interface EnrichmentSummaryProps {
 
 function EnrichmentSummary({ stats }: EnrichmentSummaryProps) {
   const { t, locale } = useLocale();
+  const [expanded, setExpanded] = useState(false);
 
   const rows: Array<{
     icon: ComponentType<{ size?: number; style?: CSSProperties }>;
@@ -149,6 +150,7 @@ function EnrichmentSummary({ stats }: EnrichmentSummaryProps) {
     found?: number;
     error?: string;
     extra?: string;
+    findings?: ResearchFinding[];
   }> = [];
 
   if (stats.arxiv) {
@@ -157,6 +159,7 @@ function EnrichmentSummary({ stats }: EnrichmentSummaryProps) {
       name: t("progress.enrichment.arxiv"),
       found: stats.arxiv.found,
       error: stats.arxiv.error,
+      findings: stats.arxiv.findings,
     });
   }
   if (stats.semantic_scholar) {
@@ -165,6 +168,7 @@ function EnrichmentSummary({ stats }: EnrichmentSummaryProps) {
       name: t("progress.enrichment.scholar"),
       found: stats.semantic_scholar.found,
       error: stats.semantic_scholar.error,
+      findings: stats.semantic_scholar.findings,
     });
   }
   if (stats.web) {
@@ -174,8 +178,13 @@ function EnrichmentSummary({ stats }: EnrichmentSummaryProps) {
       found: stats.web.found,
       error: stats.web.error,
       extra: stats.web.provider,
+      findings: stats.web.findings,
     });
   }
+
+  // Collect all findings for the expandable section
+  const allFindings: ResearchFinding[] = rows.flatMap((r) => r.findings ?? []);
+  const hasFindings = allFindings.length > 0;
 
   return (
     <div className="enrichment-summary">
@@ -191,7 +200,9 @@ function EnrichmentSummary({ stats }: EnrichmentSummaryProps) {
             const Icon = row.icon;
             const hasError = !!row.error;
             const nameFull = row.name + (row.extra ? ` · ${row.extra}` : "");
-            const statusText = hasError
+            const statusText = stats.phase === "querying"
+              ? (locale === "zh" ? "查询中..." : "querying...")
+              : hasError
               ? translateEnrichmentError(row.error!, locale)
               : `${row.found ?? 0} ${t("progress.enrichment.found")}`;
             return (
@@ -220,11 +231,37 @@ function EnrichmentSummary({ stats }: EnrichmentSummaryProps) {
       )}
       {typeof stats.total_findings === "number" && stats.total_findings > 0 ? (
         <p className="enrichment-summary-total">
-          <CheckCircle2 size={11} style={{ marginRight: 4, verticalAlign: "middle", color: "var(--success)" }} />
-          {locale === "zh"
-            ? `共 ${stats.total_findings} 条相关信息已注入 Pass 1`
-            : `${stats.total_findings} findings injected into Pass 1`}
+          <span className="enrichment-total-icon-text">
+            <CheckCircle2 size={11} style={{ color: "var(--success)" }} />
+            {locale === "zh"
+              ? `共 ${stats.total_findings} 条相关信息已注入 Pass 1`
+              : `${stats.total_findings} findings injected into Pass 1`}
+          </span>
+          {hasFindings ? (
+            <button
+              className="enrichment-toggle-btn"
+              onClick={() => setExpanded((v) => !v)}
+              aria-label={expanded ? "collapse" : "expand"}
+            >
+              {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+            </button>
+          ) : null}
         </p>
+      ) : null}
+      {expanded && hasFindings ? (
+        <ul className="enrichment-findings-list">
+          {allFindings.map((f, i) => (
+            <li key={i} className="enrichment-finding-item">
+              <span className="enrichment-finding-source">{f.source === "semantic_scholar" ? "S2" : f.source === "arxiv" ? "ArX" : "Web"}</span>
+              <span className="enrichment-finding-title">
+                {f.url ? <a href={f.url} target="_blank" rel="noopener noreferrer">{f.title}</a> : f.title}
+              </span>
+              <span className="enrichment-finding-meta">
+                {f.year ?? ""}{f.citation_count != null ? ` · ${f.citation_count} cit` : ""}
+              </span>
+            </li>
+          ))}
+        </ul>
       ) : null}
     </div>
   );

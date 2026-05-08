@@ -67,6 +67,19 @@ wheels = [
 ]
 
 [[package]]
+name = "arxiv"
+version = "3.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "feedparser" },
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ff/78/1e93a001ed51b5114e1978247078fa3130cbb2794a520603949cbe9a7028/arxiv-3.0.0.tar.gz", hash = "sha256:c8cb0d31208afbc1ceb17bd3f9816c8d4c5ca1e0abf199d211e216715440498d", size = 67344, upload-time = "2026-04-12T22:48:59.623Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9d/0d/bb2ef604e5548ba73ba6326576908d8285ebf3468b02b86af83381c7c973/arxiv-3.0.0-py3-none-any.whl", hash = "sha256:8b4d4e2e336bfeb71ea653623d7dadb260f682f0475cee2aecad0560a23b34db", size = 11928, upload-time = "2026-04-12T22:48:58.44Z" },
+]
+
+[[package]]
 name = "certifi"
 version = "2026.2.25"
 source = { registry = "https://pypi.org/simple" }
@@ -533,6 +546,18 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/99/94/8bbb0b13f5b6cbe2492f0b7cbba5103e6163976a3331466d010e781fa189/fastar-0.11.0-pp311-pypy311_pp73-musllinux_1_2_armv7l.whl", hash = "sha256:a8c7bc8ac74cb359bb546b199288c83236372d094b402e557c197e85527495cd", size = 1038492, upload-time = "2026-04-13T17:10:41.939Z" },
     { url = "https://files.pythonhosted.org/packages/ed/d3/5b7df222a30eac2822ffd00f82fd4c2ce84fba4b369d1e1a03732fd177fc/fastar-0.11.0-pp311-pypy311_pp73-musllinux_1_2_i686.whl", hash = "sha256:587cbd060a2699c5f66281081395bb4657b2b1e0eef5c206b1aabf740019d670", size = 1080210, upload-time = "2026-04-13T17:10:58.462Z" },
     { url = "https://files.pythonhosted.org/packages/ec/6d/56ef943ea524784598c035ccbd42e564e937da0438ae3f55f0e76cb95571/fastar-0.11.0-pp311-pypy311_pp73-musllinux_1_2_x86_64.whl", hash = "sha256:6a1c56957ac82408be37a3f63594bc83e0919e8760492a4475e542f9f1828778", size = 1034886, upload-time = "2026-04-13T17:11:15.617Z" },
+]
+
+[[package]]
+name = "feedparser"
+version = "6.0.12"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "sgmllib3k" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/dc/79/db7edb5e77d6dfbc54d7d9df72828be4318275b2e580549ff45a962f6461/feedparser-6.0.12.tar.gz", hash = "sha256:64f76ce90ae3e8ef5d1ede0f8d3b50ce26bcce71dd8ae5e82b1cd2d4a5f94228", size = 286579, upload-time = "2025-09-10T13:33:59.486Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4e/eb/c96d64137e29ae17d83ad2552470bafe3a7a915e85434d9942077d7fd011/feedparser-6.0.12-py3-none-any.whl", hash = "sha256:6bbff10f5a52662c00a2e3f86a38928c37c48f77b3c511aedcd51de933549324", size = 81480, upload-time = "2025-09-10T13:33:58.022Z" },
 ]
 
 [[package]]
@@ -1156,6 +1181,7 @@ source = { editable = "." }
 dependencies = [
     { name = "aiofiles" },
     { name = "anthropic" },
+    { name = "arxiv" },
     { name = "fastapi", extra = ["standard"] },
     { name = "google-genai" },
     { name = "jinja2" },
@@ -1174,6 +1200,7 @@ dependencies = [
     { name = "python-pptx" },
     { name = "reportlab" },
     { name = "resvg-py" },
+    { name = "semanticscholar" },
     { name = "svglib" },
     { name = "uvicorn" },
     { name = "websockets" },
@@ -1190,6 +1217,7 @@ dev = [
 requires-dist = [
     { name = "aiofiles", specifier = ">=24.0.0" },
     { name = "anthropic", specifier = ">=0.40.0" },
+    { name = "arxiv", specifier = ">=2.1.0" },
     { name = "fastapi", extras = ["standard"], specifier = ">=0.115.0" },
     { name = "google-genai", specifier = ">=1.0.0" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27.0" },
@@ -1211,6 +1239,7 @@ requires-dist = [
     { name = "python-pptx", specifier = ">=0.6.21" },
     { name = "reportlab", specifier = ">=4.0.0" },
     { name = "resvg-py", specifier = ">=0.3.0" },
+    { name = "semanticscholar", specifier = ">=0.8.0" },
     { name = "svglib", specifier = ">=1.5.0" },
     { name = "uvicorn", specifier = ">=0.32.0" },
     { name = "websockets", specifier = ">=13.0" },
@@ -1966,6 +1995,19 @@ wheels = [
 ]
 
 [[package]]
+name = "semanticscholar"
+version = "0.12.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+    { name = "tenacity" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ff/1a/60fbb6096ed06d9d485e67b9778e60550ef12273ca124e9c82c06cf3b8d4/semanticscholar-0.12.0.tar.gz", hash = "sha256:174bb0129853480d2e659d8726ce0306a1f6f3817d1bc7a4bdd53b45a4984eb9", size = 30884, upload-time = "2026-03-29T20:07:23.842Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b7/84/9b273b7ae0946e1b311ec651605c9c229d0553863dcc6c5a315150c5f7ef/semanticscholar-0.12.0-py3-none-any.whl", hash = "sha256:bffa484dd08e5c8041eaec357a46ec44838c79a0cfd4ddea20d09f84d350a830", size = 28289, upload-time = "2026-03-29T20:07:23.019Z" },
+]
+
+[[package]]
 name = "sentry-sdk"
 version = "2.58.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1977,6 +2019,12 @@ sdist = { url = "https://files.pythonhosted.org/packages/26/b3/fb8291170d0e84417
 wheels = [
     { url = "https://files.pythonhosted.org/packages/fa/eb/d875669993b762556ae8b2efd86219943b4c0864d22204d622a9aee3052b/sentry_sdk-2.58.0-py2.py3-none-any.whl", hash = "sha256:688d1c704ddecf382ea3326f21a67453d4caa95592d722b7c780a36a9d23109e", size = 460919, upload-time = "2026-04-13T17:23:24.675Z" },
 ]
+
+[[package]]
+name = "sgmllib3k"
+version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/9e/bd/3704a8c3e0942d711c1299ebf7b9091930adae6675d7c8f476a7ce48653c/sgmllib3k-1.0.0.tar.gz", hash = "sha256:7868fb1c8bfa764c1ac563d3cf369c381d1325d36124933a726f29fcdaa812e9", size = 5750, upload-time = "2010-08-24T14:33:52.445Z" }
 
 [[package]]
 name = "shellingham"

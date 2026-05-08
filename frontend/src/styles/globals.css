@@ -1737,6 +1737,84 @@ html[lang="zh-CN"] .panel-title {
   margin: 0;
   font-size: 0.78rem;
   color: var(--muted);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.enrichment-total-icon-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.enrichment-toggle-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  transition: background 0.15s;
+}
+
+.enrichment-toggle-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.enrichment-findings-list {
+  list-style: none;
+  margin: 0.4rem 0 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.enrichment-finding-item {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 0.72rem;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.enrichment-finding-source {
+  flex-shrink: 0;
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--muted);
+}
+
+.enrichment-finding-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.enrichment-finding-title a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.enrichment-finding-title a:hover {
+  text-decoration: underline;
+}
+
+.enrichment-finding-meta {
+  flex-shrink: 0;
+  font-size: 0.65rem;
+  color: var(--muted);
+  opacity: 0.7;
 }
 
 .progress-bar {
@@ -2272,6 +2350,12 @@ html[lang="zh-CN"] .panel-title {
 
 .options-icon-section {
   margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--line);
+}
+
+.font-section-field {
+  margin-top: 1rem;
   padding-top: 0.75rem;
   border-top: 1px solid var(--line);
 }

@@ -52,16 +52,29 @@ export interface ResearchConfig {
   arxiv_search_enabled?: boolean;
   semantic_scholar_enabled?: boolean;
   web_search_enabled?: boolean;
+  semantic_scholar_api_key?: string;
   tavily_api_key?: string;
   serpapi_key?: string;
   max_results_per_source?: number;
   relevance_filter?: boolean;
 }
 
+export interface ResearchFinding {
+  source: string;
+  title: string;
+  abstract?: string;
+  authors?: string[];
+  year?: number | null;
+  citation_count?: number | null;
+  url?: string;
+  relevance_note?: string;
+}
+
 export interface ResearchEnrichmentStats {
-  arxiv?: { found: number; error?: string };
-  semantic_scholar?: { found: number; error?: string };
-  web?: { found: number; error?: string; provider?: string };
+  phase?: "querying";
+  arxiv?: { found: number; error?: string; findings?: ResearchFinding[] };
+  semantic_scholar?: { found: number; error?: string; findings?: ResearchFinding[] };
+  web?: { found: number; error?: string; provider?: string; findings?: ResearchFinding[] };
   total_findings?: number;
   filtered_findings?: number;
 }

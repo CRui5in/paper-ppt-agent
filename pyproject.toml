@@ -27,6 +27,9 @@ dependencies = [
     "resvg-py>=0.3.0",
     "numpy>=1.20.0",
     "lxml>=5.0.0",
+    # Research enrichment
+    "arxiv>=2.1.0",
+    "semanticscholar>=0.8.0",
     # Utilities
     "pydantic>=2.11.0",
     "pydantic-settings>=2.6.0",

@@ -68,26 +68,32 @@ class EnrichmentStats:
     web_provider: str | None = None
     total_findings: int = 0
     filtered_findings: int = 0
+    findings: list[ResearchFinding] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
             "total_findings": self.total_findings,
             "filtered_findings": self.filtered_findings,
         }
-        def _block(found: int, error: str | None, provider: str | None = None) -> dict[str, Any]:
+        def _block(found: int, error: str | None, provider: str | None = None, items: list[ResearchFinding] | None = None) -> dict[str, Any]:
             block: dict[str, Any] = {"found": found}
             if error:
                 block["error"] = error
             if provider:
                 block["provider"] = provider
+            if items:
+                block["findings"] = [f.to_dict() for f in items]
             return block
 
         if self.arxiv_found or self.arxiv_error is not None:
-            out["arxiv"] = _block(self.arxiv_found, self.arxiv_error)
+            arxiv_items = [f for f in self.findings if f.source == "arxiv"]
+            out["arxiv"] = _block(self.arxiv_found, self.arxiv_error, items=arxiv_items if arxiv_items else None)
         if self.scholar_found or self.scholar_error is not None:
-            out["semantic_scholar"] = _block(self.scholar_found, self.scholar_error)
+            scholar_items = [f for f in self.findings if f.source == "semantic_scholar"]
+            out["semantic_scholar"] = _block(self.scholar_found, self.scholar_error, items=scholar_items if scholar_items else None)
         if self.web_found or self.web_error is not None or self.web_provider:
-            out["web"] = _block(self.web_found, self.web_error, self.web_provider)
+            web_items = [f for f in self.findings if f.source == "web"]
+            out["web"] = _block(self.web_found, self.web_error, self.web_provider, items=web_items if web_items else None)
         return out
 
 
@@ -116,15 +122,18 @@ async def enrich_context(
         await _enrich_arxiv(ctx, stats, paper_title, paper_abstract, config.max_results_per_source)
 
     if config.semantic_scholar_enabled and paper_title:
-        await _enrich_semantic_scholar(ctx, stats, paper_title, config.max_results_per_source)
+        await _enrich_semantic_scholar(ctx, stats, paper_title, config.max_results_per_source, config.semantic_scholar_api_key)
 
     if config.web_search_enabled:
         await _enrich_web_search(ctx, stats, paper_title, config)
 
     # Dedupe + drop the paper itself.
     ctx.findings = _dedupe_findings(ctx.findings, paper_title)
+    if config.relevance_filter:
+        ctx.findings = _filter_relevant_findings(ctx.findings, paper_title, paper_abstract)
     stats.total_findings = len(ctx.findings)
-    stats.filtered_findings = stats.total_findings  # Updated later if relevance filter runs.
+    stats.filtered_findings = stats.total_findings
+    stats.findings = list(ctx.findings)
 
     return stats
 
@@ -188,12 +197,13 @@ async def _enrich_semantic_scholar(
     stats: EnrichmentStats,
     paper_title: str,
     max_results: int,
+    api_key: str | None = None,
 ) -> None:
     ctx.queries_used.append(f"semantic_scholar: {paper_title[:80]}")
     try:
         from semanticscholar import AsyncSemanticScholar  # type: ignore[import-not-found]
 
-        sch = AsyncSemanticScholar()
+        sch = AsyncSemanticScholar(api_key=api_key or None, timeout=60)
         results = await sch.search_paper(
             paper_title,
             limit=max_results,
@@ -333,6 +343,8 @@ _STOP_WORDS = frozenset({
     "these", "those", "it", "its", "as", "at", "which", "but", "not", "no",
     "nor", "so", "if", "than", "too", "very", "can", "will", "just", "should",
     "now", "via", "using", "based", "towards", "toward", "via",
+    "paper", "method", "learning", "network", "net", "fine", "grained",
+    "refine", "refinement", "model", "models", "approach",
 })
 
 
@@ -388,3 +400,38 @@ def _dedupe_findings(findings: list[ResearchFinding], paper_title: str) -> list[
     # impact signal.
     out.sort(key=lambda f: (-(f.citation_count or 0), f.source))
     return out
+
+
+def _filter_relevant_findings(
+    findings: list[ResearchFinding],
+    paper_title: str,
+    paper_abstract: str,
+) -> list[ResearchFinding]:
+    terms = _relevance_terms(paper_title, paper_abstract)
+    if len(terms) < 2:
+        return findings
+
+    out: list[ResearchFinding] = []
+    for finding in findings:
+        haystack = _normalize_title(f"{finding.title} {finding.abstract}")
+        matched = [term for term in terms if term in haystack]
+        if len(matched) < 2:
+            continue
+        finding.relevance_note = "Matched: " + ", ".join(matched[:5])
+        out.append(finding)
+    return out
+
+
+def _relevance_terms(title: str, abstract: str) -> list[str]:
+    seed = f"{title} {abstract}".lower()
+    terms: list[str] = []
+    seen: set[str] = set()
+    for match in _ASCII_TOKEN.findall(seed):
+        term = match.lower()
+        if term in _STOP_WORDS or len(term) < 3 or term in seen:
+            continue
+        seen.add(term)
+        terms.append(term)
+        if len(terms) >= 12:
+            break
+    return terms

@@ -440,6 +440,27 @@ export function OptionsPanel(props: OptionsPanelProps) {
                 </span>
               </span>
             </label>
+            {props.researchConfig.semantic_scholar_enabled ? (
+              <div className="options-icon-sub">
+                <label className="form-field options-api-key-field">
+                  <span>
+                    <Key size={12} style={{ marginRight: 4, verticalAlign: "middle" }} />
+                    {t("options.semanticScholarApiKey")}
+                  </span>
+                  <input
+                    type="password"
+                    value={props.researchConfig.semantic_scholar_api_key ?? ""}
+                    onChange={(event) => {
+                      props.onResearchConfigChange({
+                        ...props.researchConfig,
+                        semantic_scholar_api_key: event.target.value || undefined,
+                      });
+                    }}
+                    placeholder={t("options.semanticScholarApiKeyPlaceholder")}
+                  />
+                </label>
+              </div>
+            ) : null}
 
             {/* Web search toggle */}
             <label className="visual-qa-field">
@@ -528,7 +549,7 @@ export function OptionsPanel(props: OptionsPanelProps) {
         ) : null}
       </div>
 
-      <label className="form-field">
+      <label className="form-field font-section-field">
         <span>{t("options.customFont")}</span>
         <FontSelector
           value={props.customFont}

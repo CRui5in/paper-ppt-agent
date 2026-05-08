@@ -6,6 +6,7 @@ Ties together: parsing → research → strategist → SVG executor → finalize
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import datetime
@@ -59,6 +60,41 @@ def _format_enrichment_message(stats) -> str:
     if not bits:
         return "External research returned no results"
     return f"External research — {', '.join(bits)}"
+
+
+def _querying_enrichment_payload(config: ResearchConfig) -> dict:
+    payload: dict = {"phase": "querying", "total_findings": 0, "filtered_findings": 0}
+    if config.arxiv_search_enabled:
+        payload["arxiv"] = {"found": 0}
+    if config.semantic_scholar_enabled:
+        payload["semantic_scholar"] = {"found": 0}
+    if config.web_search_enabled:
+        provider = "tavily" if config.tavily_api_key else "serpapi" if config.serpapi_key else None
+        web: dict = {"found": 0}
+        if provider:
+            web["provider"] = provider
+        payload["web"] = web
+    return payload
+
+
+def _write_enrichment_debug(project_dir: Path, ctx: ResearchContext, stats) -> None:
+    debug_dir = project_dir / "debug"
+    try:
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        payload = stats.to_dict()
+        payload["queries_used"] = list(ctx.queries_used)
+        (debug_dir / "research_enrichment_stats.json").write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        block = ctx.enrichment_block_for_pass1()
+        if block:
+            (debug_dir / "research_enrichment_pass1_block.md").write_text(
+                block,
+                encoding="utf-8",
+            )
+    except OSError:
+        pass
 
 
 @dataclass
@@ -195,7 +231,7 @@ async def run_pipeline(
                 "progress",
                 "Querying external research sources...",
                 0.10,
-                data={"enrichment": {"phase": "querying"}},
+                data={"enrichment": _querying_enrichment_payload(research_cfg)},
             )
             stats = await enrich_context(
                 research_ctx,
@@ -203,6 +239,7 @@ async def run_pipeline(
                 paper_abstract=paper.abstract,
                 config=research_cfg,
             )
+            _write_enrichment_debug(project_dir, research_ctx, stats)
             yield ProgressEvent(
                 "research",
                 "progress",

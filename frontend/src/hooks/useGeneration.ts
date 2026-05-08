@@ -13,6 +13,7 @@ import type {
   ProviderListItem,
   RefineRequestPayload,
   ResearchEnrichmentStats,
+  ResearchConfig,
   UploadResponse,
 } from "../lib/types";
 import { openJobSocket } from "../lib/ws";
@@ -289,7 +290,43 @@ function createRunSnapshot(
     currentRunConfig: params?.currentRunConfig,
     connectionStatus: params?.connectionStatus ?? "disconnected",
     lastSeq: params?.lastSeq,
+    enrichmentStats: params?.enrichmentStats,
   };
+}
+
+function hasResearchSources(config?: ResearchConfig): boolean {
+  return Boolean(
+    config?.arxiv_search_enabled ||
+      config?.semantic_scholar_enabled ||
+      config?.web_search_enabled,
+  );
+}
+
+function buildEnrichmentPlaceholder(config?: ResearchConfig): ResearchEnrichmentStats | undefined {
+  if (!hasResearchSources(config)) {
+    return undefined;
+  }
+  const stats: ResearchEnrichmentStats = { phase: "querying", total_findings: 0, filtered_findings: 0 };
+  if (config?.arxiv_search_enabled) {
+    stats.arxiv = { found: 0 };
+  }
+  if (config?.semantic_scholar_enabled) {
+    stats.semantic_scholar = { found: 0 };
+  }
+  if (config?.web_search_enabled) {
+    stats.web = {
+      found: 0,
+      provider: config.tavily_api_key ? "tavily" : config.serpapi_key ? "serpapi" : undefined,
+    };
+  }
+  return stats;
+}
+
+function normalizeEnrichmentPayload(raw: unknown, fallback?: ResearchEnrichmentStats) {
+  if (!raw || typeof raw !== "object") {
+    return fallback;
+  }
+  return raw as ResearchEnrichmentStats;
 }
 
 function applyRunToCurrent(run?: RunSnapshot) {
@@ -356,6 +393,7 @@ function normalizeStoredRun(jobId: string, run?: Partial<RunSnapshot>): RunSnaps
     result: run?.result,
     currentRunConfig: run?.currentRunConfig,
     connectionStatus: "disconnected",
+    enrichmentStats: run?.enrichmentStats,
   });
 }
 
@@ -412,6 +450,7 @@ export const useGeneration = create<GenerationState>()(
             options: payload.options,
             parentJobId: null,
           },
+          enrichmentStats: buildEnrichmentPlaceholder(payload.options.research_config),
           error: undefined,
           result: undefined,
           selectedSlide: undefined,
@@ -456,6 +495,7 @@ export const useGeneration = create<GenerationState>()(
             options: payload.options,
             parentJobId: payload.job_id,
           },
+          enrichmentStats: buildEnrichmentPlaceholder(payload.options.research_config),
           error: undefined,
           result: undefined,
           selectedSlide: undefined,
@@ -616,14 +656,7 @@ export const useGeneration = create<GenerationState>()(
               let enrichmentStats = currentRun.enrichmentStats;
               const rawEnrichment = (event.data as { enrichment?: unknown }).enrichment;
               if (rawEnrichment && typeof rawEnrichment === "object") {
-                const candidate = rawEnrichment as ResearchEnrichmentStats & { phase?: string };
-                if (candidate.phase !== "querying") {
-                  enrichmentStats = candidate;
-                } else if (!enrichmentStats) {
-                  // Show a placeholder so the panel renders the section
-                  // immediately instead of waiting for the result frame.
-                  enrichmentStats = { total_findings: 0 };
-                }
+                enrichmentStats = normalizeEnrichmentPayload(rawEnrichment, enrichmentStats);
               }
 
               const updatedRun: RunSnapshot = {

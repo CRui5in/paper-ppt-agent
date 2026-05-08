@@ -59,10 +59,11 @@ class ResearchConfig(BaseModel):
     arxiv_search_enabled: bool = False
     semantic_scholar_enabled: bool = False
     web_search_enabled: bool = False
+    semantic_scholar_api_key: str | None = None
     tavily_api_key: str | None = None
     serpapi_key: str | None = None
     # Maximum candidates to fetch per source before relevance filtering.
-    max_results_per_source: int = 5
+    max_results_per_source: int = 20
     # When True, run a lightweight relevance filter pass before injecting findings.
     relevance_filter: bool = True
 

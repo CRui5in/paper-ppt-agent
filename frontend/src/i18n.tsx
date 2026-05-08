@@ -129,6 +129,8 @@ const translations: Record<Locale, Dictionary> = {
     "options.semanticScholar": "Semantic Scholar citations",
     "options.semanticScholarTooltip":
       "Look up citation count, year, and top authors on Semantic Scholar. Used to weight related-work findings by impact.",
+    "options.semanticScholarApiKey": "Semantic Scholar API Key",
+    "options.semanticScholarApiKeyPlaceholder": "Optional — higher rate limits with key",
     "options.webSearch": "Web discussions",
     "options.webSearchTooltip":
       "Search Tavily or SerpAPI for blog posts, critiques, and follow-up discussions. Quality varies — best for impact slides, not core technical content.",
@@ -439,6 +441,8 @@ const translations: Record<Locale, Dictionary> = {
     "options.semanticScholar": "Semantic Scholar 引用",
     "options.semanticScholarTooltip":
       "在 Semantic Scholar 查询引用数、发表年份和高影响力作者，用于按影响力加权相关工作。",
+    "options.semanticScholarApiKey": "Semantic Scholar API Key",
+    "options.semanticScholarApiKeyPlaceholder": "可选 — 配置后可提升请求速率",
     "options.webSearch": "网页讨论搜索",
     "options.webSearchTooltip":
       "通过 Tavily 或 SerpAPI 搜索博客、评论和后续讨论。结果质量不稳定，建议用于「影响力」页而非核心技术内容。",
