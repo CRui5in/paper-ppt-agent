@@ -11,11 +11,11 @@ _PAGE_TYPE_RE = re.compile(
 _HEADING_RE = re.compile(r"(?m)^#{1,3}\s+(.+?)\s*$")
 
 PageType = str
-DEFAULT_AUTO_SLIDE_COUNT = 18
-DETAIL_AUTO_SLIDE_COUNTS = {
-    "normal": 18,
-    "high": 22,
-    "very_high": 26,
+DEFAULT_AUTO_SLIDE_RANGE = (16, 20)
+DETAIL_AUTO_SLIDE_RANGES = {
+    "normal": (16, 20),
+    "high": (20, 26),
+    "very_high": (24, 32),
 }
 
 
@@ -60,8 +60,8 @@ def page_title(page_content: str) -> str:
     return first[:80] or "Untitled"
 
 
-def auto_slide_count(detail_level: str = "normal") -> int:
-    return DETAIL_AUTO_SLIDE_COUNTS.get(detail_level, DEFAULT_AUTO_SLIDE_COUNT)
+def auto_slide_range(detail_level: str = "normal") -> tuple[int, int]:
+    return DETAIL_AUTO_SLIDE_RANGES.get(detail_level, DEFAULT_AUTO_SLIDE_RANGE)
 
 
 def page_type_budget(
@@ -70,8 +70,8 @@ def page_type_budget(
 ) -> dict[PageType, int]:
     """Return the structural slide budget included in the total slide count."""
     if not num_pages:
-        total = auto_slide_count(detail_level)
-        return {"cover": 1, "chapter": 3, "content": total - 5, "ending": 1}
+        min_pages, _max_pages = auto_slide_range(detail_level)
+        return {"cover": 1, "chapter": 3, "content": min_pages - 5, "ending": 1}
     if num_pages <= 1:
         return {"cover": 0, "chapter": 0, "content": 1, "ending": 0}
     if num_pages == 2:
@@ -100,9 +100,18 @@ def page_type_budget_guidance(
     if num_pages:
         lead = f"Produce exactly {num_pages} slides; the structural pages are included in that total."
     else:
+        min_pages, max_pages = auto_slide_range(detail_level)
         lead = (
-            f"Produce exactly {auto_slide_count(detail_level)} slides for detail level `{detail_level}`; "
-            "the structural pages are included in that total."
+            f"Choose {min_pages}-{max_pages} slides for detail level `{detail_level}` "
+            "based on paper complexity; structural pages are included."
+        )
+        return (
+            f"{lead}\n"
+            "- Budget: cover 1, chapter/transition 3-5, ending 1; use remaining slides for content.\n"
+            "- Put `<!-- page_type: cover|chapter|content|ending -->` at the top of every slide.\n"
+            "- Cover, chapter/transition, and ending pages are real slides, not styling guesses.\n"
+            "- Place chapter/transition pages before major chapter blocks.\n"
+            "- The ending page is a closing/thanks slide, not another content summary."
         )
     return (
         f"{lead}\n"

@@ -95,5 +95,5 @@ def test_manuscript_structure_rejects_summary_as_ending():
 def test_target_slide_guidance_expands_for_very_high_detail():
     guidance = _target_slides_guidance(None, "very_high")
 
-    assert "Produce exactly 26 slides" in guidance
-    assert "content 21" in guidance
+    assert "Choose 24-32 slides" in guidance
+    assert "chapter/transition 3-5" in guidance

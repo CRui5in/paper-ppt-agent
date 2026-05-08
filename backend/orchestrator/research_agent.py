@@ -27,6 +27,7 @@ from backend.orchestrator.provider_guidance import (
     is_deepseek_provider,
 )
 from backend.orchestrator.manuscript import (
+    auto_slide_range,
     extract_page_type,
     page_type_budget,
     page_type_budget_guidance,
@@ -315,12 +316,7 @@ def _manuscript_structure_error(
     detail_level: str = "normal",
 ) -> str | None:
     pages = split_manuscript_pages(manuscript)
-    expected_count = _expected_slide_count(num_pages, detail_level)
-    if len(pages) != expected_count:
-        return f"expected {expected_count} slides, got {len(pages)}"
-
-    expected_budget = page_type_budget(num_pages, detail_level)
-    seen = dict.fromkeys(expected_budget, 0)
+    seen = {"cover": 0, "chapter": 0, "content": 0, "ending": 0}
     missing_meta = []
     for index, page in enumerate(pages, start=1):
         if "page_type" not in page:
@@ -334,13 +330,31 @@ def _manuscript_structure_error(
     if missing_meta:
         return "missing page_type metadata on slides " + ", ".join(missing_meta[:8])
 
-    drift = [
-        f"{name}: expected {expected_budget[name]}, got {seen.get(name, 0)}"
-        for name in expected_budget
-        if seen.get(name, 0) != expected_budget[name]
-    ]
-    if drift:
-        return "page type budget mismatch (" + "; ".join(drift) + ")"
+    if num_pages:
+        expected_count = _expected_slide_count(num_pages, detail_level)
+        if len(pages) != expected_count:
+            return f"expected {expected_count} slides, got {len(pages)}"
+
+        expected_budget = page_type_budget(num_pages, detail_level)
+        drift = [
+            f"{name}: expected {expected_budget[name]}, got {seen.get(name, 0)}"
+            for name in expected_budget
+            if seen.get(name, 0) != expected_budget[name]
+        ]
+        if drift:
+            return "page type budget mismatch (" + "; ".join(drift) + ")"
+    else:
+        min_pages, max_pages = auto_slide_range(detail_level)
+        if not min_pages <= len(pages) <= max_pages:
+            return f"expected {min_pages}-{max_pages} slides, got {len(pages)}"
+        if seen["cover"] != 1:
+            return f"expected 1 cover slide, got {seen['cover']}"
+        if seen["ending"] != 1:
+            return f"expected 1 ending slide, got {seen['ending']}"
+        if not 3 <= seen["chapter"] <= 5:
+            return f"expected 3-5 chapter slides, got {seen['chapter']}"
+        if seen["content"] < 1:
+            return "expected at least 1 content slide"
 
     if pages and extract_page_type(pages[-1]) == "ending":
         ending_text = pages[-1].lower()
