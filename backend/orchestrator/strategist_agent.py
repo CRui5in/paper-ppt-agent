@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from pathlib import Path
@@ -9,7 +10,11 @@ from pathlib import Path
 from backend.config import CANVAS_FORMATS, DESIGN_STYLES, settings
 from backend.generator.icon_index import get_icon_index
 from backend.llm import LLMMessage, LLMProvider, LLMResponse
-from backend.orchestrator.manuscript import count_manuscript_pages
+from backend.orchestrator.manuscript import (
+    count_manuscript_pages,
+    format_page_inventory,
+    page_inventory,
+)
 from backend.orchestrator.provider_guidance import (
     deepseek_strategy_guidance,
     is_deepseek_provider,
@@ -137,7 +142,18 @@ async def _retrieve_icon_candidates(
     return "\n".join(lines)
 
 
-def _design_spec_validation_error(content: str) -> str | None:
+def _extract_design_spec_section(content: str, roman: str) -> str:
+    pattern = rf"(?ims)^#+\s*{re.escape(roman)}\.\s+.*?(?=^#+\s*[IVXLCDM]+\.\s+|\Z)"
+    match = re.search(pattern, content)
+    return match.group(0) if match else ""
+
+
+def _design_spec_validation_error(
+    content: str,
+    *,
+    expected_page_count: int | None = None,
+    expected_inventory: list[dict[str, str | int]] | None = None,
+) -> str | None:
     text = content.strip()
     if len(text) < 1200:
         return f"design_spec.md is too short ({len(text)} characters)"
@@ -153,6 +169,45 @@ def _design_spec_validation_error(content: str) -> str | None:
         pattern = rf"(?im)^#+\s*{roman}\.\s+.*{re.escape(title)}"
         if not re.search(pattern, text):
             return f"design_spec.md is missing section {roman}. {title}"
+
+    if expected_page_count is not None:
+        count_match = re.search(r"(?im)\bPage Count\s*[:：]\s*(\d+)\b", text)
+        if count_match and int(count_match.group(1)) != expected_page_count:
+            return (
+                f"Page Count is {count_match.group(1)}, expected {expected_page_count}"
+            )
+
+        outline = _extract_design_spec_section(text, "IX")
+        page_nums = [
+            int(match.group(1))
+            for match in re.finditer(
+                r"(?i)\b(?:page|slide)\s*0*(\d+)\b", outline
+            )
+        ]
+        if page_nums:
+            if max(page_nums) > expected_page_count:
+                return (
+                    f"Content Outline references page {max(page_nums)}, "
+                    f"expected no more than {expected_page_count}"
+                )
+            if len(set(page_nums)) != expected_page_count:
+                return (
+                    f"Content Outline lists {len(set(page_nums))} unique pages, "
+                    f"expected {expected_page_count}"
+                )
+
+    if expected_inventory:
+        outline = _extract_design_spec_section(text, "IX")
+        missing_types = []
+        for item in expected_inventory:
+            page_num = item["page"]
+            page_type = str(item["type"])
+            page_pattern = rf"(?is)\b(?:page|slide)\s*0*{page_num}\b(.+?)(?=\b(?:page|slide)\s*0*\d+\b|\Z)"
+            page_match = re.search(page_pattern, outline)
+            if page_match and page_type not in page_match.group(0).lower():
+                missing_types.append(f"{page_num}:{page_type}")
+        if missing_types:
+            return "Content Outline page types do not match manuscript: " + ", ".join(missing_types[:5])
     return None
 
 
@@ -218,9 +273,13 @@ async def create_design_spec(
 
     # Count pages in manuscript
     page_count = count_manuscript_pages(manuscript)
+    inventory = page_inventory(manuscript)
+    inventory_block = format_page_inventory(manuscript)
+    enforce_page_types = "<!--" in manuscript and "page_type" in manuscript
 
     user_parts = [
         f"## Manuscript\n\n{manuscript}",
+        f"\n## Manuscript Page Inventory\n\n{inventory_block}",
         f"\n## Canvas Format: {fmt['name']} ({fmt['ratio']}), viewBox: `{fmt['viewbox']}`",
         f"\n## Design Style: {style_info['name']}",
         f"\n## Page Count: {page_count}",
@@ -242,6 +301,8 @@ async def create_design_spec(
             "- Color scheme & Typography: defined by the selected template (see Template Reference below)",
             "\n## Hard Constraints",
             "- The template's color scheme, typography, and page structure MUST take precedence over any style defaults.",
+            f"- Page contract: exactly {page_count} pages; page N in Section IX must match manuscript page N.",
+            "- Do not add, remove, or reorder cover, chapter/transition, content, or ending pages.",
             f"- The visible slide language must be `{language}`.",
             f"- {_language_constraint(language)}",
             "- Detail level `normal` should keep pages concise, `high` should allow moderately denser explanatory content, and `very_high` should accommodate richer explanations and fuller evidence coverage without becoming unreadable.",
@@ -254,6 +315,8 @@ async def create_design_spec(
             f"- Typography: Sans-serif (Inter/Arial for body, bold for headings)",
             "\n## Hard Constraints",
             "- Respect the selected design style. Do not silently fall back to a default academic theme when another style is selected.",
+            f"- Page contract: exactly {page_count} pages; page N in Section IX must match manuscript page N.",
+            "- Do not add, remove, or reorder cover, chapter/transition, content, or ending pages.",
             f"- The visible slide language must be `{language}`.",
             f"- {_language_constraint(language)}",
             "- Detail level `normal` should keep pages concise, `high` should allow moderately denser explanatory content, and `very_high` should accommodate richer explanations and fuller evidence coverage without becoming unreadable.",
@@ -356,7 +419,7 @@ async def create_design_spec(
 
     user_parts.append(
         "\n\nGenerate the complete design_spec.md following the template structure. "
-        "All 11 sections (I through XI) must be present."
+        "All 11 sections (I through XI) must be present. In Section IX, list each page once with its page type."
     )
 
     base_messages = [
@@ -395,7 +458,11 @@ async def create_design_spec(
             max_tokens=DESIGN_SPEC_MAX_TOKENS,
         )
         content = response.content.strip()
-        error = _design_spec_validation_error(content)
+        error = _design_spec_validation_error(
+            content,
+            expected_page_count=page_count,
+            expected_inventory=inventory if enforce_page_types else None,
+        )
         if error is None:
             return content
         last_error = error

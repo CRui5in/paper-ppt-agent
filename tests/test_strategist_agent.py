@@ -29,6 +29,7 @@ def _valid_design_spec() -> str:
 
 ## I. Project Information
 - Project name: Test
+- Page Count: 1
 
 ## II. Canvas Specification
 - Canvas: 1280x720
@@ -43,7 +44,7 @@ def _valid_design_spec() -> str:
 {filler}
 
 ## IX. Content Outline
-- Page 1: title cover
+- Page 1: content — title cover
 
 ## XI. Technical Constraints Reminder
 - Return valid SVG only
@@ -97,5 +98,36 @@ async def test_create_design_spec_adds_deepseek_strategy_guidance() -> None:
     )
 
     user_prompt = llm.calls[0]["messages"][-1].content
-    assert "DeepSeek Calibration" in user_prompt
+    assert "Detail Level Guidelines" in user_prompt
     assert "preserve the manuscript's analytical depth" in user_prompt
+
+
+def test_design_spec_validation_rejects_outline_page_drift() -> None:
+    bad = _valid_design_spec().replace(
+        "- Page 1: content — title cover",
+        "- Page 1: cover — title\n- Page 2: content — extra",
+    )
+
+    error = strategist_agent._design_spec_validation_error(
+        bad,
+        expected_page_count=1,
+    )
+
+    assert error is not None
+    assert "references page 2" in error
+
+
+def test_design_spec_validation_rejects_page_type_drift() -> None:
+    bad = _valid_design_spec().replace(
+        "- Page 1: content — title cover",
+        "- Page 1: cover — invented cover",
+    )
+
+    error = strategist_agent._design_spec_validation_error(
+        bad,
+        expected_page_count=1,
+        expected_inventory=[{"page": 1, "type": "content", "title": "Real content"}],
+    )
+
+    assert error is not None
+    assert "page types do not match" in error

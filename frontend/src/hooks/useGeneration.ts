@@ -12,6 +12,8 @@ import type {
   PreviewSlide,
   ProviderListItem,
   RefineRequestPayload,
+  ResearchEnrichmentStats,
+  ResearchConfig,
   UploadResponse,
 } from "../lib/types";
 import { openJobSocket } from "../lib/ws";
@@ -78,6 +80,10 @@ interface RunSnapshot {
   currentRunConfig?: RunConfigSnapshot;
   connectionStatus: ConnectionStatus;
   lastSeq?: number;
+  // Latest external-research enrichment stats received via the progress
+  // channel. Used by ProgressPanel to confirm to the user that the
+  // toggles they enabled actually returned data (or to show why not).
+  enrichmentStats?: ResearchEnrichmentStats;
 }
 
 type StoredRunSnapshot = Partial<RunSnapshot> & { jobId: string };
@@ -90,6 +96,7 @@ interface GenerationState {
   slides: PreviewSlide[];
   logs: string[];
   criticEvents: CriticEvent[];
+  enrichmentStats?: ResearchEnrichmentStats;
   selectedSlide?: PreviewSlide;
   connectionStatus: ConnectionStatus;
   error?: string;
@@ -283,7 +290,43 @@ function createRunSnapshot(
     currentRunConfig: params?.currentRunConfig,
     connectionStatus: params?.connectionStatus ?? "disconnected",
     lastSeq: params?.lastSeq,
+    enrichmentStats: params?.enrichmentStats,
   };
+}
+
+function hasResearchSources(config?: ResearchConfig): boolean {
+  return Boolean(
+    config?.arxiv_search_enabled ||
+      config?.semantic_scholar_enabled ||
+      config?.web_search_enabled,
+  );
+}
+
+function buildEnrichmentPlaceholder(config?: ResearchConfig): ResearchEnrichmentStats | undefined {
+  if (!hasResearchSources(config)) {
+    return undefined;
+  }
+  const stats: ResearchEnrichmentStats = { phase: "querying", total_findings: 0, filtered_findings: 0 };
+  if (config?.arxiv_search_enabled) {
+    stats.arxiv = { found: 0 };
+  }
+  if (config?.semantic_scholar_enabled) {
+    stats.semantic_scholar = { found: 0 };
+  }
+  if (config?.web_search_enabled) {
+    stats.web = {
+      found: 0,
+      provider: config.tavily_api_key ? "tavily" : config.serpapi_key ? "serpapi" : undefined,
+    };
+  }
+  return stats;
+}
+
+function normalizeEnrichmentPayload(raw: unknown, fallback?: ResearchEnrichmentStats) {
+  if (!raw || typeof raw !== "object") {
+    return fallback;
+  }
+  return raw as ResearchEnrichmentStats;
 }
 
 function applyRunToCurrent(run?: RunSnapshot) {
@@ -297,6 +340,7 @@ function applyRunToCurrent(run?: RunSnapshot) {
     slides: run.slides,
     logs: run.logs,
     criticEvents: run.criticEvents,
+    enrichmentStats: run.enrichmentStats,
     selectedSlide: run.selectedSlide,
     connectionStatus: run.connectionStatus,
     error: run.error,
@@ -349,6 +393,7 @@ function normalizeStoredRun(jobId: string, run?: Partial<RunSnapshot>): RunSnaps
     result: run?.result,
     currentRunConfig: run?.currentRunConfig,
     connectionStatus: "disconnected",
+    enrichmentStats: run?.enrichmentStats,
   });
 }
 
@@ -405,6 +450,7 @@ export const useGeneration = create<GenerationState>()(
             options: payload.options,
             parentJobId: null,
           },
+          enrichmentStats: buildEnrichmentPlaceholder(payload.options.research_config),
           error: undefined,
           result: undefined,
           selectedSlide: undefined,
@@ -449,6 +495,7 @@ export const useGeneration = create<GenerationState>()(
             options: payload.options,
             parentJobId: payload.job_id,
           },
+          enrichmentStats: buildEnrichmentPlaceholder(payload.options.research_config),
           error: undefined,
           result: undefined,
           selectedSlide: undefined,
@@ -603,11 +650,21 @@ export const useGeneration = create<GenerationState>()(
                 }
               }
 
+              // Capture external-research enrichment stats. Pipeline emits
+              // these once per run during the research stage so users see
+              // that the toggles they enabled actually returned data.
+              let enrichmentStats = currentRun.enrichmentStats;
+              const rawEnrichment = (event.data as { enrichment?: unknown }).enrichment;
+              if (rawEnrichment && typeof rawEnrichment === "object") {
+                enrichmentStats = normalizeEnrichmentPayload(rawEnrichment, enrichmentStats);
+              }
+
               const updatedRun: RunSnapshot = {
                 ...currentRun,
                 job: nextJob,
                 slides,
                 criticEvents,
+                enrichmentStats,
                 selectedSlide:
                   event.type === "slide_ready"
                     ? pickLiveSelectedSlide(currentRun.slides, slides, currentRun.selectedSlide)

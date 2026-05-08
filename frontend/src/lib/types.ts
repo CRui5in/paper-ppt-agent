@@ -48,6 +48,37 @@ export interface TemplateInfo {
   keywords: string[];
 }
 
+export interface ResearchConfig {
+  arxiv_search_enabled?: boolean;
+  semantic_scholar_enabled?: boolean;
+  web_search_enabled?: boolean;
+  semantic_scholar_api_key?: string;
+  tavily_api_key?: string;
+  serpapi_key?: string;
+  max_results_per_source?: number;
+  relevance_filter?: boolean;
+}
+
+export interface ResearchFinding {
+  source: string;
+  title: string;
+  abstract?: string;
+  authors?: string[];
+  year?: number | null;
+  citation_count?: number | null;
+  url?: string;
+  relevance_note?: string;
+}
+
+export interface ResearchEnrichmentStats {
+  phase?: "querying";
+  arxiv?: { found: number; error?: string; findings?: ResearchFinding[] };
+  semantic_scholar?: { found: number; error?: string; findings?: ResearchFinding[] };
+  web?: { found: number; error?: string; provider?: string; findings?: ResearchFinding[] };
+  total_findings?: number;
+  filtered_findings?: number;
+}
+
 export interface GenerationOptions {
   canvas_format: string;
   style: string;
@@ -56,11 +87,13 @@ export interface GenerationOptions {
   detail_level: string;
   timeout_seconds?: number;
   style_overrides?: StyleOverridesPayload;
+  enable_deep_research?: boolean;
   enable_visual_critic?: boolean;
   enable_icon?: boolean;
   enable_icon_rag?: boolean;
   gemini_api_key?: string;
   template_id?: string;
+  research_config?: ResearchConfig;
 }
 
 export interface ImportStartResponse {

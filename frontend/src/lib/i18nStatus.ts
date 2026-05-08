@@ -75,6 +75,18 @@ export function translateJobMessage(message: string | undefined, locale: Locale)
     "Queued for refinement": "已加入优化队列",
     "Parsing paper...": "正在解析论文...",
     "Analyzing paper content...": "正在分析论文内容...",
+    "Deep reading: analyzing paper content...": "深度研读：分析论文内容...",
+    "Pass 1/4 — Deep reading & critical analysis": "第 1/4 轮 — 深度研读",
+    "Enriching with external research APIs...": "正在通过外部研究 API 补充信息...",
+    "Querying external research sources...": "正在查询外部信息源...",
+    "External research returned no results": "外部研究未返回结果",
+    "Generating manuscript": "正在生成讲稿",
+    "Pass 1/4 — Deep reading": "第 1/4 轮 — 深度研读",
+    "Pass 2/4 — Narrative arc": "第 2/4 轮 — 叙事弧线",
+    "Pass 3/4 — Manuscript": "第 3/4 轮 — 讲稿生成",
+    "Pass 4/4 — Quality review": "第 4/4 轮 — 质量审核",
+    "Deep analysis complete (4-pass)": "深度分析完成（4 轮）",
+    "Paper analysis complete": "论文分析完成",
     "Manuscript generated": "讲稿已生成",
     "Creating design specification...": "正在生成设计规范...",
     "Design spec created": "设计规范已生成",
@@ -107,6 +119,11 @@ export function translateJobMessage(message: string | undefined, locale: Locale)
     return `已生成第 ${generatedSlideMatch[1]}/${generatedSlideMatch[2]} 页`;
   }
 
+  const repairedSlideMatch = message.match(/^Repaired slide (\d+)$/);
+  if (repairedSlideMatch) {
+    return `已修复第 ${repairedSlideMatch[1]} 页`;
+  }
+
   const generatedSlidesMatch = message.match(/^(\d+) slides generated$/);
   if (generatedSlidesMatch) {
     return `已生成 ${generatedSlidesMatch[1]} 页`;
@@ -122,7 +139,46 @@ export function translateJobMessage(message: string | undefined, locale: Locale)
     return `已处理 ${processedFilesMatch[1]} 个文件`;
   }
 
+  // External research enrichment summary, e.g.
+  //   "External research — arXiv: 5, Semantic Scholar: 3, Web: no_api_key"
+  // Translate the prefix and the per-source counts; leave provider names
+  // (arXiv / Semantic Scholar / Web) verbatim because they are proper nouns.
+  const enrichmentSummary = message.match(/^External research\s*—\s*(.+)$/);
+  if (enrichmentSummary) {
+    const parts = enrichmentSummary[1].split(",").map((p) => p.trim());
+    const localized = parts.map((part) => {
+      const m = part.match(/^([^:]+):\s*(.+)$/);
+      if (!m) return part;
+      const source = m[1].trim();
+      const value = m[2].trim();
+      const translatedValue = translateEnrichmentToken(value);
+      return `${source}：${translatedValue}`;
+    });
+    return `外部研究 — ${localized.join("，")}`;
+  }
+
+  // Template loading messages (e.g. "Template 'corporate-pro' loaded: Corporate Pro").
+  const templateLoadedMatch = message.match(/^Template '([^']+)' loaded:\s*(.+)$/);
+  if (templateLoadedMatch) {
+    return `已加载模板「${templateLoadedMatch[1]}」：${templateLoadedMatch[2]}`;
+  }
+
   return message;
+}
+
+function translateEnrichmentToken(value: string): string {
+  // Numeric counts pass through unchanged.
+  if (/^\d+$/.test(value)) {
+    return `找到 ${value}`;
+  }
+  const map: Record<string, string> = {
+    no_extractable_terms: "无可提取术语",
+    package_missing: "依赖未安装",
+    no_api_key: "未配置 API Key",
+    no_title: "缺少标题",
+    httpx_missing: "httpx 未安装",
+  };
+  return map[value] ?? value;
 }
 
 export function translateLogLine(log: string, locale: Locale): string {

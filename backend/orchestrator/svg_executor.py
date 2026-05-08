@@ -19,7 +19,11 @@ from backend.config import settings
 from backend.generator.svg_critic import CriticConfig, CriticReport, Violation, check_svg
 from backend.generator.visual_critic import VisualCriticConfig, visual_check
 from backend.llm import LLMMessage, LLMProvider, LLMResponse
-from backend.orchestrator.manuscript import split_manuscript_pages
+from backend.orchestrator.manuscript import (
+    extract_page_type,
+    split_manuscript_pages,
+    strip_page_type_metadata,
+)
 from backend.orchestrator.provider_guidance import (
     deepseek_executor_guidance,
     is_deepseek_provider,
@@ -63,7 +67,16 @@ def _resolve_fig_tokens(
     for fig in figure_inventory:
         path = str(fig.get("path") or "")
         if path:
-            by_id[Path(path).stem] = fig
+            stem = Path(path).stem
+            by_id[stem] = fig
+            label = _extract_figure_label(str(fig.get("caption") or ""))
+            if label:
+                kind, number = label
+                aliases = {f"{kind}{number}", f"{kind}_{number}"}
+                if kind == "figure":
+                    aliases.update({f"fig{number}", f"fig_{number}"})
+                for alias in aliases:
+                    by_id.setdefault(alias, fig)
 
     used: list[dict] = []
     seen: set[str] = set()
@@ -74,19 +87,20 @@ def _resolve_fig_tokens(
         fig = by_id.get(fig_id)
         if fig is None:
             return f"[[MISSING_FIG:{fig_id}]]"
+        resolved_id = Path(str(fig.get("path") or "")).stem or fig_id
         line = _line_containing(page_content, match.start())
         mismatch = _figure_label_mismatch(line, str(fig.get("caption") or ""))
         if mismatch:
             rejected.append(f"{fig_id}: {mismatch}")
             return f"[[REJECTED_FIG:{fig_id} — {mismatch}]]"
-        if fig_id not in seen:
-            seen.add(fig_id)
+        if resolved_id not in seen:
+            seen.add(resolved_id)
             used.append(fig)
         path = fig.get("path") or ""
         cap = (fig.get("caption") or "").strip().replace("\n", " ")
         if len(cap) > 160:
             cap = cap[:157] + "..."
-        return f"[PAPER FIGURE — id={fig_id}, href=\"{path}\", caption: {cap}]"
+        return f"[PAPER FIGURE — id={resolved_id}, href=\"{path}\", caption: {cap}]"
 
     return FIG_TOKEN_RE.sub(_replace, page_content), used, rejected
 
@@ -136,6 +150,7 @@ def _figure_guidance_block(used: list[dict], rejected: list[str] | None = None) 
         "a different paper-figure href, reuse one from another slide, or invent "
         "a paper-figure path. This does not restrict native SVG visuals."
     )
+    return "\n".join(lines)
 
 
 # -- Character budget & image layout helpers ----------------------------------
@@ -255,12 +270,6 @@ def _figure_layout_guidance(used_figures: list[dict]) -> str:
         except Exception:
             pass
         lines.append(f"- {Path(path).stem}: unable to read dimensions")
-    return "\n".join(lines)
-    for item in rejected:
-        lines.append(
-            f"Rejected paper figure token: {item}. Do not use its href; summarize "
-            "the idea with native SVG or omit the image."
-        )
     return "\n".join(lines)
 
 
@@ -463,9 +472,6 @@ async def generate_svg_pages(
     # (system + design-spec user + ack assistant = 3 preamble messages).
     _preamble_len = len(conversation)
 
-    # Detect chapter page numbers from the design spec content outline
-    _chapter_pages = _detect_chapter_pages(design_spec, len(pages))
-
     for i, page_content in enumerate(pages):
         page_num = i + 1
         if target_pages is not None and page_num not in target_pages:
@@ -482,8 +488,10 @@ async def generate_svg_pages(
             conversation[:] = conversation[:_preamble_len] + conversation[_preamble_len + _trim:]
 
         page_name = _make_page_name(page_num, page_content)
+        page_type = _classify_page_type(page_content)
+        visible_page_content = strip_page_type_metadata(page_content)
         rewritten_content, used_figures, rejected_figures = _resolve_fig_tokens(
-            page_content,
+            visible_page_content,
             figure_inventory,
         )
         figure_guidance = _figure_guidance_block(used_figures, rejected_figures)
@@ -493,7 +501,6 @@ async def generate_svg_pages(
         # Build skeleton injection block if template skeletons are available
         skeleton_block = ""
         if template_skeletons:
-            page_type = _classify_page_type(page_num, len(pages), _chapter_pages)
             skeleton_svg = template_skeletons.get(page_type)
             if skeleton_svg:
                 skeleton_block = (
@@ -512,6 +519,7 @@ async def generate_svg_pages(
                 f"- Style preset: {style}\n"
                 f"- Language: {language}\n"
                 f"- Detail level: {detail_level}\n"
+                f"- Page type: {page_type}. Use this type only for template selection; do not render metadata comments.\n"
                 f"- Keep all visible text in the requested language.\n"
                 f"- {char_budget}\n\n"
                 f"{figure_guidance}\n\n"
@@ -521,6 +529,14 @@ async def generate_svg_pages(
                 f"{skeleton_block}"
             )
         )
+        try:
+            debug_dir = project_dir / "debug"
+            debug_dir.mkdir(parents=True, exist_ok=True)
+            prompt_file = debug_dir / f"executor_page_{page_num:02d}_prompt.md"
+            parts = [f"--- ROLE: {msg.role} ---\n\n{msg.content}" for msg in conversation]
+            prompt_file.write_text("\n\n".join(parts), encoding="utf-8")
+        except OSError:
+            pass
 
         snapshot = set_usage_context(stage="generation", page=page_num, attempt=1)
         try:
@@ -682,37 +698,9 @@ async def generate_svg_pages(
             )
 
 
-def _detect_chapter_pages(design_spec: str, total_pages: int) -> set[int]:
-    """Detect chapter/section-divider page numbers from the design spec.
-
-    Looks for patterns like "Page 2:" or "Slide 3:" in the content outline
-    section that indicate section dividers.
-    """
-    chapter_pages: set[int] = set()
-    # Look for content outline section with page assignments
-    # Patterns like "- Page 2: ..." or "## Slide 3: ..."
-    for m in re.finditer(
-        r"(?:page|slide)\s+(\d+)\s*[:\-]",
-        design_spec,
-        re.IGNORECASE,
-    ):
-        pnum = int(m.group(1))
-        if 2 <= pnum < total_pages:  # Exclude cover (1) and ending (last)
-            chapter_pages.add(pnum)
-    return chapter_pages
-
-
-def _classify_page_type(
-    page_num: int, total_pages: int, chapter_pages: set[int]
-) -> str:
-    """Classify a page as cover/chapter/content/ending/toc."""
-    if page_num == 1:
-        return "cover"
-    if page_num == total_pages:
-        return "ending"
-    if page_num in chapter_pages:
-        return "chapter"
-    return "content"
+def _classify_page_type(page_content: str) -> str:
+    """Classify a page from manuscript metadata only."""
+    return extract_page_type(page_content)
 
 
 def _make_page_name(num: int, content: str) -> str:

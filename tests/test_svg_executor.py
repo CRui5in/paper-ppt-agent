@@ -58,7 +58,7 @@ async def test_generate_svg_pages_adds_deepseek_executor_guidance(
 
     assert pages == [1]
     initial_prompt = llm.message_snapshots[0][1].content
-    assert "DeepSeek Execution Calibration" in initial_prompt
+    assert "Detail Level Guidelines" in initial_prompt
     assert "preserve depth without overcrowding" in initial_prompt
 
 
@@ -174,6 +174,58 @@ def test_resolve_fig_tokens_rejects_mismatched_figure_number() -> None:
     assert "REJECTED_FIG:fig_006_p8" in rewritten
     assert rejected
     assert "requested figure 4" in rejected[0]
+
+
+def test_resolve_fig_tokens_accepts_short_caption_alias() -> None:
+    page = "## Results\n\n[[FIG:fig6]] — Figure 6 ablation"
+    inventory = [
+        {
+            "path": "../sources/images/fig_007_p9_table.png",
+            "caption": "Figure 6. Ablation study across settings.",
+        }
+    ]
+
+    rewritten, used, rejected = svg_executor._resolve_fig_tokens(page, inventory)
+
+    assert rejected == []
+    assert used == inventory
+    assert "id=fig_007_p9_table" in rewritten
+    assert "fig_007_p9_table.png" in rewritten
+
+
+def test_classify_page_type_reads_manuscript_metadata() -> None:
+    assert svg_executor._classify_page_type("<!-- page_type: cover -->\n## Title") == "cover"
+    assert svg_executor._classify_page_type("<!-- page_type: transition -->\n## Method") == "chapter"
+    assert svg_executor._classify_page_type("## Slide 3: Ordinary content\n\n- point") == "content"
+
+
+@pytest.mark.asyncio
+async def test_template_skeleton_uses_page_type_metadata_not_design_outline(
+    workspace_tmp,
+) -> None:
+    manuscript = "## Slide 1: Ordinary content\n\n- point"
+    design_spec = "## IX. Content Outline\n- Slide 1 - Ordinary content\n- Slide 2 - Method"
+    llm = _FakeLLM([_svg('<text x="100" y="100" font-size="24">ok</text>')])
+
+    pages = [
+        page_num
+        async for page_num, _ in generate_svg_pages(
+            design_spec,
+            manuscript,
+            workspace_tmp,
+            llm,
+            "fake-model",
+            template_skeletons={
+                "chapter": '<svg viewBox="0 0 1280 720"><text>{{SECTION_NUM}}</text></svg>',
+                "content": '<svg viewBox="0 0 1280 720"><text>{{PAGE_TITLE}}</text></svg>',
+            },
+        )
+    ]
+
+    assert pages == [1]
+    prompt = llm.message_snapshots[0][-1].content
+    assert "Template Skeleton (content page)" in prompt
+    assert "Template Skeleton (chapter page)" not in prompt
 
 
 @pytest.mark.asyncio

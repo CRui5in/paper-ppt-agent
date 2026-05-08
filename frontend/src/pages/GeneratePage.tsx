@@ -13,10 +13,11 @@ import { UploadZone } from "../components/upload/UploadZone";
 import { useGeneration } from "../hooks/useGeneration";
 import { useLocale } from "../i18n";
 import { fetchTemplates } from "../lib/api";
-import type { DeepSeekSettings, OpenAISettings, TemplateInfo } from "../lib/types";
+import type { DeepSeekSettings, OpenAISettings, ResearchConfig, TemplateInfo } from "../lib/types";
 import { TemplateManager } from "../components/template/TemplateManager";
 
 const ROUTING_PROFILE_STORAGE_KEY = "paper-ppt-agent-routing-profiles-v1";
+const PRESENTATION_SETTINGS_STORAGE_KEY = "paper-ppt-agent-presentation-settings-v1";
 type LanguageMode = "zh" | "en" | "custom";
 type SecondaryPanel = "log";
 const DEFAULT_DEEPSEEK_SETTINGS: DeepSeekSettings = {
@@ -38,6 +39,28 @@ interface RoutingProfile {
 
 type RoutingProfileMap = Record<string, RoutingProfile>;
 
+interface PresentationSettingsDraft {
+  canvasFormat?: string;
+  languageMode?: LanguageMode;
+  customLanguage?: string;
+  numPages?: string;
+  detailLevel?: string;
+  timeoutSeconds?: string;
+  instruction?: string;
+  density?: string;
+  customFont?: string;
+  headingFont?: string;
+  bodyFont?: string;
+  cjkHeadingFont?: string;
+  cjkBodyFont?: string;
+  enableDeepResearch?: boolean;
+  enableVisualCritic?: boolean;
+  enableIcon?: boolean;
+  enableIconRag?: boolean;
+  researchConfig?: ResearchConfig;
+  templateId?: string;
+}
+
 function readRoutingProfiles(): RoutingProfileMap {
   try {
     const raw = window.localStorage.getItem(ROUTING_PROFILE_STORAGE_KEY);
@@ -53,6 +76,23 @@ function readRoutingProfiles(): RoutingProfileMap {
 
 function writeRoutingProfiles(profiles: RoutingProfileMap) {
   window.localStorage.setItem(ROUTING_PROFILE_STORAGE_KEY, JSON.stringify(profiles));
+}
+
+function readPresentationSettingsDraft(): PresentationSettingsDraft {
+  try {
+    const raw = window.localStorage.getItem(PRESENTATION_SETTINGS_STORAGE_KEY);
+    if (!raw) {
+      return {};
+    }
+    const parsed = JSON.parse(raw) as PresentationSettingsDraft;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writePresentationSettingsDraft(settings: PresentationSettingsDraft) {
+  window.localStorage.setItem(PRESENTATION_SETTINGS_STORAGE_KEY, JSON.stringify(settings));
 }
 
 function getProviderDefaults(
@@ -77,6 +117,7 @@ export function GeneratePage() {
     slides,
     logs,
     criticEvents,
+    enrichmentStats,
     selectedSlide,
     connectionStatus,
     error,
@@ -91,6 +132,7 @@ export function GeneratePage() {
     selectSlide,
     reset,
   } = useGeneration();
+  const [initialSettings] = useState(readPresentationSettingsDraft);
 
   const [provider, setProvider] = useState("");
   const [model, setModel] = useState("");
@@ -102,27 +144,47 @@ export function GeneratePage() {
   const [openAISettings, setOpenAISettings] = useState<OpenAISettings>(
     DEFAULT_OPENAI_SETTINGS,
   );
-  const [density, setDensity] = useState("normal");
-  const [customFont, setCustomFont] = useState("");
-  const [headingFont, setHeadingFont] = useState("");
-  const [bodyFont, setBodyFont] = useState("");
-  const [cjkHeadingFont, setCjkHeadingFont] = useState("");
-  const [cjkBodyFont, setCjkBodyFont] = useState("");
-  const [canvasFormat, setCanvasFormat] = useState("ppt169");
-  const [languageMode, setLanguageMode] = useState<LanguageMode>(locale === "zh" ? "zh" : "en");
-  const [customLanguage, setCustomLanguage] = useState("");
-  const [numPages, setNumPages] = useState("");
-  const [detailLevel, setDetailLevel] = useState("normal");
-  const [timeoutSeconds, setTimeoutSeconds] = useState("");
-  const [instruction, setInstruction] = useState("");
+  const [density, setDensity] = useState(initialSettings.density ?? "normal");
+  const [customFont, setCustomFont] = useState(initialSettings.customFont ?? "");
+  const [headingFont, setHeadingFont] = useState(initialSettings.headingFont ?? "");
+  const [bodyFont, setBodyFont] = useState(initialSettings.bodyFont ?? "");
+  const [cjkHeadingFont, setCjkHeadingFont] = useState(initialSettings.cjkHeadingFont ?? "");
+  const [cjkBodyFont, setCjkBodyFont] = useState(initialSettings.cjkBodyFont ?? "");
+  const [canvasFormat, setCanvasFormat] = useState(initialSettings.canvasFormat ?? "ppt169");
+  const [languageMode, setLanguageMode] = useState<LanguageMode>(
+    initialSettings.languageMode ?? (locale === "zh" ? "zh" : "en"),
+  );
+  const [customLanguage, setCustomLanguage] = useState(initialSettings.customLanguage ?? "");
+  const [numPages, setNumPages] = useState(initialSettings.numPages ?? "");
+  const [detailLevel, setDetailLevel] = useState(initialSettings.detailLevel ?? "normal");
+  const [timeoutSeconds, setTimeoutSeconds] = useState(initialSettings.timeoutSeconds ?? "");
+  const [instruction, setInstruction] = useState(initialSettings.instruction ?? "");
   const GEMINI_KEY_STORAGE = "paper-ppt-agent-gemini-api-key";
-  const [enableVisualCritic, setEnableVisualCritic] = useState(false);
-  const [enableIcon, setEnableIcon] = useState(false);
-  const [enableIconRag, setEnableIconRag] = useState(false);
+  const RESEARCH_KEYS_STORAGE = "paper-ppt-agent-research-keys";
+  const [enableDeepResearch, setEnableDeepResearch] = useState(initialSettings.enableDeepResearch ?? false);
+  const [enableVisualCritic, setEnableVisualCritic] = useState(initialSettings.enableVisualCritic ?? false);
+  const [enableIcon, setEnableIcon] = useState(initialSettings.enableIcon ?? false);
+  const [enableIconRag, setEnableIconRag] = useState(initialSettings.enableIconRag ?? false);
+  const [researchConfig, setResearchConfig] = useState<ResearchConfig>(() => {
+    const base = initialSettings.researchConfig ?? {};
+    try {
+      const saved = window.localStorage.getItem(RESEARCH_KEYS_STORAGE);
+      if (saved) {
+        const parsed = JSON.parse(saved) as Record<string, string>;
+        return {
+          ...base,
+          semantic_scholar_api_key: base.semantic_scholar_api_key || parsed.semantic_scholar_api_key || undefined,
+          tavily_api_key: base.tavily_api_key || parsed.tavily_api_key || undefined,
+          serpapi_key: base.serpapi_key || parsed.serpapi_key || undefined,
+        };
+      }
+    } catch { /* noop */ }
+    return base;
+  });
   const [geminiApiKey, setGeminiApiKey] = useState(() => {
     try { return window.localStorage.getItem(GEMINI_KEY_STORAGE) ?? ""; } catch { return ""; }
   });
-  const [templateId, setTemplateId] = useState("");
+  const [templateId, setTemplateId] = useState(initialSettings.templateId ?? "");
   const [templates, setTemplates] = useState<TemplateInfo[]>([]);
   const [templateManagerOpen, setTemplateManagerOpen] = useState(false);
   const [cancelLoading, setCancelLoading] = useState(false);
@@ -258,9 +320,11 @@ export function GeneratePage() {
     setNumPages(options.num_pages ? String(options.num_pages) : "");
     setDetailLevel(options.detail_level || "normal");
     setTimeoutSeconds(options.timeout_seconds ? String(options.timeout_seconds) : "");
+    setEnableDeepResearch(Boolean(options.enable_deep_research));
     setEnableVisualCritic(Boolean(options.enable_visual_critic));
     setEnableIcon(options.enable_icon !== false);
     setEnableIconRag(options.enable_icon_rag !== false);
+    setResearchConfig(options.research_config ?? {});
     setGeminiApiKey(options.gemini_api_key ?? "");
     setTemplateId(options.template_id ?? "");
   }, [selectedRunConfig, targetJobId]);
@@ -274,6 +338,69 @@ export function GeneratePage() {
   }, [geminiApiKey]);
 
   useEffect(() => {
+    try {
+      const keys = {
+        semantic_scholar_api_key: researchConfig.semantic_scholar_api_key ?? "",
+        tavily_api_key: researchConfig.tavily_api_key ?? "",
+        serpapi_key: researchConfig.serpapi_key ?? "",
+      };
+      window.localStorage.setItem(RESEARCH_KEYS_STORAGE, JSON.stringify(keys));
+    } catch { /* noop */ }
+  }, [researchConfig.semantic_scholar_api_key, researchConfig.tavily_api_key, researchConfig.serpapi_key]);
+
+  useEffect(() => {
+    if (targetJobId) {
+      return;
+    }
+    try {
+      writePresentationSettingsDraft({
+        canvasFormat,
+        languageMode,
+        customLanguage,
+        numPages,
+        detailLevel,
+        timeoutSeconds,
+        instruction,
+        density,
+        customFont,
+        headingFont,
+        bodyFont,
+        cjkHeadingFont,
+        cjkBodyFont,
+        enableDeepResearch,
+        enableVisualCritic,
+        enableIcon,
+        enableIconRag,
+        researchConfig,
+        templateId,
+      });
+    } catch {
+      // Ignore storage failures; settings still work for the current session.
+    }
+  }, [
+    canvasFormat,
+    cjkBodyFont,
+    cjkHeadingFont,
+    customFont,
+    customLanguage,
+    density,
+    detailLevel,
+    enableDeepResearch,
+    enableIcon,
+    enableIconRag,
+    enableVisualCritic,
+    headingFont,
+    bodyFont,
+    instruction,
+    languageMode,
+    numPages,
+    researchConfig,
+    templateId,
+    timeoutSeconds,
+    targetJobId,
+  ]);
+
+  useEffect(() => {
     if (job?.status === "complete" && jobId) {
       navigate(`/result?job=${jobId}`);
     }
@@ -285,7 +412,7 @@ export function GeneratePage() {
         <div className="studio-column studio-column-left">
           <UploadZone onFileSelect={(file) => void uploadFile(file)} />
           <FilePreview session={uploadSession} />
-          <ProgressPanel job={job} connectionStatus={connectionStatus} />
+          <ProgressPanel job={job} connectionStatus={connectionStatus} enrichmentStats={enrichmentStats} />
         </div>
 
         <div className="studio-column studio-column-preview">
@@ -319,6 +446,7 @@ export function GeneratePage() {
             detailLevel={detailLevel}
             timeoutSeconds={timeoutSeconds}
             instruction={instruction}
+            enableDeepResearch={enableDeepResearch}
             enableVisualCritic={enableVisualCritic}
             enableIcon={enableIcon}
             enableIconRag={enableIconRag}
@@ -332,6 +460,7 @@ export function GeneratePage() {
             onDetailLevelChange={setDetailLevel}
             onTimeoutSecondsChange={setTimeoutSeconds}
             onInstructionChange={setInstruction}
+            onEnableDeepResearchChange={setEnableDeepResearch}
             onEnableVisualCriticChange={setEnableVisualCritic}
             onEnableIconChange={setEnableIcon}
             onEnableIconRagChange={setEnableIconRag}
@@ -350,6 +479,8 @@ export function GeneratePage() {
             onBodyFontChange={setBodyFont}
             onCjkHeadingFontChange={setCjkHeadingFont}
             onCjkBodyFontChange={setCjkBodyFont}
+            researchConfig={researchConfig}
+            onResearchConfigChange={setResearchConfig}
           />
           <div className="studio-secondary-actions">
             <button
@@ -416,10 +547,14 @@ export function GeneratePage() {
                         }
                       : undefined,
                   enable_visual_critic: enableVisualCritic,
+                  enable_deep_research: enableDeepResearch,
                   enable_icon: enableIcon,
                   enable_icon_rag: enableIconRag,
                   gemini_api_key: geminiApiKey || undefined,
                   template_id: templateId || undefined,
+                  research_config: (researchConfig.arxiv_search_enabled || researchConfig.semantic_scholar_enabled || researchConfig.web_search_enabled)
+                    ? researchConfig
+                    : undefined,
                 },
               });
               connect(jobId);

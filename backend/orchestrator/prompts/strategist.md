@@ -34,7 +34,8 @@ Follow this structure exactly:
 - Images from the paper to include, with dimensions and placement notes
 
 ### IX. Content Outline
-- Per-page content outline with: page number, title, layout type, content elements
+- Per-page content outline with: page number, page type, title, layout type, content elements
+- The layout type is a contract for the SVG executor. Choose it carefully and keep it feasible for the amount of text and visual material on that page.
 
 ### X. Speaker Notes Requirements
 - Tone, length, and style for speaker notes
@@ -48,3 +49,4 @@ Follow this structure exactly:
 - Use conservative color schemes (navy/white/blue for academic)
 - Prioritize readability and data clarity over visual flair
 - Every design decision should serve communication, not decoration
+- Treat the manuscript page inventory as fixed. Structural pages are counted pages, not optional styling.
