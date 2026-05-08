@@ -67,7 +67,8 @@ _SLIDE_HEADING_RE = re.compile(
 )
 _MANUSCRIPT_MARKER_RE = re.compile(
     r"^##\s+(?:slide\s+manuscript(?:\s*\([^)]*\))?|"
-    r"revised\s+slide\s+manuscript|final\s+slide\s+manuscript)\s*$",
+    r"revised\s+slide\s+manuscript|final\s+slide\s+manuscript|"
+    r"revised\s+manuscript|final\s+manuscript)\s*$",
     re.IGNORECASE,
 )
 _REVIEW_HEADING_RE = re.compile(

@@ -67,6 +67,27 @@ More body
     assert "## Review" not in extracted
 
 
+def test_extract_review_plain_revised_manuscript_marker():
+    original = "## Slide 1: Old\n\nBody"
+    review = """## Step 3: Revised Manuscript
+
+## Slide 1: New
+
+Better body
+
+---
+
+## Slide 2: Added
+
+More body
+"""
+
+    extracted = _extract_manuscript_from_review(review, original)
+
+    assert extracted.startswith("## Slide 1: New")
+    assert "## Step 3" not in extracted
+
+
 def test_manuscript_structure_requires_default_budget_and_closing_ending():
     parts = ["<!-- page_type: cover -->\n# Title"]
     for chapter in range(1, 4):

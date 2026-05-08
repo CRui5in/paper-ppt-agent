@@ -35,6 +35,7 @@ Follow this structure exactly:
 
 ### IX. Content Outline
 - Per-page content outline with: page number, page type, title, layout type, content elements
+- The layout type is a contract for the SVG executor. Choose it carefully and keep it feasible for the amount of text and visual material on that page.
 
 ### X. Speaker Notes Requirements
 - Tone, length, and style for speaker notes
