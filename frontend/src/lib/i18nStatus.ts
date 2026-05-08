@@ -80,11 +80,13 @@ export function translateJobMessage(message: string | undefined, locale: Locale)
     "Enriching with external research APIs...": "正在通过外部研究 API 补充信息...",
     "Querying external research sources...": "正在查询外部信息源...",
     "External research returned no results": "外部研究未返回结果",
+    "Generating manuscript": "正在生成讲稿",
     "Pass 1/4 — Deep reading": "第 1/4 轮 — 深度研读",
     "Pass 2/4 — Narrative arc": "第 2/4 轮 — 叙事弧线",
     "Pass 3/4 — Manuscript": "第 3/4 轮 — 讲稿生成",
     "Pass 4/4 — Quality review": "第 4/4 轮 — 质量审核",
     "Deep analysis complete (4-pass)": "深度分析完成（4 轮）",
+    "Paper analysis complete": "论文分析完成",
     "Manuscript generated": "讲稿已生成",
     "Creating design specification...": "正在生成设计规范...",
     "Design spec created": "设计规范已生成",
@@ -115,6 +117,11 @@ export function translateJobMessage(message: string | undefined, locale: Locale)
   const generatedSlideMatch = message.match(/^Generated slide (\d+)\/(\d+)$/);
   if (generatedSlideMatch) {
     return `已生成第 ${generatedSlideMatch[1]}/${generatedSlideMatch[2]} 页`;
+  }
+
+  const repairedSlideMatch = message.match(/^Repaired slide (\d+)$/);
+  if (repairedSlideMatch) {
+    return `已修复第 ${repairedSlideMatch[1]} 页`;
   }
 
   const generatedSlidesMatch = message.match(/^(\d+) slides generated$/);
