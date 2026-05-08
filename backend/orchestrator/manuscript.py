@@ -13,9 +13,9 @@ _HEADING_RE = re.compile(r"(?m)^#{1,3}\s+(.+?)\s*$")
 PageType = str
 DEFAULT_AUTO_SLIDE_RANGE = (16, 20)
 DETAIL_AUTO_SLIDE_RANGES = {
-    "normal": (16, 20),
-    "high": (20, 26),
-    "very_high": (24, 32),
+    "normal": (15, 22),
+    "high": (18, 28),
+    "very_high": (22, 34),
 }
 
 
