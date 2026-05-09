@@ -257,8 +257,13 @@ async def _enrich_web_search(
 
     tavily_key = (config.tavily_api_key or "").strip()
     serpapi_key = (config.serpapi_key or "").strip()
+    provider = getattr(config, "web_search_provider", "tavily") or "tavily"
 
-    if not tavily_key and not serpapi_key:
+    if provider == "tavily" and not tavily_key:
+        stats.web_error = "no_api_key"
+        ctx.queries_used.append("web: <skipped: no api key>")
+        return
+    if provider == "serpapi" and not serpapi_key:
         stats.web_error = "no_api_key"
         ctx.queries_used.append("web: <skipped: no api key>")
         return
@@ -271,7 +276,7 @@ async def _enrich_web_search(
     try:
         import httpx  # type: ignore[import-not-found]
 
-        if tavily_key:
+        if provider == "tavily":
             stats.web_provider = "tavily"
             results = await _tavily_search(httpx, query, tavily_key, config.max_results_per_source)
         else:

@@ -174,6 +174,7 @@ export function GeneratePage() {
         const parsed = JSON.parse(saved) as Record<string, string>;
         return {
           ...base,
+          web_search_provider: base.web_search_provider || (parsed.web_search_provider as "tavily" | "serpapi" | undefined) || undefined,
           semantic_scholar_api_key: base.semantic_scholar_api_key || parsed.semantic_scholar_api_key || undefined,
           tavily_api_key: base.tavily_api_key || parsed.tavily_api_key || undefined,
           serpapi_key: base.serpapi_key || parsed.serpapi_key || undefined,
@@ -336,6 +337,7 @@ export function GeneratePage() {
       const incoming = options.research_config ?? {};
       return {
         ...incoming,
+        web_search_provider: incoming.web_search_provider || prev.web_search_provider,
         semantic_scholar_api_key: incoming.semantic_scholar_api_key || prev.semantic_scholar_api_key,
         tavily_api_key: incoming.tavily_api_key || prev.tavily_api_key,
         serpapi_key: incoming.serpapi_key || prev.serpapi_key,
@@ -358,6 +360,7 @@ export function GeneratePage() {
       const existingRaw = window.localStorage.getItem(RESEARCH_KEYS_STORAGE);
       const existing = existingRaw ? (JSON.parse(existingRaw) as Record<string, string>) : {};
       const next = {
+        web_search_provider: researchConfig.web_search_provider || existing.web_search_provider || "tavily",
         semantic_scholar_api_key:
           researchConfig.semantic_scholar_api_key || existing.semantic_scholar_api_key || "",
         tavily_api_key: researchConfig.tavily_api_key || existing.tavily_api_key || "",
@@ -365,7 +368,7 @@ export function GeneratePage() {
       };
       window.localStorage.setItem(RESEARCH_KEYS_STORAGE, JSON.stringify(next));
     } catch { /* noop */ }
-  }, [researchConfig.semantic_scholar_api_key, researchConfig.tavily_api_key, researchConfig.serpapi_key]);
+  }, [researchConfig.web_search_provider, researchConfig.semantic_scholar_api_key, researchConfig.tavily_api_key, researchConfig.serpapi_key]);
 
   useEffect(() => {
     if (targetJobId) {

@@ -53,6 +53,7 @@ export interface ResearchConfig {
   semantic_scholar_enabled?: boolean;
   web_search_enabled?: boolean;
   semantic_scholar_api_key?: string;
+  web_search_provider?: "tavily" | "serpapi";
   tavily_api_key?: string;
   serpapi_key?: string;
   max_results_per_source?: number;
