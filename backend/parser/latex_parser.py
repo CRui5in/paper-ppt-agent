@@ -7,16 +7,21 @@ for \input/\include resolution and bibliography extraction.
 
 from __future__ import annotations
 
+import logging
 import re
 import shutil
-import subprocess
-import tempfile
 import tarfile
 import zipfile
 from pathlib import Path
 
+from backend.config import settings
+from backend.runtime import aoffload, arun
+from backend.runtime.subproc import SubprocessError, SubprocessTimeout
+
 from .base import PaperParser
 from .paper_model import PaperFigure, PaperSection, ParsedPaper
+
+logger = logging.getLogger(__name__)
 
 
 def _probe_image_size(path: Path) -> tuple[int, int]:
@@ -56,10 +61,12 @@ class LaTeXParser(PaperParser):
         extract_dir = output_dir / "latex_src"
         extract_dir.mkdir(exist_ok=True)
 
-        with zipfile.ZipFile(zip_path, "r") as zf:
-            self._extract_zip_safely(zf, extract_dir)
+        # Decompression is fully synchronous and can take seconds on a large
+        # arXiv tarball — run it on the offload pool so the event loop is
+        # free to keep serving other requests.
+        await aoffload(self._extract_zip_to_dir, zip_path, extract_dir)
 
-        main_tex = self._find_main_tex(extract_dir)
+        main_tex = await aoffload(self._find_main_tex, extract_dir)
         if not main_tex:
             raise ValueError(f"No main .tex file found in {zip_path}")
 
@@ -72,14 +79,21 @@ class LaTeXParser(PaperParser):
         extract_dir = output_dir / "latex_src"
         extract_dir.mkdir(exist_ok=True)
 
-        with tarfile.open(tar_path, "r:*") as tf:
-            self._extract_tar_safely(tf, extract_dir)
+        await aoffload(self._extract_tar_to_dir, tar_path, extract_dir)
 
-        main_tex = self._find_main_tex(extract_dir)
+        main_tex = await aoffload(self._find_main_tex, extract_dir)
         if not main_tex:
             raise ValueError(f"No main .tex file found in {tar_path}")
 
         return await self._parse_tex(main_tex, output_dir, images_dir)
+
+    def _extract_zip_to_dir(self, zip_path: Path, extract_dir: Path) -> None:
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            self._extract_zip_safely(zf, extract_dir)
+
+    def _extract_tar_to_dir(self, tar_path: Path, extract_dir: Path) -> None:
+        with tarfile.open(tar_path, "r:*") as tf:
+            self._extract_tar_safely(tf, extract_dir)
 
     def _find_main_tex(self, directory: Path) -> Path | None:
         """Find the main .tex file by looking for \\documentclass."""
@@ -100,25 +114,24 @@ class LaTeXParser(PaperParser):
         r"""Parse a single .tex file with \input resolution."""
         tex_dir = tex_path.parent
 
-        # Resolve \input and \include directives
-        resolved_content = self._resolve_includes(tex_path, tex_dir)
+        # The metadata / figure / section extraction is all synchronous regex
+        # work — push it to the offload pool. Pandoc invocation is split out
+        # so it can run as an async subprocess (real OS-level parallelism).
+        resolved_content = await aoffload(self._resolve_includes, tex_path, tex_dir)
 
-        # Extract metadata before pandoc conversion
-        title = self._extract_title(resolved_content)
-        authors = self._extract_authors(resolved_content)
-        abstract = self._extract_abstract(resolved_content)
+        title = await aoffload(self._extract_title, resolved_content)
+        authors = await aoffload(self._extract_authors, resolved_content)
+        abstract = await aoffload(self._extract_abstract, resolved_content)
+        figures = await aoffload(
+            self._extract_figures, resolved_content, tex_dir, images_dir
+        )
 
-        # Extract figure references and copy images
-        figures = self._extract_figures(resolved_content, tex_dir, images_dir)
+        markdown = await self._convert_to_markdown_async(
+            resolved_content, tex_dir, output_dir
+        )
 
-        # Convert to Markdown
-        markdown = self._convert_to_markdown(resolved_content, tex_dir, output_dir)
-
-        # Parse sections from Markdown
-        sections = self._parse_sections(markdown, figures)
-
-        # Extract references
-        references = self._extract_references(resolved_content, tex_dir)
+        sections = await aoffload(self._parse_sections, markdown, figures)
+        references = await aoffload(self._extract_references, resolved_content, tex_dir)
 
         return ParsedPaper(
             title=title,
@@ -318,20 +331,23 @@ class LaTeXParser(PaperParser):
             return None
         return target
 
-    def _convert_to_markdown(
+    async def _convert_to_markdown_async(
         self, content: str, tex_dir: Path, output_dir: Path
     ) -> str:
-        """Convert LaTeX content to Markdown using pandoc."""
-        if not shutil.which("pandoc"):
-            # Fallback: strip LaTeX commands manually
-            return self._basic_latex_to_markdown(content)
+        """Convert LaTeX content to Markdown using pandoc (async subprocess).
 
-        # Write resolved content to a temp file
+        Falls back to a regex-based stub when pandoc is not on PATH or when
+        it errors out. Timeout / non-zero exit are handled separately so the
+        caller can still surface the failure mode in logs.
+        """
+        if not shutil.which("pandoc"):
+            return await aoffload(self._basic_latex_to_markdown, content)
+
         tmp_tex = output_dir / "_resolved.tex"
-        tmp_tex.write_text(content, encoding="utf-8")
+        await aoffload(tmp_tex.write_text, content, encoding="utf-8")
 
         try:
-            result = subprocess.run(
+            cp = await arun(
                 [
                     "pandoc",
                     "-f", "latex",
@@ -339,20 +355,27 @@ class LaTeXParser(PaperParser):
                     "--wrap=none",
                     str(tmp_tex),
                 ],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=60,
-                cwd=str(tex_dir),
+                timeout=float(settings.pandoc_timeout),
+                cwd=tex_dir,
+                check=False,
             )
-            if result.returncode == 0:
-                return result.stdout
-            return self._basic_latex_to_markdown(content)
+            if cp.returncode == 0:
+                return cp.stdout
+            logger.warning(
+                "pandoc latex→md failed (rc=%d): %s",
+                cp.returncode,
+                cp.stderr.strip()[:300],
+            )
+        except SubprocessTimeout:
+            logger.warning("pandoc latex→md timed out after %ss", settings.pandoc_timeout)
+        except SubprocessError as exc:
+            logger.warning("pandoc latex→md error: %s", exc)
         except Exception:
-            return self._basic_latex_to_markdown(content)
+            logger.exception("pandoc latex→md unexpected error")
         finally:
-            tmp_tex.unlink(missing_ok=True)
+            await aoffload(tmp_tex.unlink, missing_ok=True)
+
+        return await aoffload(self._basic_latex_to_markdown, content)
 
     def _basic_latex_to_markdown(self, content: str) -> str:
         """Basic LaTeX to Markdown conversion without pandoc."""

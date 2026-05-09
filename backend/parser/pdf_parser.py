@@ -58,6 +58,8 @@ try:  # pragma: no cover - defensive, API surface differs across versions
 except Exception:
     pass
 
+from backend.runtime import aoffload
+
 from .base import PaperParser
 from .paper_model import PaperFigure, PaperSection, PaperTable, ParsedPaper
 
@@ -90,6 +92,13 @@ class PDFParser(PaperParser):
     last_parse_info: dict[str, object] = {}
 
     async def parse(self, file_path: Path, output_dir: Path) -> ParsedPaper:
+        # The whole parse is CPU/IO heavy (fitz C calls, DPI rasterization,
+        # pymupdf4llm layout analysis). Run it on the offload pool so the
+        # event loop stays responsive — other HTTP requests, websocket
+        # frames, the scheduler dispatcher all keep running.
+        return await aoffload(self._parse_sync, file_path, output_dir)
+
+    def _parse_sync(self, file_path: Path, output_dir: Path) -> ParsedPaper:
         output_dir.mkdir(parents=True, exist_ok=True)
         images_dir = output_dir / "images"
         images_dir.mkdir(exist_ok=True)

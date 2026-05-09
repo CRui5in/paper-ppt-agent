@@ -160,8 +160,8 @@ export async function generatePresentation(
   });
 }
 
-export async function fetchJobStatus(jobId: string): Promise<JobStatus> {
-  return request<JobStatus>(`/api/status/${jobId}`);
+export async function fetchJobStatus(jobId: string, init?: RequestInit): Promise<JobStatus> {
+  return request<JobStatus>(`/api/status/${jobId}`, init);
 }
 
 export async function cancelJob(jobId: string): Promise<CancelJobResponse> {

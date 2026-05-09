@@ -113,9 +113,14 @@ async def _retrieve_icon_candidates(
             logger.warning("Icon search timed out or was cancelled for query: %s", query)
             break
         for r in results:
-            if r["path"] not in seen_paths:
-                seen_paths.add(r["path"])
-                candidates.append(r)
+            path = str(r.get("path") or "")
+            if path in seen_paths:
+                continue
+            if not _icon_asset_exists(path):
+                logger.warning("Skipping stale icon RAG candidate with missing local asset: %s", path)
+                continue
+            seen_paths.add(path)
+            candidates.append(r)
 
     # Sort by score descending, take top N
     candidates.sort(key=lambda x: x["score"], reverse=True)

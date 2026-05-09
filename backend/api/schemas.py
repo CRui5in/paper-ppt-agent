@@ -60,6 +60,7 @@ class ResearchConfig(BaseModel):
     semantic_scholar_enabled: bool = False
     web_search_enabled: bool = False
     semantic_scholar_api_key: str | None = None
+    web_search_provider: Literal["tavily", "serpapi"] = "tavily"
     tavily_api_key: str | None = None
     serpapi_key: str | None = None
     # Maximum candidates to fetch per source before relevance filtering.

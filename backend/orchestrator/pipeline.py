@@ -16,6 +16,7 @@ from typing import Literal
 from backend.config import settings
 from backend.api.schemas import ResearchConfig
 from backend.generator.svg_critic import CriticReport
+from backend.runtime import aoffload, aread_text, awrite_text
 from backend.usage.tracker import reset_usage_context, set_usage_context
 
 from .manuscript import count_manuscript_pages
@@ -77,19 +78,23 @@ def _querying_enrichment_payload(config: ResearchConfig) -> dict:
     return payload
 
 
-def _write_enrichment_debug(project_dir: Path, ctx: ResearchContext, stats) -> None:
+async def _write_enrichment_debug(
+    project_dir: Path, ctx: ResearchContext, stats
+) -> None:
     debug_dir = project_dir / "debug"
     try:
-        debug_dir.mkdir(parents=True, exist_ok=True)
+        await aoffload(debug_dir.mkdir, parents=True, exist_ok=True)
         payload = stats.to_dict()
         payload["queries_used"] = list(ctx.queries_used)
-        (debug_dir / "research_enrichment_stats.json").write_text(
+        await awrite_text(
+            debug_dir / "research_enrichment_stats.json",
             json.dumps(payload, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
         block = ctx.enrichment_block_for_pass1()
         if block:
-            (debug_dir / "research_enrichment_pass1_block.md").write_text(
+            await awrite_text(
+                debug_dir / "research_enrichment_pass1_block.md",
                 block,
                 encoding="utf-8",
             )
@@ -239,7 +244,7 @@ async def run_pipeline(
                 paper_abstract=paper.abstract,
                 config=research_cfg,
             )
-            _write_enrichment_debug(project_dir, research_ctx, stats)
+            await _write_enrichment_debug(project_dir, research_ctx, stats)
             yield ProgressEvent(
                 "research",
                 "progress",
@@ -299,7 +304,7 @@ async def run_pipeline(
         manuscript = analysis_task.result()
 
         # Save manuscript and deep analysis artifacts
-        (project_dir / "manuscript.md").write_text(manuscript, encoding="utf-8")
+        await awrite_text(project_dir / "manuscript.md", manuscript, encoding="utf-8")
         yield ProgressEvent(
             "research",
             "complete",
@@ -354,7 +359,7 @@ async def run_pipeline(
         )
 
         # Save design spec
-        (project_dir / "design_spec.md").write_text(design_spec, encoding="utf-8")
+        await awrite_text(project_dir / "design_spec.md", design_spec, encoding="utf-8")
         yield ProgressEvent("strategy", "complete", "Design spec created", 0.40)
 
         # Stage 4: SVG executor
@@ -449,12 +454,16 @@ async def run_pipeline(
             data={"critic": critic_events},
         )
 
-        _save_critic_history(project_dir, critic_events)
+        await _save_critic_history(project_dir, critic_events)
 
         # Stage 5: Post-processing
         set_usage_context(stage="postprocess")
         yield ProgressEvent("postprocess", "started", "Finalizing SVGs...")
-        stats = finalize_project(project_dir)
+        # finalize_project walks every SVG, runs cairosvg / PIL / regex
+        # rewrites: minutes of synchronous CPU work. Push it to the offload
+        # pool so heartbeats, the WS event bus, and the scheduler dispatcher
+        # all keep ticking.
+        stats = await aoffload(finalize_project, project_dir)
         yield ProgressEvent(
             "postprocess",
             "complete",
@@ -471,7 +480,8 @@ async def run_pipeline(
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         pptx_path = project_dir / "exports" / f"presentation_{timestamp}.pptx"
 
-        create_pptx(
+        await aoffload(
+            create_pptx,
             svg_files,
             pptx_path,
             canvas_format=request.canvas_format,
@@ -493,7 +503,7 @@ async def run_pipeline(
         reset_usage_context(usage_snapshot)
 
 
-def _load_figure_inventory(project_dir: Path) -> list[dict]:
+async def _load_figure_inventory(project_dir: Path) -> list[dict]:
     """Read figure_review.json from a refine workspace.
 
     The refine pipeline runs without re-parsing the PDF, so we cannot call
@@ -501,12 +511,12 @@ def _load_figure_inventory(project_dir: Path) -> list[dict]:
     is written once during the original parse and contains everything the
     executor needs to resolve `[[FIG:id]]` tokens to real hrefs.
     """
-    import json
     candidate = project_dir / "sources" / "images" / "figure_review.json"
     if not candidate.exists():
         return []
     try:
-        records = json.loads(candidate.read_text(encoding="utf-8"))
+        text = await aread_text(candidate, encoding="utf-8")
+        records = json.loads(text)
     except (OSError, ValueError):
         return []
     inventory: list[dict] = []
@@ -637,8 +647,8 @@ async def run_refine_pipeline(
         )
         return
 
-    manuscript = manuscript_path.read_text(encoding="utf-8")
-    design_spec = design_spec_path.read_text(encoding="utf-8")
+    manuscript = await aread_text(manuscript_path, encoding="utf-8")
+    design_spec = await aread_text(design_spec_path, encoding="utf-8")
 
     provider_kwargs = {"base_url": request.base_url}
     if request.deepseek_settings is not None:
@@ -678,11 +688,11 @@ async def run_refine_pipeline(
             target_pages=target_pages,
             allow_structure_changes=True,
         )
-        manuscript_path.write_text(manuscript, encoding="utf-8")
+        await awrite_text(manuscript_path, manuscript, encoding="utf-8")
         yield ProgressEvent("research", "complete", "Manuscript revised", 0.15)
 
         yield ProgressEvent("strategy", "started", "Rebuilding design specification...", 0.15)
-        refine_figure_inventory = _load_figure_inventory(project_dir)
+        refine_figure_inventory = await _load_figure_inventory(project_dir)
         design_spec = await strategist_agent.create_design_spec(
             manuscript,
             llm,
@@ -698,7 +708,7 @@ async def run_refine_pipeline(
             gemini_api_key=request.gemini_api_key,
             figure_inventory=refine_figure_inventory,
         )
-        design_spec_path.write_text(design_spec, encoding="utf-8")
+        await awrite_text(design_spec_path, design_spec, encoding="utf-8")
         yield ProgressEvent("strategy", "complete", "Design spec rebuilt", 0.30)
 
     # Archive current svg_output before overwriting
@@ -739,7 +749,7 @@ async def run_refine_pipeline(
             entry["archive_path"] = archive_path
         refine_critic_events.append(entry)
 
-    refine_inventory = _load_figure_inventory(project_dir)
+    refine_inventory = await _load_figure_inventory(project_dir)
 
     # Load template context for refine if specified
     refine_template_ctx = ""
@@ -795,7 +805,7 @@ async def run_refine_pipeline(
     postprocess_start = generation_start + generation_span
     export_start = 0.80 if request.allow_structure_changes else 0.80
     yield ProgressEvent("postprocess", "started", "Finalizing SVGs...", postprocess_start)
-    stats = finalize_project(project_dir)
+    stats = await aoffload(finalize_project, project_dir)
     yield ProgressEvent(
         "postprocess", "complete",
         f"Processed {stats['total_files']} files",
@@ -810,11 +820,17 @@ async def run_refine_pipeline(
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     pptx_path = project_dir / "exports" / f"presentation_{timestamp}.pptx"
 
-    create_pptx(svg_files, pptx_path, canvas_format=request.canvas_format, notes=notes)
+    await aoffload(
+        create_pptx,
+        svg_files,
+        pptx_path,
+        canvas_format=request.canvas_format,
+        notes=notes,
+    )
 
     # Persist feedback history to disk for auditability
-    _save_feedback_history(project_dir, request.feedback_history)
-    _save_critic_history(project_dir, refine_critic_events, refine=True)
+    await _save_feedback_history(project_dir, request.feedback_history)
+    await _save_critic_history(project_dir, refine_critic_events, refine=True)
 
     yield ProgressEvent(
         "export", "complete",
@@ -931,29 +947,29 @@ def _build_style_overrides_block(overrides: dict | None) -> str:
     return "## Style Overrides (must follow)\n" + "\n".join(parts)
 
 
-def _save_feedback_history(project_dir: Path, history: list[str]) -> None:
+async def _save_feedback_history(project_dir: Path, history: list[str]) -> None:
     """Append-write feedback_history.json for auditability."""
-    import json
-
     path = project_dir / "feedback_history.json"
-    path.write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
+    await awrite_text(
+        path,
+        json.dumps(history, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
 
 
-def _save_critic_history(
+async def _save_critic_history(
     project_dir: Path,
     critic_events: list[dict],
     *,
     refine: bool = False,
 ) -> None:
     """Persist critic events to critic_history.json for post-run analysis."""
-    import json
-    from datetime import datetime
-
     path = project_dir / "critic_history.json"
     existing: dict = {}
     if path.exists():
         try:
-            existing = json.loads(path.read_text(encoding="utf-8"))
+            text = await aread_text(path, encoding="utf-8")
+            existing = json.loads(text)
         except (json.JSONDecodeError, OSError):
             existing = {}
 
@@ -963,7 +979,11 @@ def _save_critic_history(
     if "created_at" not in existing:
         existing["created_at"] = existing["updated_at"]
 
-    path.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
+    await awrite_text(
+        path,
+        json.dumps(existing, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
 
 
 def _seed_svg_output_for_targeted_refine(project_dir: Path, target_pages: list[int]) -> None:

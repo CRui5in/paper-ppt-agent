@@ -13,6 +13,7 @@ from backend.generator.pptx_font_editor import (
     replace_fonts_in_pptx,
     replace_fonts_in_svg_dir,
 )
+from backend.runtime import aoffload
 from backend.session.manager import session_manager
 
 router = APIRouter()
@@ -67,7 +68,12 @@ async def apply_fonts(job_id: str, request: FontReplaceRequest) -> FontReplaceRe
     output_path = project_dir / "exports" / f"presentation_{timestamp}_fonts.pptx"
 
     try:
-        final_path, edit_result = replace_fonts_in_pptx(
+        # PPTX font replacement opens the .pptx with python-pptx and
+        # rewrites every <a:rPr typeface=…> entry — fast in CPU but fully
+        # synchronous file IO. Offload so concurrent generations on the
+        # same server aren't blocked while a font swap is in flight.
+        final_path, edit_result = await aoffload(
+            replace_fonts_in_pptx,
             source_pptx,
             config,
             output_path=output_path,
@@ -82,7 +88,7 @@ async def apply_fonts(job_id: str, request: FontReplaceRequest) -> FontReplaceRe
     svg_fonts_replaced = 0
     for svg_dir_name in ("svg_final", "svg_output"):
         svg_dir = project_dir / svg_dir_name
-        svg_fonts_replaced += replace_fonts_in_svg_dir(svg_dir, config)
+        svg_fonts_replaced += await aoffload(replace_fonts_in_svg_dir, svg_dir, config)
 
     return FontReplaceResponse(
         output_path=str(final_path),

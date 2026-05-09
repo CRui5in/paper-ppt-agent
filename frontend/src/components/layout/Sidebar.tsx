@@ -5,6 +5,8 @@ import { useGeneration } from "../../hooks/useGeneration";
 import { useLocale } from "../../i18n";
 import { translateStageStatus } from "../../lib/i18nStatus";
 
+const RECENT_HISTORY_DISPLAY_LIMIT = 8;
+
 interface SidebarProps {
   collapsed?: boolean;
   onCollapsedChange?: (collapsed: boolean) => void;
@@ -13,20 +15,21 @@ interface SidebarProps {
 export function Sidebar({ collapsed = false, onCollapsedChange }: SidebarProps) {
   const { t, locale } = useLocale();
   const location = useLocation();
-  const { history, activeJobId, removeHistory, reset } = useGeneration();
+  const { history, activeJobId, removeHistory, reset, refreshHistoryStatuses } = useGeneration();
   const [confirmState, setConfirmState] = useState<{
     jobId: string;
     top: number;
     left: number;
   } | null>(null);
   const confirmRef = useRef<HTMLDivElement | null>(null);
+  const historyRefreshInFlightRef = useRef(false);
   const searchParams = new URLSearchParams(location.search);
   const links = [
     { to: "/", label: t("sidebar.overview"), icon: Home },
     { to: "/generate", label: t("sidebar.generationStudio"), icon: Layers3 },
     { to: "/logs", label: t("sidebar.logs"), icon: BarChart3 },
   ];
-  const recentHistory = history.slice(0, 5);
+  const recentHistory = history.slice(0, RECENT_HISTORY_DISPLAY_LIMIT);
   const currentResultJobId = searchParams.get("job");
   const currentGenerateJobId = searchParams.get("job");
   const isFreshEntryActive = location.pathname === "/generate" && searchParams.get("fresh") === "1";
@@ -60,6 +63,32 @@ export function Sidebar({ collapsed = false, onCollapsedChange }: SidebarProps) 
       document.removeEventListener("keydown", handleEscape);
     };
   }, [confirmState]);
+
+  useEffect(() => {
+    let stopped = false;
+
+    const refresh = async () => {
+      if (stopped || historyRefreshInFlightRef.current) {
+        return;
+      }
+      historyRefreshInFlightRef.current = true;
+      try {
+        await refreshHistoryStatuses();
+      } finally {
+        historyRefreshInFlightRef.current = false;
+      }
+    };
+
+    void refresh();
+    const timer = window.setInterval(() => {
+      void refresh();
+    }, 3000);
+
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+    };
+  }, [refreshHistoryStatuses]);
 
   return (
     <aside className={`sidebar ${collapsed ? "sidebar-collapsed-panel" : ""}`}>

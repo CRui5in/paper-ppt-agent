@@ -1,15 +1,26 @@
-"""Generation API endpoint."""
+"""Generation API endpoint.
+
+The HTTP handler does the cheap synchronous work (validate session, derive
+the pipeline request, register a Job row) and then enqueues the actual
+generation through the scheduler. Submitting through the scheduler is what
+makes ``POST /generate`` return in milliseconds even when an earlier job is
+still in its parsing/research stage on a busy server.
+"""
 
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, status
 
 from backend.api.schemas import GenerateRequest, GenerateResponse
+from backend.runtime.scheduler import QueueFull, SchedulerDraining, get_scheduler
 from backend.session.manager import session_manager
 from backend.session.progress import payloads_from_progress_event
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -148,6 +159,34 @@ async def generate_presentation(request: GenerateRequest) -> GenerateResponse:
         research_config=request.options.research_config,
     )
 
-    task = asyncio.create_task(_run_generation_job(job.id, pipeline_request))
-    session_manager.register_task(job.id, task)
-    return GenerateResponse(job_id=job.id, status="started")
+    scheduler = get_scheduler()
+
+    async def _runner() -> None:
+        await _run_generation_job(job.id, pipeline_request)
+
+    try:
+        await scheduler.submit(job.id, _runner)
+    except QueueFull as exc:
+        session_manager.update_job(
+            job.id,
+            status="error",
+            error="Server is busy: too many jobs queued.",
+            message="Server is busy: too many jobs queued.",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=str(exc),
+        ) from exc
+    except SchedulerDraining as exc:
+        session_manager.update_job(
+            job.id,
+            status="error",
+            error="Server is shutting down.",
+            message="Server is shutting down.",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+
+    return GenerateResponse(job_id=job.id, status="queued")

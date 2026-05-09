@@ -123,6 +123,7 @@ export function GeneratePage() {
     error,
     currentRunConfig,
     history,
+    runs,
     loadProviders,
     uploadFile,
     startGeneration,
@@ -173,6 +174,7 @@ export function GeneratePage() {
         const parsed = JSON.parse(saved) as Record<string, string>;
         return {
           ...base,
+          web_search_provider: base.web_search_provider || (parsed.web_search_provider as "tavily" | "serpapi" | undefined) || undefined,
           semantic_scholar_api_key: base.semantic_scholar_api_key || parsed.semantic_scholar_api_key || undefined,
           tavily_api_key: base.tavily_api_key || parsed.tavily_api_key || undefined,
           serpapi_key: base.serpapi_key || parsed.serpapi_key || undefined,
@@ -195,24 +197,31 @@ export function GeneratePage() {
     ? history.find((entry) => entry.jobId === targetJobId)
     : undefined;
   const selectedRunConfig = useMemo(() => {
+    if (targetJobId) {
+      const targetRunConfig = runs[targetJobId]?.currentRunConfig;
+      if (targetRunConfig) {
+        return targetRunConfig;
+      }
+      if (
+        targetHistoryEntry?.provider &&
+        targetHistoryEntry.model &&
+        targetHistoryEntry.options
+      ) {
+        return {
+          provider: targetHistoryEntry.provider,
+          model: targetHistoryEntry.model,
+          baseUrl: targetHistoryEntry.baseUrl ?? undefined,
+          options: targetHistoryEntry.options,
+          parentJobId: targetHistoryEntry.parentJobId ?? null,
+        };
+      }
+      return undefined;
+    }
     if (currentRunConfig) {
       return currentRunConfig;
     }
-    if (
-      targetHistoryEntry?.provider &&
-      targetHistoryEntry.model &&
-      targetHistoryEntry.options
-    ) {
-      return {
-        provider: targetHistoryEntry.provider,
-        model: targetHistoryEntry.model,
-        baseUrl: targetHistoryEntry.baseUrl ?? undefined,
-        options: targetHistoryEntry.options,
-        parentJobId: targetHistoryEntry.parentJobId ?? null,
-      };
-    }
     return undefined;
-  }, [currentRunConfig, targetHistoryEntry]);
+  }, [currentRunConfig, runs, targetHistoryEntry, targetJobId]);
   const canCancelCurrentRun = Boolean(
     jobId &&
       job &&
@@ -324,7 +333,16 @@ export function GeneratePage() {
     setEnableVisualCritic(Boolean(options.enable_visual_critic));
     setEnableIcon(options.enable_icon !== false);
     setEnableIconRag(options.enable_icon_rag !== false);
-    setResearchConfig(options.research_config ?? {});
+    setResearchConfig((prev) => {
+      const incoming = options.research_config ?? {};
+      return {
+        ...incoming,
+        web_search_provider: incoming.web_search_provider || prev.web_search_provider,
+        semantic_scholar_api_key: incoming.semantic_scholar_api_key || prev.semantic_scholar_api_key,
+        tavily_api_key: incoming.tavily_api_key || prev.tavily_api_key,
+        serpapi_key: incoming.serpapi_key || prev.serpapi_key,
+      };
+    });
     setGeminiApiKey(options.gemini_api_key ?? "");
     setTemplateId(options.template_id ?? "");
   }, [selectedRunConfig, targetJobId]);
@@ -339,14 +357,18 @@ export function GeneratePage() {
 
   useEffect(() => {
     try {
-      const keys = {
-        semantic_scholar_api_key: researchConfig.semantic_scholar_api_key ?? "",
-        tavily_api_key: researchConfig.tavily_api_key ?? "",
-        serpapi_key: researchConfig.serpapi_key ?? "",
+      const existingRaw = window.localStorage.getItem(RESEARCH_KEYS_STORAGE);
+      const existing = existingRaw ? (JSON.parse(existingRaw) as Record<string, string>) : {};
+      const next = {
+        web_search_provider: researchConfig.web_search_provider || existing.web_search_provider || "tavily",
+        semantic_scholar_api_key:
+          researchConfig.semantic_scholar_api_key || existing.semantic_scholar_api_key || "",
+        tavily_api_key: researchConfig.tavily_api_key || existing.tavily_api_key || "",
+        serpapi_key: researchConfig.serpapi_key || existing.serpapi_key || "",
       };
-      window.localStorage.setItem(RESEARCH_KEYS_STORAGE, JSON.stringify(keys));
+      window.localStorage.setItem(RESEARCH_KEYS_STORAGE, JSON.stringify(next));
     } catch { /* noop */ }
-  }, [researchConfig.semantic_scholar_api_key, researchConfig.tavily_api_key, researchConfig.serpapi_key]);
+  }, [researchConfig.web_search_provider, researchConfig.semantic_scholar_api_key, researchConfig.tavily_api_key, researchConfig.serpapi_key]);
 
   useEffect(() => {
     if (targetJobId) {

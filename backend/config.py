@@ -89,8 +89,38 @@ class Settings(BaseSettings):
     references_dir: Path = PROJECT_ROOT / "assets" / "references"
 
     # Limits
-    max_concurrent_jobs: int = 3
+    # Historical compatibility knob. Job scheduling is now immediate and
+    # per-job; this no longer caps generate/refine submissions.
+    max_concurrent_jobs: int = 1
     max_upload_bytes: int = 64 * 1024 * 1024  # 64 MB per uploaded paper
+
+    # ── Async runtime ────────────────────────────────────────────────────
+    # Size of the global ThreadPoolExecutor used by ``runtime.aoffload``.
+    # All blocking file IO and CPU-bound library calls (fitz, python-pptx,
+    # cairosvg, PIL) flow through this pool, so size it for IO concurrency
+    # rather than core count.
+    io_pool_workers: int = 16
+
+    # ── Job scheduling ───────────────────────────────────────────────────
+    # Backlog cap for queued jobs; a 16th queued job returns 429.
+    job_queue_capacity: int = 16
+
+    # ── External tool timeouts (seconds) ─────────────────────────────────
+    pandoc_timeout: int = 60
+    pdflatex_timeout: int = 90
+    cairosvg_timeout: int = 30
+    # Number of parallel equation renders allowed in flight.
+    equation_render_concurrency: int = 4
+
+    # ── WebSocket ────────────────────────────────────────────────────────
+    ws_subscriber_queue_size: int = 1024
+    ws_heartbeat_seconds: int = 15
+
+    # ── Persistence ──────────────────────────────────────────────────────
+    # Debounce window (ms) for full session_state.json snapshots. Events
+    # always go to the per-job NDJSON stream synchronously so nothing is
+    # lost on a hard crash; the snapshot just rolls up indices.
+    persist_debounce_ms: int = 200
 
 
 settings = Settings()
