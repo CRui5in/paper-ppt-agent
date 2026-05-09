@@ -324,7 +324,15 @@ export function GeneratePage() {
     setEnableVisualCritic(Boolean(options.enable_visual_critic));
     setEnableIcon(options.enable_icon !== false);
     setEnableIconRag(options.enable_icon_rag !== false);
-    setResearchConfig(options.research_config ?? {});
+    setResearchConfig((prev) => {
+      const incoming = options.research_config ?? {};
+      return {
+        ...incoming,
+        semantic_scholar_api_key: incoming.semantic_scholar_api_key || prev.semantic_scholar_api_key,
+        tavily_api_key: incoming.tavily_api_key || prev.tavily_api_key,
+        serpapi_key: incoming.serpapi_key || prev.serpapi_key,
+      };
+    });
     setGeminiApiKey(options.gemini_api_key ?? "");
     setTemplateId(options.template_id ?? "");
   }, [selectedRunConfig, targetJobId]);
@@ -339,12 +347,15 @@ export function GeneratePage() {
 
   useEffect(() => {
     try {
-      const keys = {
-        semantic_scholar_api_key: researchConfig.semantic_scholar_api_key ?? "",
-        tavily_api_key: researchConfig.tavily_api_key ?? "",
-        serpapi_key: researchConfig.serpapi_key ?? "",
+      const existingRaw = window.localStorage.getItem(RESEARCH_KEYS_STORAGE);
+      const existing = existingRaw ? (JSON.parse(existingRaw) as Record<string, string>) : {};
+      const next = {
+        semantic_scholar_api_key:
+          researchConfig.semantic_scholar_api_key || existing.semantic_scholar_api_key || "",
+        tavily_api_key: researchConfig.tavily_api_key || existing.tavily_api_key || "",
+        serpapi_key: researchConfig.serpapi_key || existing.serpapi_key || "",
       };
-      window.localStorage.setItem(RESEARCH_KEYS_STORAGE, JSON.stringify(keys));
+      window.localStorage.setItem(RESEARCH_KEYS_STORAGE, JSON.stringify(next));
     } catch { /* noop */ }
   }, [researchConfig.semantic_scholar_api_key, researchConfig.tavily_api_key, researchConfig.serpapi_key]);
 
