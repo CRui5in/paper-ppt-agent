@@ -9,6 +9,7 @@ from fastapi import APIRouter, File, HTTPException, UploadFile, status
 
 from backend.api.schemas import FileInfo, UploadResponse
 from backend.config import settings
+from backend.runtime import aensure_dir, awrite_bytes
 from backend.session.manager import session_manager
 
 router = APIRouter()
@@ -59,9 +60,11 @@ async def upload_paper(file: UploadFile = File(...)) -> UploadResponse:
 
     session_id = uuid.uuid4().hex[:12]
     upload_dir = settings.workspaces_dir / "uploads" / session_id
-    upload_dir.mkdir(parents=True, exist_ok=True)
+    await aensure_dir(upload_dir)
     file_path = upload_dir / (file.filename or f"upload{suffix}")
-    file_path.write_bytes(content)
+    # Atomic write through the offload pool — a 64MB upload would otherwise
+    # block the event loop for 50–200ms on slow disks.
+    await awrite_bytes(file_path, content)
 
     session = session_manager.create_session(
         file_path=file_path,

@@ -77,7 +77,13 @@ async def reexport_presentation(job_id: str) -> ReexportResponse:
     canvas_format = job.canvas_format or "ppt169"
     output_path = project_dir / "exports" / f"presentation_{timestamp}.pptx"
 
-    create_pptx(
+    from backend.runtime import aoffload
+
+    # PPTX assembly is python-pptx + zipfile + cairosvg — all synchronous and
+    # CPU-heavy (5–20s for a long deck). Offload so re-export from the result
+    # page doesn't freeze the API while it runs.
+    await aoffload(
+        create_pptx,
         svg_files,
         output_path,
         canvas_format=canvas_format,

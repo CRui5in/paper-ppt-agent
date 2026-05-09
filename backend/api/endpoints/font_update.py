@@ -13,6 +13,7 @@ from backend.generator.svg_finalize.normalize_fonts import (
     FontReplaceConfig,
     replace_fonts_in_svg_dir,
 )
+from backend.runtime import aoffload
 from backend.session.manager import session_manager
 
 router = APIRouter()
@@ -61,6 +62,6 @@ async def update_svg_fonts(job_id: str, request: UpdateFontsRequest) -> UpdateFo
 
     total = 0
     for subdir in ("svg_final", "svg_output"):
-        total += replace_fonts_in_svg_dir(project_dir / subdir, config)
+        total += await aoffload(replace_fonts_in_svg_dir, project_dir / subdir, config)
 
     return UpdateFontsResponse(svg_fonts_replaced=total)

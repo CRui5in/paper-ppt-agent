@@ -8,6 +8,7 @@ from backend.api.schemas import PreviewResponse, PreviewSlide
 from backend.config import settings
 from backend.generator.project_manager import get_svg_files
 from backend.generator.svg_finalize.render_ready import prepare_svg_file_for_render
+from backend.runtime import aoffload, apath_exists, aread_text, aremove
 from backend.session.manager import session_manager
 
 router = APIRouter()
@@ -23,11 +24,12 @@ async def get_critic_history(job_id: str) -> dict:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
 
     critic_path = Path(job.project_dir) / "critic_history.json"
-    if not critic_path.exists():
+    if not await apath_exists(critic_path):
         return {"events": []}
 
     try:
-        data = json.loads(critic_path.read_text(encoding="utf-8"))
+        text = await aread_text(critic_path, encoding="utf-8")
+        data = json.loads(text)
     except (json.JSONDecodeError, OSError):
         return {"events": []}
 
@@ -53,10 +55,10 @@ async def get_critic_archive_svg(job_id: str, filename: str) -> Response:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid filename.")
 
     svg_path = Path(job.project_dir) / "svg_archive" / "repair" / safe_name
-    if not svg_path.exists():
+    if not await apath_exists(svg_path):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Archive not found.")
 
-    content = svg_path.read_text(encoding="utf-8")
+    content = await aread_text(svg_path, encoding="utf-8")
     return Response(content=content, media_type="image/svg+xml")
 
 
@@ -67,7 +69,7 @@ async def get_preview(job_id: str) -> PreviewResponse:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
 
     normalized_status = "complete" if job.output_path and Path(job.output_path).exists() else job.status
-    return _build_preview_response(job_id, Path(job.project_dir) if job.project_dir else None, job.output_path, normalized_status)
+    return await _build_preview_response(job_id, Path(job.project_dir) if job.project_dir else None, job.output_path, normalized_status)
 
 
 @router.get("/preview-project", response_model=PreviewResponse)
@@ -77,7 +79,7 @@ async def get_project_preview(project_dir: str) -> PreviewResponse:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
 
     output_path = _find_latest_output(resolved_project_dir)
-    return _build_preview_response(
+    return await _build_preview_response(
         job_id=resolved_project_dir.name,
         project_dir=resolved_project_dir,
         output_path=str(output_path) if output_path else None,
@@ -85,7 +87,7 @@ async def get_project_preview(project_dir: str) -> PreviewResponse:
     )
 
 
-def _build_preview_response(
+async def _build_preview_response(
     job_id: str,
     project_dir: Path | None,
     output_path: str | None,
@@ -98,11 +100,13 @@ def _build_preview_response(
         slide_files = final_files or output_files
         source = "final" if final_files else "output"
         for index, svg_path in enumerate(slide_files, start=1):
-            prepared_path = prepare_svg_file_for_render(svg_path)
+            # ``prepare_svg_file_for_render`` rewrites href base64 inlines etc.
+            # — synchronous CPU work; offload it.
+            prepared_path = await aoffload(prepare_svg_file_for_render, svg_path)
             try:
-                content = prepared_path.read_text(encoding="utf-8")
+                content = await aread_text(prepared_path, encoding="utf-8")
             finally:
-                prepared_path.unlink(missing_ok=True)
+                await aremove(prepared_path, missing_ok=True)
             slides.append(
                 PreviewSlide(
                     index=index,
