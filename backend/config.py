@@ -89,7 +89,9 @@ class Settings(BaseSettings):
     references_dir: Path = PROJECT_ROOT / "assets" / "references"
 
     # Limits
-    max_concurrent_jobs: int = 2
+    # Historical compatibility knob. Job scheduling is now immediate and
+    # per-job; this no longer caps generate/refine submissions.
+    max_concurrent_jobs: int = 1
     max_upload_bytes: int = 64 * 1024 * 1024  # 64 MB per uploaded paper
 
     # ── Async runtime ────────────────────────────────────────────────────

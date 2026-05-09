@@ -413,11 +413,13 @@ class SessionManager:
                     continue
                 self._dirty = False
                 try:
-                    # Off the event loop — full JSON serialization for a
-                    # fat payload is cheap (<5ms) but still polite.
+                    # Build the snapshot on the event-loop thread so the
+                    # offload worker never iterates mutable SessionManager
+                    # dicts while other requests are updating them.
+                    payload = self._build_state_payload()
                     from backend.runtime.offload import aoffload
 
-                    await aoffload(self._write_state_blocking)
+                    await aoffload(self._write_payload_blocking, payload)
                 except asyncio.CancelledError:
                     raise
                 except Exception:
@@ -428,19 +430,26 @@ class SessionManager:
             # recent metadata if the loop is cancelled before debounce.
             if self._dirty:
                 try:
-                    self._write_state_blocking()
+                    self._write_payload_blocking(self._build_state_payload())
                 except Exception:
                     logger.exception("final session state flush failed")
             raise
 
     def _write_state_blocking(self) -> None:
-        self._state_file.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
+        self._write_payload_blocking(self._build_state_payload())
+
+    def _build_state_payload(self) -> dict[str, Any]:
+        return {
             "sessions": [
-                self._serialize_session(session) for session in self._sessions.values()
+                self._serialize_session(session) for session in list(self._sessions.values())
             ],
-            "jobs": [self._serialize_job(job) for job in self._jobs.values()],
+            "jobs": [
+                self._serialize_job(job) for job in list(self._jobs.values())
+            ],
         }
+
+    def _write_payload_blocking(self, payload: dict[str, Any]) -> None:
+        self._state_file.parent.mkdir(parents=True, exist_ok=True)
         temp_path = self._state_file.with_suffix(".tmp")
         temp_path.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2),

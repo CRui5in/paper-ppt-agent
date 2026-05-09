@@ -191,6 +191,26 @@ def test_design_spec_validation_rejects_missing_icon_asset() -> None:
     assert "chunk/alert-triangle" in error
 
 
+@pytest.mark.asyncio
+async def test_icon_rag_candidates_skip_missing_local_assets(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _FakeIndex:
+        is_available = True
+
+        def search(self, query: str, *, lib: str, k: int) -> list[dict]:
+            return [
+                {"path": "chunk/scale", "score": 0.99, "category": "metric", "tags": ["scale"]},
+                {"path": "chunk/ruler", "score": 0.88, "category": "metric", "tags": ["measure"]},
+            ]
+
+    monkeypatch.setattr(strategist_agent, "get_icon_index", lambda: _FakeIndex())
+    monkeypatch.setattr(strategist_agent, "_icon_asset_exists", lambda path: path == "chunk/ruler")
+
+    block = await strategist_agent._retrieve_icon_candidates("## Measurement\n\n**scale**", "chunk")
+
+    assert "`chunk/ruler`" in block
+    assert "chunk/scale" not in block
+
+
 def test_offline_icon_candidates_are_verified_and_semantic() -> None:
     block = strategist_agent._offline_icon_candidates_block("chunk")
 

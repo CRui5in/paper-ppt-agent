@@ -52,6 +52,27 @@ def shutdown_offload(wait: bool = True) -> None:
     logger.info("offload pool stopped")
 
 
+def offload_stats() -> dict[str, int | bool | None]:
+    """Best-effort diagnostics for the global offload executor."""
+    pool = _pool
+    if pool is None:
+        return {
+            "started": False,
+            "max_workers": None,
+            "queued": None,
+            "threads": None,
+        }
+    queue = getattr(pool, "_work_queue", None)
+    threads = getattr(pool, "_threads", None)
+    queued = queue.qsize() if queue is not None and hasattr(queue, "qsize") else None
+    return {
+        "started": True,
+        "max_workers": getattr(pool, "_max_workers", None),
+        "queued": queued,
+        "threads": len(threads) if threads is not None else None,
+    }
+
+
 async def aoffload(fn: Callable[..., _T], /, *args: Any, **kwargs: Any) -> _T:
     """Run a sync callable on the global offload pool.
 

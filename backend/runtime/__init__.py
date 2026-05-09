@@ -16,7 +16,7 @@ Public surface:
     Scheduler / EventBus                   — job dispatch and event fanout
 """
 
-from .offload import aoffload, init_offload, shutdown_offload
+from .offload import aoffload, init_offload, offload_stats, shutdown_offload
 from .subproc import SubprocessError, SubprocessTimeout, arun
 from .io import (
     aread_text,
@@ -31,6 +31,7 @@ from .io import (
 __all__ = [
     "aoffload",
     "init_offload",
+    "offload_stats",
     "shutdown_offload",
     "arun",
     "SubprocessError",

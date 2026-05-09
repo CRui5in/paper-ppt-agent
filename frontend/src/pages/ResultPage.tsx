@@ -434,7 +434,7 @@ export function ResultPage() {
       <section className="result-summary">
         <div className="metric-stripe">
           <span>{t("result.status")}</span>
-          <strong>{formatStatusLabel(result?.status ?? job?.status ?? historyEntry?.status, locale, t("common.unknown"))}</strong>
+          <strong>{formatStatusLabel(job?.status ?? result?.status ?? historyEntry?.status, locale, t("common.unknown"))}</strong>
         </div>
         <div className="metric-stripe">
           <span>{t("result.slides")}</span>

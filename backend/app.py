@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
@@ -71,6 +72,28 @@ def create_app() -> FastAPI:
     @app.get("/healthz")
     async def healthcheck() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/healthz/runtime")
+    async def runtime_healthcheck() -> dict:
+        from backend.runtime.offload import offload_stats
+        from backend.runtime.scheduler import get_scheduler
+
+        tasks = []
+        current = asyncio.current_task()
+        for task in asyncio.all_tasks():
+            if task is current:
+                continue
+            tasks.append({
+                "name": task.get_name(),
+                "done": task.done(),
+                "cancelled": task.cancelled(),
+            })
+        return {
+            "status": "ok",
+            "scheduler": get_scheduler().diagnostics(),
+            "offload": offload_stats(),
+            "tasks": tasks,
+        }
 
     @app.get("/")
     async def root() -> dict[str, str]:

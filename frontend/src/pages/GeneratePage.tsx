@@ -123,6 +123,7 @@ export function GeneratePage() {
     error,
     currentRunConfig,
     history,
+    runs,
     loadProviders,
     uploadFile,
     startGeneration,
@@ -195,24 +196,31 @@ export function GeneratePage() {
     ? history.find((entry) => entry.jobId === targetJobId)
     : undefined;
   const selectedRunConfig = useMemo(() => {
+    if (targetJobId) {
+      const targetRunConfig = runs[targetJobId]?.currentRunConfig;
+      if (targetRunConfig) {
+        return targetRunConfig;
+      }
+      if (
+        targetHistoryEntry?.provider &&
+        targetHistoryEntry.model &&
+        targetHistoryEntry.options
+      ) {
+        return {
+          provider: targetHistoryEntry.provider,
+          model: targetHistoryEntry.model,
+          baseUrl: targetHistoryEntry.baseUrl ?? undefined,
+          options: targetHistoryEntry.options,
+          parentJobId: targetHistoryEntry.parentJobId ?? null,
+        };
+      }
+      return undefined;
+    }
     if (currentRunConfig) {
       return currentRunConfig;
     }
-    if (
-      targetHistoryEntry?.provider &&
-      targetHistoryEntry.model &&
-      targetHistoryEntry.options
-    ) {
-      return {
-        provider: targetHistoryEntry.provider,
-        model: targetHistoryEntry.model,
-        baseUrl: targetHistoryEntry.baseUrl ?? undefined,
-        options: targetHistoryEntry.options,
-        parentJobId: targetHistoryEntry.parentJobId ?? null,
-      };
-    }
     return undefined;
-  }, [currentRunConfig, targetHistoryEntry]);
+  }, [currentRunConfig, runs, targetHistoryEntry, targetJobId]);
   const canCancelCurrentRun = Boolean(
     jobId &&
       job &&
