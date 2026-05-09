@@ -193,6 +193,109 @@ def test_resolve_fig_tokens_accepts_short_caption_alias() -> None:
     assert "fig_007_p9_table.png" in rewritten
 
 
+def test_figures_from_design_spec_for_page_recovers_image_assignment() -> None:
+    design_spec = """
+## IX. Content Outline
+
+#### Slide 03 — Evidence
+
+- **Page type**: content
+- **Image**: `fig_001_p3` — VFR overview
+
+#### Slide 04 — Other
+
+- **Page type**: content
+"""
+    inventory = [
+        {
+            "path": "../sources/images/fig_001_p3.png",
+            "caption": "Figure 1. VFR overview.",
+            "natural_width": 3499,
+            "natural_height": 1655,
+        }
+    ]
+
+    figures = svg_executor._figures_from_design_spec_for_page(design_spec, 3, inventory)
+
+    assert figures == inventory
+
+
+def test_figure_guidance_uses_inventory_dimensions_for_relative_paths() -> None:
+    guidance = svg_executor._figure_guidance_block(
+        [
+            {
+                "path": "../sources/images/fig_001_p3.png",
+                "caption": "Figure 1. VFR overview.",
+                "natural_width": 3499,
+                "natural_height": 1655,
+            }
+        ],
+        source="design_spec",
+    )
+
+    assert "design spec explicitly assigns" in guidance
+    assert 'Allowed paper figure href: "../sources/images/fig_001_p3.png"' in guidance
+    assert "actual dimensions: 3499x1655 (ratio 2.11)" in guidance
+
+
+def test_icon_from_design_spec_for_page_recovers_assignment() -> None:
+    design_spec = """
+## IX. Content Outline
+
+#### Slide 03 — Occlusion
+
+- **Page type**: transition
+- **Icon**: `chunk/alert-triangle` — positioned left of title, 40×40px, color `#60A5FA`
+
+#### Slide 04 — Content
+
+- **Icon**: None
+"""
+
+    icon = svg_executor._icon_from_design_spec_for_page(design_spec, 3)
+
+    assert icon == {
+        "name": "chunk/alert-triangle",
+        "size": 40,
+        "color": "#60A5FA",
+        "note": "— positioned left of title, 40×40px, color `#60A5FA`",
+    }
+    assert svg_executor._icon_from_design_spec_for_page(design_spec, 4) is None
+
+
+def test_icon_guidance_requires_data_icon_placeholder() -> None:
+    guidance = svg_executor._icon_guidance_block(
+        {"name": "chunk/lightbulb", "size": 36, "color": "#F59E0B"}
+    )
+
+    assert 'data-icon="chunk/lightbulb"' in guidance
+    assert "Do not redraw it with inline `<path>`" in guidance
+    assert "double quotes" in guidance
+
+
+def test_icon_guidance_without_assignment_bans_fake_badges() -> None:
+    guidance = svg_executor._icon_guidance_block(None)
+
+    assert "no explicit design-spec icon assignment" in guidance
+    assert "standalone letter/symbol badges" in guidance
+    assert "distribution bins" in guidance
+
+
+def test_validate_icon_refs_rejects_fake_card_badge_when_icon_none() -> None:
+    svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720">'
+        '<rect x="94" y="416" width="46" height="46" rx="12"/>'
+        '<text x="117" y="447" font-size="22" text-anchor="middle">P</text>'
+        '<text x="156" y="435" font-size="19">分布式精修</text>'
+        "</svg>"
+    )
+
+    report = svg_executor._validate_icon_refs(svg, required_icon=None)
+
+    assert not report.passed
+    assert any(v.rule == "pseudo_icon_badge_not_allowed" for v in report.violations)
+
+
 def test_classify_page_type_reads_manuscript_metadata() -> None:
     assert svg_executor._classify_page_type("<!-- page_type: cover -->\n## Title") == "cover"
     assert svg_executor._classify_page_type("<!-- page_type: transition -->\n## Method") == "chapter"
@@ -255,6 +358,46 @@ async def test_generate_svg_pages_repairs_unallowed_paper_figure_href(
     assert llm.calls == 2
     repair_prompt = llm.message_snapshots[1][-1].content
     assert "paper_figure_not_allowed" in repair_prompt
+
+
+@pytest.mark.asyncio
+async def test_generate_svg_pages_repairs_missing_required_icon_placeholder(
+    workspace_tmp,
+) -> None:
+    manuscript = "# Page One\n\nChapter divider"
+    design_spec = """
+## IX. Content Outline
+
+#### Slide 01 — Occlusion
+
+- **Page type**: transition
+- **Icon**: `chunk/alert-triangle` — positioned left of title, 40×40px, color `#60A5FA`
+"""
+    wrong = _svg(
+        '<!-- Icon: alert-triangle -->'
+        '<path d="M120,80 L160,150 L80,150 Z" fill="#60A5FA"/>'
+        '<text x="100" y="220" font-size="24">chapter</text>'
+    )
+    fixed = _svg(
+        '<use data-icon="chunk/alert-triangle" x="80" y="80" width="40" height="40" fill="#60A5FA"/>'
+        '<text x="100" y="220" font-size="24">chapter</text>'
+    )
+    llm = _FakeLLM([wrong, fixed])
+
+    slides = [
+        svg
+        async for _, svg in generate_svg_pages(
+            design_spec, manuscript, workspace_tmp, llm, "fake-model"
+        )
+    ]
+
+    assert len(slides) == 1
+    assert 'data-icon="chunk/alert-triangle"' in slides[0]
+    assert llm.calls == 2
+    initial_prompt = llm.message_snapshots[0][-1].content
+    assert 'data-icon="chunk/alert-triangle"' in initial_prompt
+    repair_prompt = llm.message_snapshots[1][-1].content
+    assert "required_icon_missing" in repair_prompt
 
 
 @pytest.mark.asyncio

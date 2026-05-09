@@ -75,6 +75,7 @@ _REVIEW_HEADING_RE = re.compile(
     r"^##\s+(?:step\s*\d+|assessment|review|quality|evaluation|consensus|issues)\b",
     re.IGNORECASE,
 )
+_FIG_TOKEN_RE = re.compile(r"\[\[FIG:([A-Za-z0-9_\-]+)\]\]")
 
 
 def _debug_write_text(debug_dir: Path | None, filename: str, content: str) -> None:
@@ -116,6 +117,9 @@ async def _run_single_pass_analysis(
         f"\n## Target Slides\n\n{_target_slides_guidance(num_pages, detail_level)}",
         f"\n## Detail Level\n\n{detail_level}\n\n{DETAIL_GUIDANCE.get(detail_level, DETAIL_GUIDANCE['normal'])}",
     ]
+    figure_inventory = _figure_token_inventory_block(paper)
+    if figure_inventory:
+        user_parts.append(f"\n{figure_inventory}")
     if enrichment_block:
         user_parts.append(f"\n{enrichment_block}")
     if instruction:
@@ -155,8 +159,9 @@ async def _run_single_pass_analysis(
             else f"research_single_pass_response_attempt{attempt}.md",
             response_content,
         )
-        last_error = _manuscript_structure_error(
+        last_error = _manuscript_validation_error(
             response_content,
+            paper,
             num_pages,
             detail_level,
         ) or ""
@@ -373,6 +378,68 @@ def _manuscript_structure_error(
     return None
 
 
+def _available_figure_tokens(paper: ParsedPaper) -> dict[str, str]:
+    """Return valid FIG token ids mapped to compact captions."""
+    tokens: dict[str, str] = {}
+    for fig in paper.all_figures():
+        if not ParsedPaper._should_include_figure(fig):
+            continue
+        fig_id = fig.fig_id
+        caption = (fig.caption or "").replace("\n", " ").strip()
+        if len(caption) > 180:
+            caption = caption[:177].rstrip() + "..."
+        tokens[fig_id] = caption or "Extracted paper figure"
+    return tokens
+
+
+def _figure_token_inventory_block(paper: ParsedPaper) -> str:
+    tokens = _available_figure_tokens(paper)
+    if not tokens:
+        return ""
+    lines = [
+        "## Valid Paper Figure Tokens",
+        "",
+        "Only the exact tokens below may appear in the manuscript. Do not rename them, translate them, or create semantic aliases such as `fig_arch`.",
+        "",
+        "| Token | Caption |",
+        "| ----- | ------- |",
+    ]
+    for token, caption in tokens.items():
+        lines.append(f"| `[[FIG:{token}]]` | {caption} |")
+    return "\n".join(lines)
+
+
+def _manuscript_figure_token_error(manuscript: str, paper: ParsedPaper) -> str | None:
+    valid = set(_available_figure_tokens(paper))
+    used = _FIG_TOKEN_RE.findall(manuscript)
+    if not used or not valid:
+        return None
+    invalid = sorted({token for token in used if token not in valid})
+    if not invalid:
+        return None
+    sample_valid = ", ".join(f"[[FIG:{token}]]" for token in sorted(valid)[:10])
+    return (
+        "invalid paper figure token(s): "
+        + ", ".join(f"[[FIG:{token}]]" for token in invalid)
+        + ". Use only exact tokens from the Valid Paper Figure Tokens list"
+        + (f", for example {sample_valid}" if sample_valid else "")
+        + "."
+    )
+
+
+def _manuscript_validation_error(
+    manuscript: str,
+    paper: ParsedPaper,
+    num_pages: int | None,
+    detail_level: str = "normal",
+) -> str | None:
+    structure_error = _manuscript_structure_error(manuscript, num_pages, detail_level)
+    figure_error = _manuscript_figure_token_error(manuscript, paper)
+    if structure_error and figure_error:
+        return f"{structure_error}; {figure_error}"
+    return structure_error or figure_error
+
+
 def _structure_retry_prompt(
     error: str,
     num_pages: int | None,
@@ -382,6 +449,7 @@ def _structure_retry_prompt(
         "The previous manuscript did not match the slide structure contract: "
         f"{error}.\n\n"
         "Regenerate the full slide manuscript only.\n"
+        "If the error mentions paper figure tokens, replace invalid tokens with exact tokens from the Valid Paper Figure Tokens list, or omit the real figure when no listed token matches.\n"
         f"{page_type_budget_guidance(num_pages, detail_level)}"
     )
 
@@ -531,6 +599,9 @@ async def analyze_paper(
         f"\n## Target Slides\n\n{_target_slides_guidance(num_pages, detail_level)}",
         f"\n## Detail Level\n\n{detail_level}\n\n{DETAIL_GUIDANCE.get(detail_level, DETAIL_GUIDANCE['normal'])}",
     ]
+    figure_inventory = _figure_token_inventory_block(paper)
+    if figure_inventory:
+        pass3_user_parts.append(f"\n{figure_inventory}")
     if instruction:
         pass3_user_parts.append(f"\n## User Instruction\n\n{instruction}")
     # NOTE: enrichment_block is intentionally injected only into Pass 1 above.
@@ -572,8 +643,9 @@ async def analyze_paper(
             else f"research_pass3_response_attempt{attempt}.md",
             manuscript,
         )
-        last_structure_error = _manuscript_structure_error(
+        last_structure_error = _manuscript_validation_error(
             manuscript,
+            paper,
             num_pages,
             detail_level,
         ) or ""
@@ -596,11 +668,14 @@ async def analyze_paper(
         f"\n## Target Language\n\n{language}",
         f"\n## Detail Level\n\n{detail_level}",
     ]
+    if figure_inventory:
+        pass4_user_parts.append(f"\n{figure_inventory}")
     pass4_user_parts.append(
         "\n\nEvaluate the manuscript against the seven dimensions. "
         "If the total score is below 28/35 or any dimension is below 3, "
         "revise the problematic slides and output the complete revised manuscript. "
-        "Otherwise, output QUALITY_CHECK_PASSED followed by the unchanged manuscript."
+        "Otherwise, output QUALITY_CHECK_PASSED followed by the unchanged manuscript. "
+        "Preserve valid paper figure tokens exactly; never introduce a FIG token that is not in the Valid Paper Figure Tokens list."
     )
 
     pass4_messages = [
@@ -616,8 +691,8 @@ async def analyze_paper(
     )
     _debug_write_text(debug_dir, "research_pass4_response.md", pass4_response.content)
     final_output = _extract_manuscript_from_review(pass4_response.content, manuscript)
-    final_error = _manuscript_structure_error(final_output, num_pages, detail_level)
-    manuscript_error = _manuscript_structure_error(manuscript, num_pages, detail_level)
+    final_error = _manuscript_validation_error(final_output, paper, num_pages, detail_level)
+    manuscript_error = _manuscript_validation_error(manuscript, paper, num_pages, detail_level)
     if final_error and not manuscript_error:
         logger.warning("Pass 4 changed manuscript structure; keeping Pass 3 output: %s", final_error)
         final_output = manuscript

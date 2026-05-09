@@ -10,6 +10,7 @@ that regeneration is *informed* rather than blind.
 from __future__ import annotations
 
 import re
+import xml.etree.ElementTree as ET
 from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 
@@ -33,6 +34,11 @@ from backend.usage.tracker import reset_usage_context, set_usage_context
 # `[[FIG:fig_007_p9_page]]` style tokens emitted by the research agent.
 FIG_TOKEN_RE = re.compile(r"\[\[FIG:([A-Za-z0-9_\-]+)\]\]")
 IMAGE_HREF_RE = re.compile(r"<image\b[^>]*\bhref=[\"']([^\"']+)[\"']", re.IGNORECASE)
+DATA_ICON_RE = re.compile(
+    r"<use\b(?=[^>]*\bdata-icon=([\"'])([^\"']+)\1)[^>]*(?:/>|>\s*</use>)",
+    re.IGNORECASE | re.DOTALL,
+)
+PSEUDO_ICON_BADGE_TEXT = frozenset({"P", "Δ", "!", "G", "?", "i", "I", "✓", "×"})
 FIGURE_LABEL_RE = re.compile(
     r"\b(fig(?:ure)?|table)\s*\.?\s*(\d+)\b|([图表])\s*(\d+)",
     re.IGNORECASE,
@@ -63,21 +69,7 @@ def _resolve_fig_tokens(
     if not figure_inventory:
         return page_content, [], []
 
-    by_id: dict[str, dict] = {}
-    for fig in figure_inventory:
-        path = str(fig.get("path") or "")
-        if path:
-            stem = Path(path).stem
-            by_id[stem] = fig
-            label = _extract_figure_label(str(fig.get("caption") or ""))
-            if label:
-                kind, number = label
-                aliases = {f"{kind}{number}", f"{kind}_{number}"}
-                if kind == "figure":
-                    aliases.update({f"fig{number}", f"fig_{number}"})
-                for alias in aliases:
-                    by_id.setdefault(alias, fig)
-
+    by_id = _figure_alias_map(figure_inventory)
     used: list[dict] = []
     seen: set[str] = set()
     rejected: list[str] = []
@@ -96,16 +88,147 @@ def _resolve_fig_tokens(
         if resolved_id not in seen:
             seen.add(resolved_id)
             used.append(fig)
-        path = fig.get("path") or ""
-        cap = (fig.get("caption") or "").strip().replace("\n", " ")
-        if len(cap) > 160:
-            cap = cap[:157] + "..."
-        return f"[PAPER FIGURE — id={resolved_id}, href=\"{path}\", caption: {cap}]"
+        return _paper_figure_reference_line(fig, resolved_id)
 
     return FIG_TOKEN_RE.sub(_replace, page_content), used, rejected
 
 
-def _figure_guidance_block(used: list[dict], rejected: list[str] | None = None) -> str:
+def _figure_alias_map(figure_inventory: list[dict]) -> dict[str, dict]:
+    by_id: dict[str, dict] = {}
+    for fig in figure_inventory:
+        path = str(fig.get("path") or "")
+        if path:
+            stem = Path(path).stem
+            by_id[stem] = fig
+            label = _extract_figure_label(str(fig.get("caption") or ""))
+            if label:
+                kind, number = label
+                aliases = {f"{kind}{number}", f"{kind}_{number}"}
+                if kind == "figure":
+                    aliases.update({f"fig{number}", f"fig_{number}"})
+                for alias in aliases:
+                    by_id.setdefault(alias, fig)
+    return by_id
+
+
+def _paper_figure_reference_line(fig: dict, resolved_id: str | None = None) -> str:
+    resolved_id = resolved_id or Path(str(fig.get("path") or "")).stem
+    path = fig.get("path") or ""
+    cap = (fig.get("caption") or "").strip().replace("\n", " ")
+    if len(cap) > 160:
+        cap = cap[:157] + "..."
+    return f"[PAPER FIGURE — id={resolved_id}, href=\"{path}\", caption: {cap}]"
+
+
+def _figures_from_design_spec_for_page(
+    design_spec: str,
+    page_num: int,
+    figure_inventory: list[dict] | None,
+) -> list[dict]:
+    """Recover slide image assignments from the design spec as a safety net."""
+    if not figure_inventory:
+        return []
+    page_pattern = (
+        rf"(?ims)^#+\s*(?:slide|page)\s*0*{page_num}\b.*?"
+        rf"(?=^#+\s*(?:slide|page)\s*0*\d+\b|\Z)"
+    )
+    page_match = re.search(page_pattern, design_spec)
+    if not page_match:
+        return []
+    block = page_match.group(0)
+    image_ids = re.findall(r"(?im)^\s*-\s*\*\*Image\*\*\s*:\s*`([^`]+)`", block)
+    if not image_ids:
+        return []
+    by_id = _figure_alias_map(figure_inventory)
+    figures: list[dict] = []
+    seen: set[str] = set()
+    for image_id in image_ids:
+        fig = by_id.get(image_id.strip())
+        if not fig:
+            continue
+        stem = Path(str(fig.get("path") or "")).stem
+        if stem in seen:
+            continue
+        seen.add(stem)
+        figures.append(fig)
+    return figures
+
+
+def _icon_from_design_spec_for_page(design_spec: str, page_num: int) -> dict | None:
+    """Recover a slide-level icon assignment from the design spec."""
+    page_pattern = (
+        rf"(?ims)^#+\s*(?:slide|page)\s*0*{page_num}\b.*?"
+        rf"(?=^#+\s*(?:slide|page)\s*0*\d+\b|\Z)"
+    )
+    page_match = re.search(page_pattern, design_spec)
+    if not page_match:
+        return None
+    block = page_match.group(0)
+    icon_match = re.search(
+        r"(?im)^\s*-\s*\*\*Icon\*\*\s*:\s*`([^`]+)`([^\n]*)",
+        block,
+    )
+    if not icon_match:
+        return None
+
+    icon_name = icon_match.group(1).strip()
+    if not icon_name or icon_name.lower() in {"none", "null", "n/a"}:
+        return None
+
+    note = icon_match.group(2).strip()
+    size = 40
+    size_match = re.search(r"(\d{1,3})\s*[x×]\s*(\d{1,3})\s*px?", note, re.IGNORECASE)
+    if size_match:
+        size = max(int(size_match.group(1)), int(size_match.group(2)))
+
+    color = "#2563EB"
+    color_match = re.search(r"`(#[0-9A-Fa-f]{3,8})`|(#[0-9A-Fa-f]{3,8})", note)
+    if color_match:
+        color = color_match.group(1) or color_match.group(2)
+
+    return {"name": icon_name, "size": size, "color": color, "note": note}
+
+
+def _icon_guidance_block(icon_assignment: dict | None) -> str:
+    """Constrain icon rendering to explicit design-spec placeholders."""
+    if not icon_assignment:
+        return (
+            "## Icon Guidance\n"
+            "- This slide has no explicit design-spec icon assignment. Do not add "
+            "`<use data-icon=\"...\"/>` placeholders or decorative icons.\n"
+            "- Do not simulate icons with standalone letter/symbol badges inside "
+            "small squares or circles, such as `P`, `Δ`, `!`, `G`, `?`, or `i`.\n"
+            "- If cards need structure, use plain numbered markers only when the "
+            "design spec asks for `Card Marker: numbered`; otherwise use title text "
+            "and spacing.\n"
+            "- If a technical concept needs a visual cue, draw a micro diagram that "
+            "shows structure, such as distribution bins, residual arrows, error "
+            "growth, gate sliders, stage flow, or mini charts."
+        )
+
+    name = str(icon_assignment["name"])
+    size = int(icon_assignment.get("size") or 40)
+    color = str(icon_assignment.get("color") or "#2563EB")
+    return (
+        "## Icon Guidance\n"
+        f"- The design spec assigns this slide exactly one semantic icon: `{name}`.\n"
+        "- Render it with a real icon placeholder so the finalizer can embed the "
+        "icon library asset. Do not redraw it with inline `<path>`, `<polygon>`, "
+        "or decorative geometry.\n"
+        f"- Use this form with double quotes: "
+        f"`<use data-icon=\"{name}\" x=\"...\" y=\"...\" width=\"{size}\" "
+        f"height=\"{size}\" fill=\"{color}\"/>`.\n"
+        "- Keep it sparse and purposeful; use no other icon placeholders on this slide.\n"
+        "- Do not add extra standalone letter/symbol badges as fake icons in cards."
+    )
+
+
+def _figure_guidance_block(
+    used: list[dict],
+    rejected: list[str] | None = None,
+    *,
+    source: str = "manuscript",
+) -> str:
     """Constrain real paper-figure hrefs without limiting native SVG visuals."""
     rejected = rejected or []
     if not used:
@@ -124,23 +247,32 @@ def _figure_guidance_block(used: list[dict], rejected: list[str] | None = None) 
         return "\n".join(lines)
 
     lines = ["## Paper Figure Guidance"]
+    if source == "design_spec":
+        lines.append(
+            "- The design spec explicitly assigns the following paper figure(s) to this slide. "
+            "Include them unless the slide would become unreadable; preserve the listed aspect ratio."
+        )
     for fig in used:
         path = fig.get("path") or ""
         cap = (fig.get("caption") or "").strip().replace("\n", " ")
         if len(cap) > 160:
             cap = cap[:157] + "..."
 
-        # 读取实际图片尺寸，帮助executor设置正确的width/height
         dim_info = ""
-        try:
-            img_path = Path(path)
-            if img_path.exists():
-                with Image.open(img_path) as img:
-                    w, h = img.size
-                    ratio = w / h
-                    dim_info = f" actual dimensions: {w}x{h} (ratio {ratio:.2f});"
-        except Exception:
-            pass
+        w = int(fig.get("natural_width") or 0)
+        h = int(fig.get("natural_height") or 0)
+        if w > 0 and h > 0:
+            dim_info = f" actual dimensions: {w}x{h} (ratio {w / h:.2f});"
+        else:
+            try:
+                img_path = Path(path)
+                if img_path.exists():
+                    with Image.open(img_path) as img:
+                        w, h = img.size
+                        ratio = w / h
+                        dim_info = f" actual dimensions: {w}x{h} (ratio {ratio:.2f});"
+            except Exception:
+                pass
 
         lines.append(
             f"- Allowed paper figure href: \"{path}\";{dim_info} caption: {cap}"
@@ -376,6 +508,144 @@ def _validate_paper_figure_refs(
     return CriticReport(passed=not violations, violations=violations)
 
 
+def _validate_icon_refs(
+    svg_content: str,
+    *,
+    required_icon: str | None,
+) -> CriticReport:
+    placeholders = [
+        {"quote": match.group(1), "name": match.group(2)}
+        for match in DATA_ICON_RE.finditer(svg_content)
+    ]
+    names = [item["name"] for item in placeholders]
+    violations: list[Violation] = []
+
+    for item in placeholders:
+        if item["quote"] != '"':
+            violations.append(
+                Violation(
+                    rule="icon_placeholder_quote_unsupported",
+                    severity="error",
+                    detail=(
+                        f'Icon placeholder "{item["name"]}" uses single quotes. '
+                        "Use double quotes so the icon finalizer can embed it."
+                    ),
+                )
+            )
+
+    if required_icon:
+        if required_icon not in names:
+            violations.append(
+                Violation(
+                    rule="required_icon_missing",
+                    severity="error",
+                    detail=(
+                        f'This slide is assigned icon "{required_icon}" in the design spec, '
+                        "but the SVG does not contain the required "
+                        f'`<use data-icon="{required_icon}" .../>` placeholder. '
+                        "Do not redraw the icon manually with inline paths."
+                    ),
+                )
+            )
+        for name in sorted(set(names)):
+            if name != required_icon:
+                violations.append(
+                    Violation(
+                        rule="unassigned_icon_placeholder",
+                        severity="error",
+                        detail=(
+                            f'Icon placeholder "{name}" is not assigned to this slide. '
+                            f'Use only "{required_icon}" or remove the extra placeholder.'
+                        ),
+                    )
+                )
+    elif names:
+        for name in sorted(set(names)):
+            violations.append(
+                Violation(
+                    rule="unassigned_icon_placeholder",
+                    severity="error",
+                    detail=(
+                        f'Icon placeholder "{name}" is not assigned to this slide. '
+                        "Remove it; restrained icon mode allows icons only on slides "
+                        "with an explicit design-spec Icon line."
+                    ),
+                )
+            )
+
+    if not required_icon:
+        violations.extend(_pseudo_icon_badge_violations(svg_content))
+
+    return CriticReport(passed=not violations, violations=violations)
+
+
+def _pseudo_icon_badge_violations(svg_content: str) -> list[Violation]:
+    try:
+        root = ET.fromstring(svg_content)
+    except ET.ParseError:
+        return []
+
+    small_rects: list[tuple[float, float, float, float]] = []
+    small_circles: list[tuple[float, float, float]] = []
+    for elem in root.iter():
+        tag = _local_tag(elem.tag)
+        if tag == "rect":
+            x = _float_attr(elem, "x")
+            y = _float_attr(elem, "y")
+            w = _float_attr(elem, "width")
+            h = _float_attr(elem, "height")
+            if 24 <= w <= 72 and 24 <= h <= 72:
+                small_rects.append((x, y, w, h))
+        elif tag == "circle":
+            r = _float_attr(elem, "r")
+            if 10 <= r <= 36:
+                small_circles.append((_float_attr(elem, "cx"), _float_attr(elem, "cy"), r))
+
+    violations: list[Violation] = []
+    for elem in root.iter():
+        if _local_tag(elem.tag) != "text":
+            continue
+        text = "".join(elem.itertext()).strip()
+        if text not in PSEUDO_ICON_BADGE_TEXT:
+            continue
+        x = _float_attr(elem, "x")
+        y = _float_attr(elem, "y")
+        font_size = _float_attr(elem, "font-size", 18.0)
+        inside_rect = any(
+            rx <= x <= rx + rw and ry <= y <= ry + rh + font_size * 0.4
+            for rx, ry, rw, rh in small_rects
+        )
+        inside_circle = any(
+            abs(x - cx) <= r * 0.75 and abs(y - (cy + font_size * 0.35)) <= r
+            for cx, cy, r in small_circles
+        )
+        if inside_rect or inside_circle:
+            violations.append(
+                Violation(
+                    rule="pseudo_icon_badge_not_allowed",
+                    severity="error",
+                    detail=(
+                        f'Standalone badge "{text}" looks like a fake icon, but this '
+                        "slide has `Icon: None`. Replace it with a numbered card marker "
+                        "only if requested, or with a micro diagram such as distribution "
+                        "bins, residual arrows, error growth, a gate slider, or stage flow."
+                    ),
+                )
+            )
+    return violations
+
+
+def _local_tag(tag: str) -> str:
+    return tag.split("}", 1)[-1] if "}" in tag else tag
+
+
+def _float_attr(elem: ET.Element, name: str, default: float = 0.0) -> float:
+    try:
+        return float(elem.get(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
 def _merge_reports(*reports: CriticReport) -> CriticReport:
     violations: list[Violation] = []
     canvas = None
@@ -494,7 +764,34 @@ async def generate_svg_pages(
             visible_page_content,
             figure_inventory,
         )
-        figure_guidance = _figure_guidance_block(used_figures, rejected_figures)
+        figure_source = "manuscript"
+        if not used_figures:
+            design_spec_figures = _figures_from_design_spec_for_page(
+                design_spec,
+                page_num,
+                figure_inventory,
+            )
+            if design_spec_figures:
+                figure_source = "design_spec"
+                used_figures = design_spec_figures
+                fallback_refs = "\n".join(
+                    _paper_figure_reference_line(fig) for fig in design_spec_figures
+                )
+                rewritten_content = (
+                    f"{rewritten_content}\n\n"
+                    "Design spec image assignment recovered for this slide:\n"
+                    f"{fallback_refs}"
+                )
+        figure_guidance = _figure_guidance_block(
+            used_figures,
+            rejected_figures,
+            source=figure_source,
+        )
+        icon_assignment = _icon_from_design_spec_for_page(design_spec, page_num)
+        required_icon = (
+            str(icon_assignment["name"]) if icon_assignment is not None else None
+        )
+        icon_guidance = _icon_guidance_block(icon_assignment)
         char_budget = _char_budget_block(rewritten_content)
         img_layout = _figure_layout_guidance(used_figures)
 
@@ -523,6 +820,7 @@ async def generate_svg_pages(
                 f"- Keep all visible text in the requested language.\n"
                 f"- {char_budget}\n\n"
                 f"{figure_guidance}\n\n"
+                f"{icon_guidance}\n\n"
                 f"{img_layout}\n\n"
                 f"Generate the complete SVG code for this page. "
                 f"Output ONLY the SVG code, wrapped in ```svg code block."
@@ -586,6 +884,7 @@ async def generate_svg_pages(
                         allowed_figures=used_figures,
                         used_paper_figures=used_paper_figures,
                     ),
+                    _validate_icon_refs(svg_content, required_icon=required_icon),
                 )
                 # Archive pre-repair SVG on first violation detection
                 first_archive: str | None = None
