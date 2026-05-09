@@ -118,9 +118,17 @@ def _extract_icon_shapes(icon_path: Path) -> tuple[str, bool]:
             for attr in ["fill", "stroke"]:
                 if attr in elem.attrib:
                     del elem.attrib[attr]
-            shapes.append(ET.tostring(elem, encoding="unicode"))
+            shapes.append(_serialize_svg_shape(elem))
 
     return "\n".join(shapes), is_stroke
+
+
+def _serialize_svg_shape(elem: ET.Element) -> str:
+    """Serialize icon shapes as plain SVG tags, not `ns0:path` prefixed tags."""
+    xml = ET.tostring(elem, encoding="unicode")
+    xml = re.sub(r"\sxmlns:ns\d+=\"http://www\.w3\.org/2000/svg\"", "", xml)
+    xml = re.sub(r"<(/?)ns\d+:", r"<\1", xml)
+    return xml
 
 
 def _parse_attr(attrs: str, name: str, default: float) -> float:

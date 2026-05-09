@@ -188,10 +188,10 @@ Logically related elements **MUST** be wrapped in `<g>` tags. This produces Powe
 
 | Grouping Unit | Contains |
 |---------------|----------|
-| Card / panel | Background rect + shadow + icon + title + body text |
+| Card / panel | Background rect + shadow + title + body text; add icons only with an explicit slide Icon assignment |
 | Process step | Number circle + icon + label + description |
-| List item | Bullet / number + icon + title + description |
-| Icon-text combo | Icon element + adjacent label |
+| List item | Bullet / number + title + description; do not use icons as routine bullet prefixes |
+| Icon-text combo | Real `data-icon` element + adjacent label, only when the slide explicitly assigns an icon |
 | Page header | Title + subtitle + accent decoration |
 | Page footer | Page number + branding |
 | Decorative cluster | Related decorative shapes (rings, orbs, dots) |
