@@ -154,39 +154,61 @@ def _figures_from_design_spec_for_page(
     return figures
 
 
+def _icon_from_inventory_table(design_spec: str, page_num: int) -> dict | None:
+    """Look up icon from Section VI inventory table."""
+    vi_pattern = r"(?ims)^#+\s*VI\.?\s*Icon\s+Usage.*?(?=^#+\s*VII\.?\s|\Z)"
+    vi_match = re.search(vi_pattern, design_spec)
+    if not vi_match:
+        return None
+    vi_text = vi_match.group(0)
+    # Match table rows like | 03 | `chunk/target` | ... |
+    row_pattern = rf"\|\s*0*{page_num}\s*\|\s*`([^`]+)`\s*\|"
+    row_match = re.search(row_pattern, vi_text)
+    if not row_match:
+        return None
+    icon_name = row_match.group(1).strip()
+    if not icon_name or icon_name.lower() in {"none", "null", "n/a"}:
+        return None
+    return {"name": icon_name, "size": 40, "color": "#2563EB", "note": ""}
+
+
 def _icon_from_design_spec_for_page(design_spec: str, page_num: int) -> dict | None:
-    """Recover a slide-level icon assignment from the design spec."""
+    """Recover a slide-level icon assignment from the design spec.
+
+    Looks in Section IX first (Icon: line), then Section VI inventory table.
+    """
+    # Primary: Section IX Icon: line
     page_pattern = (
         rf"(?ims)^#+\s*(?:slide|page)\s*0*{page_num}\b.*?"
         rf"(?=^#+\s*(?:slide|page)\s*0*\d+\b|\Z)"
     )
     page_match = re.search(page_pattern, design_spec)
-    if not page_match:
-        return None
-    block = page_match.group(0)
-    icon_match = re.search(
-        r"(?im)^\s*-\s*\*\*Icon\*\*\s*:\s*`([^`]+)`([^\n]*)",
-        block,
-    )
-    if not icon_match:
-        return None
+    if page_match:
+        block = page_match.group(0)
+        icon_match = re.search(
+            r"(?im)^\s*-\s*\*\*Icon\*\*\s*:\s*`([^`]+)`([^\n]*)",
+            block,
+        )
+        if icon_match:
+            icon_name = icon_match.group(1).strip()
+            if not icon_name or icon_name.lower() in {"none", "null", "n/a"}:
+                return None
 
-    icon_name = icon_match.group(1).strip()
-    if not icon_name or icon_name.lower() in {"none", "null", "n/a"}:
-        return None
+            note = icon_match.group(2).strip()
+            size = 40
+            size_match = re.search(r"(\d{1,3})\s*[x×]\s*(\d{1,3})\s*px?", note, re.IGNORECASE)
+            if size_match:
+                size = max(int(size_match.group(1)), int(size_match.group(2)))
 
-    note = icon_match.group(2).strip()
-    size = 40
-    size_match = re.search(r"(\d{1,3})\s*[x×]\s*(\d{1,3})\s*px?", note, re.IGNORECASE)
-    if size_match:
-        size = max(int(size_match.group(1)), int(size_match.group(2)))
+            color = "#2563EB"
+            color_match = re.search(r"`(#[0-9A-Fa-f]{3,8})`|(#[0-9A-Fa-f]{3,8})", note)
+            if color_match:
+                color = color_match.group(1) or color_match.group(2)
 
-    color = "#2563EB"
-    color_match = re.search(r"`(#[0-9A-Fa-f]{3,8})`|(#[0-9A-Fa-f]{3,8})", note)
-    if color_match:
-        color = color_match.group(1) or color_match.group(2)
+            return {"name": icon_name, "size": size, "color": color, "note": note}
 
-    return {"name": icon_name, "size": size, "color": color, "note": note}
+    # Secondary: Section VI inventory table
+    return _icon_from_inventory_table(design_spec, page_num)
 
 
 def _icon_guidance_block(icon_assignment: dict | None) -> str:

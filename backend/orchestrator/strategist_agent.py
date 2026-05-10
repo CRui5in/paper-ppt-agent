@@ -433,26 +433,22 @@ async def create_design_spec(
     if is_deepseek_provider(llm, model):
         user_parts.append("\n" + deepseek_strategy_guidance(detail_level))
 
-    # RAG icon retrieval: pre-select candidates from the full icon index
-    icon_candidates_block = ""
+    # Icon policy: when enabled, Phase 1 skips icon detail — Phase 2 (icon_round) decides
     if not enable_icon:
-        icon_candidates_block = (
+        user_parts.append(
             "\n## Icon Usage: DISABLED\n"
             "Do NOT use any `<use data-icon=\"...\"/>` elements in any slide. "
             "Use plain SVG shapes (circles, rects, paths) for all visual elements instead."
         )
     else:
-        icon_candidates_block = _icon_usage_policy_block(icon_library)
-        if enable_icon_rag:
-            retrieved = await _retrieve_icon_candidates(manuscript, icon_library, gemini_api_key)
-            if retrieved:
-                icon_candidates_block += "\n" + retrieved
-            else:
-                icon_candidates_block += "\n" + _offline_icon_candidates_block(icon_library)
-        else:
-            icon_candidates_block += "\n" + _offline_icon_candidates_block(icon_library)
-    if icon_candidates_block:
-        user_parts.append(icon_candidates_block)
+        # Phase 1: just tell strategist that icons will be planned separately
+        user_parts.append(
+            f"\n## Icon Usage: ENABLED (Phase 2)\n"
+            f"Icons are enabled but will be planned in a separate phase.\n"
+            f"In Section VI, write: `Icon library: {icon_library} — inventory TBD.`\n"
+            f"In Section IX, do NOT add `Icon:` lines yet — they will be added later.\n"
+            f"Do not use `<use data-icon/>` placeholders in the content outline."
+        )
 
     # Inject actual image dimensions so the design spec has correct ratios
     if figure_inventory:
@@ -580,6 +576,21 @@ async def create_design_spec(
             expected_inventory=inventory if enforce_page_types else None,
         )
         if error is None:
+            # Phase 2: Icon Decoration Round (if enabled)
+            if enable_icon:
+                from backend.orchestrator.icon_round import run_icon_round
+
+                logger.info("Running Icon Decoration Round (Phase 2)")
+                content = await run_icon_round(
+                    content,
+                    manuscript,
+                    icon_library,
+                    llm,
+                    model,
+                    enable_icon_rag=enable_icon_rag,
+                    gemini_api_key=gemini_api_key,
+                    debug_dir=debug_dir,
+                )
             return content
         last_error = error
 

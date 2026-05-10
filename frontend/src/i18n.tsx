@@ -424,7 +424,7 @@ const translations: Record<Locale, Dictionary> = {
     "options.visualCritic": "视觉 QA",
     "options.visualCriticTooltip":
       "把每页渲染成图像，再调用多模态 LLM 检查布局、对比度和装饰线等视觉问题。每页会多一次 LLM 调用。需要支持视觉的模型，纯文本模型会自动跳过此步骤。",
-    "options.enableIcon": "启用图标装饰",
+    "options.enableIcon": "图标装饰",
     "options.enableIconTooltip":
       "在生成的幻灯片中插入图标。关闭后所有视觉元素仅使用纯 SVG 形状。",
     "options.iconRag": "RAG 语义搜索",
