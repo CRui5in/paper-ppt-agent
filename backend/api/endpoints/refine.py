@@ -175,6 +175,7 @@ async def refine_presentation(request: RefineRequest) -> RefineResponse:
         language=options.language or parent_job.language or "zh",
         detail_level=options.detail_level or parent_job.detail_level or "normal",
         timeout_seconds=options.timeout_seconds,
+        max_critic_attempts=options.max_critic_attempts,
         target_pages=request.target_pages,
         allow_structure_changes=request.allow_structure_changes,
         style_overrides=(
@@ -196,6 +197,7 @@ async def refine_presentation(request: RefineRequest) -> RefineResponse:
             else None
         ),
         enable_visual_critic=options.enable_visual_critic,
+        visual_qa_max_attempts=options.visual_qa_max_attempts,
         enable_icon=options.enable_icon,
         enable_icon_rag=options.enable_icon_rag,
         gemini_api_key=options.gemini_api_key,

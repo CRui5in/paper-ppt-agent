@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
-import { cancelJob, fetchJobStatus, fetchPreview, fetchProjectPreview, fetchProviders, generatePresentation, isNotFoundError, refinePresentation, uploadPaper } from "../lib/api";
+import { cancelJob, deleteJob, fetchJobStatus, fetchPreview, fetchProjectPreview, fetchProviders, generatePresentation, isNotFoundError, refinePresentation, uploadPaper } from "../lib/api";
 import type {
   CriticEvent,
   GenerateRequestPayload,
@@ -1039,6 +1039,7 @@ export const useGeneration = create<GenerationState>()(
         if (status && !FINAL_JOB_STATUSES.has(status)) {
           await cancelJob(jobId).catch(() => undefined);
         }
+        await deleteJob(jobId).catch(() => undefined);
         const socket = get().socketsByJob[jobId];
         socket?.close();
         set((state) => {

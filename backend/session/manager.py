@@ -341,6 +341,30 @@ class SessionManager:
                 shutil.rmtree(upload_dir, ignore_errors=True)
         self._persist_state()
 
+    def delete_job(self, job_id: str, *, delete_files: bool = True) -> bool:
+        """Remove a job and, by default, its generated local workspace.
+
+        If this was the last job for the upload session, also remove the
+        uploaded source file directory.
+        """
+        job = self._jobs.get(job_id)
+        if job is None:
+            return False
+
+        self.cancel_job(job_id)
+        self._jobs.pop(job_id, None)
+        self._tasks.pop(job_id, None)
+        self._ws_queues.pop(job_id, None)
+
+        if delete_files and job.project_dir:
+            self._remove_workspace_dir(Path(job.project_dir))
+
+        if not any(other.session_id == job.session_id for other in self._jobs.values()):
+            self.delete_session(job.session_id)
+        else:
+            self._persist_state()
+        return True
+
     def clear(self) -> None:
         self._sessions.clear()
         self._jobs.clear()
@@ -531,6 +555,21 @@ class SessionManager:
         payload["events"] = list(job.events[-EVENT_RING_SIZE:])
         payload["last_seq"] = job.last_seq
         return payload
+
+    @staticmethod
+    def _remove_workspace_dir(path: Path) -> None:
+        try:
+            target = path.resolve()
+            workspace_root = settings.workspaces_dir.resolve()
+            target.relative_to(workspace_root)
+        except (OSError, ValueError):
+            logger.warning("refusing to delete workspace outside root: %s", path)
+            return
+        if target == workspace_root:
+            logger.warning("refusing to delete workspace root: %s", target)
+            return
+        if target.exists():
+            shutil.rmtree(target, ignore_errors=True)
 
 
 def _offer_to_queue(queue: asyncio.Queue, event: dict) -> None:

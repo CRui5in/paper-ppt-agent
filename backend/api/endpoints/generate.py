@@ -132,6 +132,7 @@ async def generate_presentation(request: GenerateRequest) -> GenerateResponse:
         language=request.options.language,
         detail_level=request.options.detail_level,
         timeout_seconds=request.options.timeout_seconds,
+        max_critic_attempts=request.options.max_critic_attempts,
         style_overrides=(
             request.options.style_overrides.model_dump(exclude_none=True)
             if request.options.style_overrides
@@ -152,6 +153,7 @@ async def generate_presentation(request: GenerateRequest) -> GenerateResponse:
             else None
         ),
         enable_visual_critic=request.options.enable_visual_critic,
+        visual_qa_max_attempts=request.options.visual_qa_max_attempts,
         enable_icon=request.options.enable_icon,
         enable_icon_rag=request.options.enable_icon_rag,
         gemini_api_key=request.options.gemini_api_key,

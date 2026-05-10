@@ -46,11 +46,12 @@ FIGURE_LABEL_RE = re.compile(
 
 PROMPT_PATH = Path(__file__).parent / "prompts" / "executor.md"
 
-# How many repair attempts we're willing to spend per page. 1 = initial only.
-MAX_REPAIR_ATTEMPTS = 2
+# Default number of static critic checks per page, including the first
+# post-generation check. A value of 3 allows two repair calls.
+DEFAULT_MAX_CRITIC_ATTEMPTS = 3
 
 # Max prior page exchanges kept in the conversation (sliding window).
-# Each page generates 1 user + 1 assistant exchange (plus up to 2 repair rounds).
+# Each page generates 1 user + 1 assistant exchange plus bounded repair rounds.
 # Keeping 2 pages of context balances style consistency vs. token cost.
 MAX_PRIOR_PAGES_IN_CONTEXT = 2
 
@@ -154,39 +155,61 @@ def _figures_from_design_spec_for_page(
     return figures
 
 
+def _icon_from_inventory_table(design_spec: str, page_num: int) -> dict | None:
+    """Look up icon from Section VI inventory table."""
+    vi_pattern = r"(?ims)^#+\s*VI\.?\s*Icon\s+Usage.*?(?=^#+\s*VII\.?\s|\Z)"
+    vi_match = re.search(vi_pattern, design_spec)
+    if not vi_match:
+        return None
+    vi_text = vi_match.group(0)
+    # Match table rows like | 03 | `chunk/target` | ... |
+    row_pattern = rf"\|\s*0*{page_num}\s*\|\s*`([^`]+)`\s*\|"
+    row_match = re.search(row_pattern, vi_text)
+    if not row_match:
+        return None
+    icon_name = row_match.group(1).strip()
+    if not icon_name or icon_name.lower() in {"none", "null", "n/a"}:
+        return None
+    return {"name": icon_name, "size": 40, "color": "#2563EB", "note": ""}
+
+
 def _icon_from_design_spec_for_page(design_spec: str, page_num: int) -> dict | None:
-    """Recover a slide-level icon assignment from the design spec."""
+    """Recover a slide-level icon assignment from the design spec.
+
+    Looks in Section IX first (Icon: line), then Section VI inventory table.
+    """
+    # Primary: Section IX Icon: line
     page_pattern = (
         rf"(?ims)^#+\s*(?:slide|page)\s*0*{page_num}\b.*?"
         rf"(?=^#+\s*(?:slide|page)\s*0*\d+\b|\Z)"
     )
     page_match = re.search(page_pattern, design_spec)
-    if not page_match:
-        return None
-    block = page_match.group(0)
-    icon_match = re.search(
-        r"(?im)^\s*-\s*\*\*Icon\*\*\s*:\s*`([^`]+)`([^\n]*)",
-        block,
-    )
-    if not icon_match:
-        return None
+    if page_match:
+        block = page_match.group(0)
+        icon_match = re.search(
+            r"(?im)^\s*-\s*\*\*Icon\*\*\s*:\s*`([^`]+)`([^\n]*)",
+            block,
+        )
+        if icon_match:
+            icon_name = icon_match.group(1).strip()
+            if not icon_name or icon_name.lower() in {"none", "null", "n/a"}:
+                return None
 
-    icon_name = icon_match.group(1).strip()
-    if not icon_name or icon_name.lower() in {"none", "null", "n/a"}:
-        return None
+            note = icon_match.group(2).strip()
+            size = 40
+            size_match = re.search(r"(\d{1,3})\s*[x×]\s*(\d{1,3})\s*px?", note, re.IGNORECASE)
+            if size_match:
+                size = max(int(size_match.group(1)), int(size_match.group(2)))
 
-    note = icon_match.group(2).strip()
-    size = 40
-    size_match = re.search(r"(\d{1,3})\s*[x×]\s*(\d{1,3})\s*px?", note, re.IGNORECASE)
-    if size_match:
-        size = max(int(size_match.group(1)), int(size_match.group(2)))
+            color = "#2563EB"
+            color_match = re.search(r"`(#[0-9A-Fa-f]{3,8})`|(#[0-9A-Fa-f]{3,8})", note)
+            if color_match:
+                color = color_match.group(1) or color_match.group(2)
 
-    color = "#2563EB"
-    color_match = re.search(r"`(#[0-9A-Fa-f]{3,8})`|(#[0-9A-Fa-f]{3,8})", note)
-    if color_match:
-        color = color_match.group(1) or color_match.group(2)
+            return {"name": icon_name, "size": size, "color": color, "note": note}
 
-    return {"name": icon_name, "size": size, "color": color, "note": note}
+    # Secondary: Section VI inventory table
+    return _icon_from_inventory_table(design_spec, page_num)
 
 
 def _icon_guidance_block(icon_assignment: dict | None) -> str:
@@ -676,6 +699,8 @@ async def generate_svg_pages(
     on_svg_update: SvgUpdateCallback | None = None,
     figure_inventory: list[dict] | None = None,
     enable_visual_critic: bool = False,
+    max_critic_attempts: int = DEFAULT_MAX_CRITIC_ATTEMPTS,
+    visual_qa_max_attempts: int = 1,
     visual_critic_config: VisualCriticConfig | None = None,
     template_context: str | None = None,
     template_skeletons: dict[str, str] | None = None,
@@ -695,6 +720,11 @@ async def generate_svg_pages(
     svg_output_dir.mkdir(parents=True, exist_ok=True)
     repair_archive_dir = project_dir / "svg_archive" / "repair"
     used_paper_figures: dict[str, int] = {}
+    max_critic_attempts = max(
+        1,
+        int(max_critic_attempts or DEFAULT_MAX_CRITIC_ATTEMPTS),
+    )
+    visual_qa_max_attempts = max(0, int(visual_qa_max_attempts or 0))
 
     extra_sections = []
     if extra_instruction:
@@ -749,9 +779,9 @@ async def generate_svg_pages(
 
         # Sliding window: trim old page exchanges, keeping only the most
         # recent ones to avoid unbounded context growth.  Each page
-        # produces up to (1 + MAX_REPAIR_ATTEMPTS) * 2 messages
+        # produces up to max_critic_attempts * 2 messages
         # (user prompt + assistant SVG per round).
-        _max_context_msgs = MAX_PRIOR_PAGES_IN_CONTEXT * (1 + MAX_REPAIR_ATTEMPTS) * 2
+        _max_context_msgs = MAX_PRIOR_PAGES_IN_CONTEXT * max_critic_attempts * 2
         _beyond_preamble = len(conversation) - _preamble_len
         if _beyond_preamble > _max_context_msgs:
             _trim = _beyond_preamble - _max_context_msgs
@@ -875,8 +905,9 @@ async def generate_svg_pages(
             conversation.append(LLMMessage.assistant(f"```svg\n{svg_content}\n```"))
 
             best_svg = svg_content
-            visual_attempted = False
-            for attempt in range(2, MAX_REPAIR_ATTEMPTS + 2):
+            visual_attempts = 0
+            critic_attempt = 1
+            while True:
                 report = _merge_reports(
                     check_svg(svg_content, critic_config),
                     _validate_paper_figure_refs(
@@ -891,24 +922,29 @@ async def generate_svg_pages(
                 if not report.passed:
                     try:
                         repair_archive_dir.mkdir(parents=True, exist_ok=True)
-                        archive_filename = f"p{page_num:02d}_attempt{attempt - 1}.svg"
+                        archive_filename = f"p{page_num:02d}_attempt{critic_attempt}.svg"
                         archive_path = repair_archive_dir / archive_filename
                         archive_path.write_text(svg_content, encoding="utf-8")
                         first_archive = f"svg_archive/repair/{archive_filename}"
                     except OSError:
                         pass
 
-                if on_critic is not None:
-                    await on_critic(page_num, attempt - 1, report, None, first_archive)
-
-                # When the static critic is satisfied, run a single visual
-                # critic pass (if enabled). Visual issues become the next
-                # repair prompt without consuming a static-repair attempt.
+                # When the static critic is satisfied, run visual critic
+                # passes if enabled. Visual issues become the next repair
+                # prompt, bounded by the static critic budget.
                 if report.passed:
-                    if enable_visual_critic and not visual_attempted:
-                        visual_attempted = True
+                    if on_critic is not None:
+                        await on_critic(
+                            page_num,
+                            critic_attempt,
+                            report,
+                            None,
+                            first_archive,
+                        )
+                    if enable_visual_critic and visual_attempts < visual_qa_max_attempts:
+                        visual_attempts += 1
                         snapshot = set_usage_context(
-                            stage="visual_qa", page=page_num, attempt=attempt - 1
+                            stage="visual_qa", page=page_num, attempt=visual_attempts
                         )
                         try:
                             visual_outcome = await visual_check(
@@ -924,7 +960,11 @@ async def generate_svg_pages(
                             reset_usage_context(snapshot)
                         if on_critic is not None:
                             await on_critic(
-                                page_num, attempt - 1, visual_outcome.report, None, None
+                                page_num,
+                                critic_attempt,
+                                visual_outcome.report,
+                                None,
+                                None,
                             )
                         if (
                             visual_outcome.rendered
@@ -939,11 +979,15 @@ async def generate_svg_pages(
                         best_svg = svg_content
                         break
 
+                if critic_attempt >= max_critic_attempts:
+                    best_svg = svg_content
+                    break
+
                 # Archive pre-repair SVG for before/after comparison
                 archive_rel: str | None = None
                 try:
                     repair_archive_dir.mkdir(parents=True, exist_ok=True)
-                    archive_filename = f"p{page_num:02d}_attempt{attempt}.svg"
+                    archive_filename = f"p{page_num:02d}_attempt{critic_attempt + 1}.svg"
                     archive_path = repair_archive_dir / archive_filename
                     archive_path.write_text(svg_content, encoding="utf-8")
                     archive_rel = f"svg_archive/repair/{archive_filename}"
@@ -956,11 +1000,17 @@ async def generate_svg_pages(
                     "wrapped in a ```svg code block."
                 )
                 if on_critic is not None:
-                    await on_critic(page_num, attempt, report, repair_prompt_text, archive_rel)
+                    await on_critic(
+                        page_num,
+                        critic_attempt,
+                        report,
+                        repair_prompt_text,
+                        archive_rel or first_archive,
+                    )
                 conversation.append(LLMMessage.user(repair_prompt_text))
-                repair_temp = max(0.1, 0.3 - 0.1 * (attempt - 1))
+                repair_temp = max(0.1, 0.3 - 0.1 * critic_attempt)
                 snapshot = set_usage_context(
-                    stage="repair", page=page_num, attempt=attempt
+                    stage="repair", page=page_num, attempt=critic_attempt + 1
                 )
                 try:
                     response = await llm.chat(
@@ -981,6 +1031,7 @@ async def generate_svg_pages(
                 else:
                     conversation.append(LLMMessage.assistant(response.content))
                     break
+                critic_attempt += 1
 
             svg_path = svg_output_dir / f"{page_num:02d}_{page_name}.svg"
             svg_path.write_text(best_svg, encoding="utf-8")

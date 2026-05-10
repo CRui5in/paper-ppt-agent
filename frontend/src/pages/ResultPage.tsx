@@ -655,8 +655,10 @@ function ConfigViewer({
   if (options?.detail_level) entries.push({ label: t("config.detailLevel"), value: options.detail_level });
   if (options?.canvas_format) entries.push({ label: t("config.canvasFormat"), value: options.canvas_format });
   if (options?.num_pages) entries.push({ label: t("config.numPages"), value: String(options.num_pages) });
+  if (options?.max_critic_attempts) entries.push({ label: t("config.maxCriticAttempts"), value: String(options.max_critic_attempts) });
   if (options?.enable_deep_research !== undefined) entries.push({ label: t("config.deepResearch"), value: options.enable_deep_research ? "ON" : "OFF" });
   if (options?.enable_visual_critic !== undefined) entries.push({ label: t("config.visualCritic"), value: options.enable_visual_critic ? "ON" : "OFF" });
+  if (options?.enable_visual_critic && options?.visual_qa_max_attempts) entries.push({ label: t("config.visualQaMaxAttempts"), value: String(options.visual_qa_max_attempts) });
   if (options?.enable_icon !== undefined) entries.push({ label: t("config.enableIcon"), value: options.enable_icon ? "ON" : "OFF" });
   if (options?.enable_icon_rag !== undefined) entries.push({ label: t("config.iconRag"), value: options.enable_icon_rag ? "ON" : "OFF" });
   if (options?.research_config && (options.research_config.arxiv_search_enabled || options.research_config.semantic_scholar_enabled || options.research_config.web_search_enabled)) entries.push({ label: t("config.researchEnrichment"), value: "ON" });

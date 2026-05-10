@@ -87,9 +87,11 @@ export interface GenerationOptions {
   language: string;
   detail_level: string;
   timeout_seconds?: number;
+  max_critic_attempts?: number;
   style_overrides?: StyleOverridesPayload;
   enable_deep_research?: boolean;
   enable_visual_critic?: boolean;
+  visual_qa_max_attempts?: number;
   enable_icon?: boolean;
   enable_icon_rag?: boolean;
   gemini_api_key?: string;
