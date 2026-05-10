@@ -170,6 +170,10 @@ export async function cancelJob(jobId: string): Promise<CancelJobResponse> {
   });
 }
 
+export async function deleteJob(jobId: string): Promise<void> {
+  await request<void>(`/api/status/${jobId}`, { method: "DELETE" });
+}
+
 export async function reexportPresentation(jobId: string): Promise<ReexportResponse> {
   return request<ReexportResponse>(`/api/download/${jobId}/reexport`, {
     method: "POST",

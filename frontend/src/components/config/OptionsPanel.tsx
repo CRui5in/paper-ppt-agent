@@ -11,6 +11,8 @@ interface OptionsPanelProps {
   numPages: string;
   detailLevel: string;
   timeoutSeconds: string;
+  maxCriticAttempts: string;
+  visualQaMaxAttempts: string;
   instruction: string;
   enableDeepResearch: boolean;
   enableVisualCritic: boolean;
@@ -32,6 +34,8 @@ interface OptionsPanelProps {
   onNumPagesChange: (value: string) => void;
   onDetailLevelChange: (value: string) => void;
   onTimeoutSecondsChange: (value: string) => void;
+  onMaxCriticAttemptsChange: (value: string) => void;
+  onVisualQaMaxAttemptsChange: (value: string) => void;
   onInstructionChange: (value: string) => void;
   onEnableDeepResearchChange: (value: boolean) => void;
   onEnableVisualCriticChange: (value: boolean) => void;
@@ -150,6 +154,16 @@ export function OptionsPanel(props: OptionsPanelProps) {
             placeholder={t("options.timeoutPlaceholder")}
           />
         </label>
+        <label className="form-field">
+          <span>{t("options.maxCriticAttempts")}</span>
+          <input
+            type="number"
+            min="1"
+            max="10"
+            value={props.maxCriticAttempts}
+            onChange={(event) => props.onMaxCriticAttemptsChange(event.target.value)}
+          />
+        </label>
         <label className="visual-qa-field">
           <span
             className={`visual-qa-control ${
@@ -183,6 +197,18 @@ export function OptionsPanel(props: OptionsPanelProps) {
             </span>
           </span>
         </label>
+        {props.enableVisualCritic ? (
+          <label className="form-field">
+            <span>{t("options.visualQaMaxAttempts")}</span>
+            <input
+              type="number"
+              min="1"
+              max="10"
+              value={props.visualQaMaxAttempts}
+              onChange={(event) => props.onVisualQaMaxAttemptsChange(event.target.value)}
+            />
+          </label>
+        ) : null}
       </div>
 
       {/* Deep research section */}

@@ -119,6 +119,7 @@ class GenerationRequest:
     language: str = "zh"
     detail_level: str = "normal"
     timeout_seconds: int | None = None
+    max_critic_attempts: int = 3
     style_overrides: dict | None = None  # {palette: [...], font: "...", density: "..."}
     enable_deep_research: bool = False
     icon_library: str = "chunk"  # chunk / tabler-filled / tabler-outline
@@ -128,6 +129,7 @@ class GenerationRequest:
     enable_icon: bool = False
     enable_icon_rag: bool = False
     gemini_api_key: str | None = None
+    visual_qa_max_attempts: int = 1
     template_id: str | None = None  # Template ID from assets/templates/layouts/
     research_config: ResearchConfig | None = None  # Optional external research enrichment
 
@@ -167,7 +169,12 @@ async def run_pipeline(
 
     # Attribute every LLM call inside this run to the caller's job if known.
     job_id = getattr(request, "job_id", None)
-    usage_snapshot = set_usage_context(job_id=job_id, stage="parsing", attempt=1)
+    usage_snapshot = set_usage_context(
+        job_id=job_id,
+        stage="parsing",
+        page=None,
+        attempt=1,
+    )
 
     try:
         # Stage 1: Parse paper
@@ -206,7 +213,7 @@ async def run_pipeline(
         )
 
         # Stage 2: Research agent
-        set_usage_context(stage="research")
+        set_usage_context(stage="research", page=None, attempt=1)
         yield ProgressEvent(
             "research",
             "started",
@@ -315,7 +322,7 @@ async def run_pipeline(
         )
 
         # Stage 3: Strategist agent
-        set_usage_context(stage="strategy")
+        set_usage_context(stage="strategy", page=None, attempt=1)
         yield ProgressEvent("strategy", "started", "Creating design specification...")
         figure_inventory = _build_figure_inventory(paper, project_dir)
 
@@ -363,7 +370,7 @@ async def run_pipeline(
         yield ProgressEvent("strategy", "complete", "Design spec created", 0.40)
 
         # Stage 4: SVG executor
-        set_usage_context(stage="generation")
+        set_usage_context(stage="generation", page=None, attempt=1)
         total_pages = count_manuscript_pages(manuscript)
         yield ProgressEvent(
             "generation",
@@ -412,6 +419,8 @@ async def run_pipeline(
             on_svg_update=_on_svg_update,
             figure_inventory=figure_inventory,
             enable_visual_critic=request.enable_visual_critic,
+            max_critic_attempts=request.max_critic_attempts,
+            visual_qa_max_attempts=request.visual_qa_max_attempts,
             template_context=template_context_exec or None,
             template_skeletons=template_skeletons,
         ):
@@ -457,7 +466,7 @@ async def run_pipeline(
         await _save_critic_history(project_dir, critic_events)
 
         # Stage 5: Post-processing
-        set_usage_context(stage="postprocess")
+        set_usage_context(stage="postprocess", page=None, attempt=1)
         yield ProgressEvent("postprocess", "started", "Finalizing SVGs...")
         # finalize_project walks every SVG, runs cairosvg / PIL / regex
         # rewrites: minutes of synchronous CPU work. Push it to the offload
@@ -472,7 +481,7 @@ async def run_pipeline(
         )
 
         # Stage 6: Export PPTX
-        set_usage_context(stage="export")
+        set_usage_context(stage="export", page=None, attempt=1)
         yield ProgressEvent("export", "started", "Exporting to PowerPoint...")
         svg_files = get_svg_files(project_dir, source="final")
         notes = get_notes(project_dir, svg_files)
@@ -598,6 +607,7 @@ class RefineRequest:
     language: str = "zh"
     detail_level: str = "normal"
     timeout_seconds: int | None = None
+    max_critic_attempts: int = 3
     target_pages: list[int] | None = None
     allow_structure_changes: bool = False
     style_overrides: dict | None = None
@@ -608,6 +618,7 @@ class RefineRequest:
     enable_icon: bool = False
     enable_icon_rag: bool = False
     gemini_api_key: str | None = None
+    visual_qa_max_attempts: int = 1
     template_id: str | None = None
 
 
@@ -662,7 +673,12 @@ async def run_refine_pipeline(
     )
     target_pages = sorted({page for page in (request.target_pages or []) if page > 0})
 
-    refine_snapshot = set_usage_context(job_id=request.job_id, stage="refine", attempt=1)
+    refine_snapshot = set_usage_context(
+        job_id=request.job_id,
+        stage="refine",
+        page=None,
+        attempt=1,
+    )
 
     # Build feedback block injected into the SVG executor prompt
     feedback_block = _build_feedback_block(
@@ -677,6 +693,7 @@ async def run_refine_pipeline(
         )
 
     if request.allow_structure_changes:
+        set_usage_context(stage="research", page=None, attempt=1)
         yield ProgressEvent("research", "started", "Revising manuscript structure from feedback...", 0.0)
         manuscript = await research_agent.revise_manuscript(
             manuscript,
@@ -691,6 +708,7 @@ async def run_refine_pipeline(
         await awrite_text(manuscript_path, manuscript, encoding="utf-8")
         yield ProgressEvent("research", "complete", "Manuscript revised", 0.15)
 
+        set_usage_context(stage="strategy", page=None, attempt=1)
         yield ProgressEvent("strategy", "started", "Rebuilding design specification...", 0.15)
         refine_figure_inventory = await _load_figure_inventory(project_dir)
         design_spec = await strategist_agent.create_design_spec(
@@ -717,6 +735,7 @@ async def run_refine_pipeline(
         _seed_svg_output_for_targeted_refine(project_dir, target_pages)
 
     # ── Stage 4: SVG generation (with feedback) ───────────────────────────
+    set_usage_context(stage="generation", page=None, attempt=1)
     total_pages = count_manuscript_pages(manuscript)
     pages_to_generate = len(target_pages) if target_pages and not request.allow_structure_changes else total_pages
     generation_start = 0.30 if request.allow_structure_changes else 0.0
@@ -779,6 +798,8 @@ async def run_refine_pipeline(
         on_critic=_refine_on_critic,
         figure_inventory=refine_inventory,
         enable_visual_critic=request.enable_visual_critic,
+        max_critic_attempts=request.max_critic_attempts,
+        visual_qa_max_attempts=request.visual_qa_max_attempts,
         template_context=refine_template_ctx or None,
         template_skeletons=refine_template_skeletons,
     ):
@@ -802,6 +823,7 @@ async def run_refine_pipeline(
     )
 
     # ── Stage 5: Post-processing ──────────────────────────────────────────
+    set_usage_context(stage="postprocess", page=None, attempt=1)
     postprocess_start = generation_start + generation_span
     export_start = 0.80 if request.allow_structure_changes else 0.80
     yield ProgressEvent("postprocess", "started", "Finalizing SVGs...", postprocess_start)
@@ -813,6 +835,7 @@ async def run_refine_pipeline(
     )
 
     # ── Stage 6: Export PPTX ─────────────────────────────────────────────
+    set_usage_context(stage="export", page=None, attempt=1)
     yield ProgressEvent("export", "started", "Exporting to PowerPoint...", export_start)
     svg_files = get_svg_files(project_dir, source="final")
     notes = get_notes(project_dir, svg_files)

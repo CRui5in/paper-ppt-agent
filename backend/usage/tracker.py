@@ -8,6 +8,7 @@ and maintains in-memory aggregations for the logs page.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import threading
 from dataclasses import asdict, dataclass
@@ -289,40 +290,48 @@ usage_tracker = _UsageTracker()
 # ── Context helpers for async code ──────────────────────────────────────
 
 
-_ctx: dict[str, Any] = {
+_DEFAULT_CTX: dict[str, Any] = {
     "job_id": None,
     "stage": None,
     "page": None,
     "attempt": 1,
 }
+_ctx_var: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar(
+    "usage_context",
+    default=_DEFAULT_CTX,
+)
+_UNSET = object()
 
 
 def set_usage_context(
     *,
-    job_id: str | None = None,
-    stage: str | None = None,
-    page: int | None = None,
-    attempt: int | None = None,
+    job_id: str | None | object = _UNSET,
+    stage: str | None | object = _UNSET,
+    page: int | None | object = _UNSET,
+    attempt: int | None | object = _UNSET,
 ) -> dict[str, Any]:
-    """Set tracker context for subsequent LLM calls in this thread/task.
+    """Set tracker context for subsequent LLM calls in this asyncio context.
 
     Returns a snapshot of the previous context so callers can restore it.
+    Pass ``None`` explicitly to clear nullable fields such as ``page``.
     """
-    prev = dict(_ctx)
-    if job_id is not None:
-        _ctx["job_id"] = job_id
-    if stage is not None:
-        _ctx["stage"] = stage
-    if page is not None:
-        _ctx["page"] = page
-    if attempt is not None:
-        _ctx["attempt"] = attempt
+    prev = current_usage_context()
+    next_ctx = dict(prev)
+    if job_id is not _UNSET:
+        next_ctx["job_id"] = job_id
+    if stage is not _UNSET:
+        next_ctx["stage"] = stage
+    if page is not _UNSET:
+        next_ctx["page"] = page
+    if attempt is not _UNSET:
+        next_ctx["attempt"] = attempt if attempt is not None else 1
+    _ctx_var.set(next_ctx)
     return prev
 
 
 def reset_usage_context(snapshot: dict[str, Any]) -> None:
-    _ctx.update(snapshot)
+    _ctx_var.set(dict(snapshot))
 
 
 def current_usage_context() -> dict[str, Any]:
-    return dict(_ctx)
+    return dict(_ctx_var.get())
