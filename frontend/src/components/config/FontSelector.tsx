@@ -296,32 +296,31 @@ export function FontSelector({
   const advanced = advancedToggled || hasAdvancedFonts;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
-      {/* Simple mode — always visible when advanced is off */}
-      {!advanced && (
-        <FontStackPicker value={value} onChange={onChange} />
-      )}
-
-      {/* Advanced toggle */}
+    <div className="font-selector-shell">
+      <div className="font-selector-topline">
+        {!advanced && (
+          <FontStackPicker value={value} onChange={onChange} />
+        )}
       {hasAdvanced && (
-        <>
           <button
             type="button"
             onClick={() => setAdvancedToggled(!advanced)}
             style={{
               display: "inline-flex", alignItems: "center", gap: "0.35rem",
               padding: "0.35rem 0.6rem", borderRadius: 8,
-              border: "1px solid var(--line)", background: advanced ? "rgba(255,139,71,0.08)" : "transparent",
-              color: advanced ? "var(--accent)" : "var(--muted)",
-              fontSize: "0.75rem", cursor: "pointer", alignSelf: "flex-start",
+              border: "1px solid var(--line)", background: advanced ? "rgba(26,90,215,0.08)" : "#fff",
+              color: advanced ? "var(--si-accent)" : "#334155",
+              fontSize: "0.75rem", cursor: "pointer", alignSelf: "stretch",
+              whiteSpace: "nowrap",
             }}
           >
             <Settings2 size={12} />
             {advanced ? t("font.advancedOn") : t("font.advancedOff")}
           </button>
+      )}
+      </div>
 
-          {/* Advanced mode — 4 dimension control */}
-          {advanced && (
+      {hasAdvanced && advanced && (
             <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem" }}>
                 <div>
@@ -373,8 +372,6 @@ export function FontSelector({
                 {t("font.advancedHint")}
               </p>
             </div>
-          )}
-        </>
       )}
     </div>
   );

@@ -2,12 +2,15 @@ import { useCallback, useEffect, useState } from "react";
 import { deleteVersion, fetchVersion, listVersions } from "../../lib/api";
 import type { VersionDetailResponse, VersionItem } from "../../lib/types";
 import { useLocale } from "../../i18n";
+import { RefreshCw } from "lucide-react";
+import { Button } from "../ui/button";
 
 interface VersionHistoryProps {
   jobId: string | null;
+  onError?: (message: string) => void;
 }
 
-export function VersionHistory({ jobId }: VersionHistoryProps) {
+export function VersionHistory({ jobId, onError }: VersionHistoryProps) {
   const { t } = useLocale();
   const [versions, setVersions] = useState<VersionItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -23,7 +26,9 @@ export function VersionHistory({ jobId }: VersionHistoryProps) {
       const response = await listVersions(jobId);
       setVersions(response.versions);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load versions.");
+      const message = err instanceof Error ? err.message : "Failed to load versions.";
+      setError(message);
+      onError?.(message);
     } finally {
       setLoading(false);
     }
@@ -41,7 +46,9 @@ export function VersionHistory({ jobId }: VersionHistoryProps) {
       const detail = await fetchVersion(jobId, version.name);
       setSelected(detail);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load version.");
+      const message = err instanceof Error ? err.message : "Failed to load version.";
+      setError(message);
+      onError?.(message);
     } finally {
       setDetailLoading(false);
     }
@@ -58,7 +65,9 @@ export function VersionHistory({ jobId }: VersionHistoryProps) {
       }
       await loadVersions();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to delete version.");
+      const message = err instanceof Error ? err.message : "Failed to delete version.";
+      setError(message);
+      onError?.(message);
     }
   };
 
@@ -68,14 +77,17 @@ export function VersionHistory({ jobId }: VersionHistoryProps) {
     <section className="versions-panel">
       <div className="versions-header">
         <h2>{t("versions.title")}</h2>
-        <button
+        <Button
           type="button"
-          className="ghost-button"
+          variant="outline"
+          size="sm"
+          className="versions-refresh-button"
           onClick={() => void loadVersions()}
           disabled={loading}
         >
+          <RefreshCw size={14} className={loading ? "spin" : undefined} />
           {loading ? t("versions.loading") : t("versions.refresh")}
-        </button>
+        </Button>
       </div>
       {error ? <p className="error-text">{error}</p> : null}
       {versions.length === 0 && !loading ? (

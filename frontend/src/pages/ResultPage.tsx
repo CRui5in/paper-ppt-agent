@@ -1,10 +1,9 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Settings, Terminal, X } from "lucide-react";
+import { Bot, ChevronDown, CircleCheck, Database, Download, FileText, MessageSquareText, Plus, Sparkles, Type, Wand2 } from "lucide-react";
 import { Layout } from "../components/layout/Layout";
-import { SlidePreview } from "../components/preview/SlidePreview";
-import { SlideViewer } from "../components/preview/SlideViewer";
 import { AgentLog } from "../components/progress/AgentLog";
+import { FloatingInspector } from "../components/progress/FloatingInspector";
 import { ProgressPanel } from "../components/progress/ProgressPanel";
 import { VersionHistory } from "../components/result/VersionHistory";
 import { useGeneration } from "../hooks/useGeneration";
@@ -13,6 +12,9 @@ import { fetchCriticHistory, fetchJobStatus, fetchPreview, fetchProjectPreview, 
 import { FontCustomizer } from "../components/result/FontCustomizer";
 import { translateStageStatus } from "../lib/i18nStatus";
 import type { CriticEvent, DeepSeekSettings, GenerateRequestPayload, GenerationHistoryItem, JobStatus, OpenAISettings, PreviewResponse, PreviewSlide } from "../lib/types";
+import { Switch } from "../components/ui/switch";
+import { Progress } from "../components/ui/progress";
+import { RecentTasksPanel } from "../components/history/RecentTasksPanel";
 
 // Routing profile stored by GeneratePage so we can re-use model config here.
 const ROUTING_PROFILE_STORAGE_KEY = "paper-ppt-agent-routing-profiles-v1";
@@ -68,7 +70,6 @@ export function ResultPage() {
     logs: globalLogs,
     criticEvents: globalCriticEvents,
     connectionStatus,
-    currentRunConfig: globalRunConfig,
     runs,
   } = useGeneration();
 
@@ -82,12 +83,11 @@ export function ResultPage() {
   const logs = isActiveJob ? globalLogs : (resolvedRun?.logs ?? []);
   const localCritic = isActiveJob ? globalCriticEvents : (resolvedRun?.criticEvents ?? []);
   const criticEvents = localCritic.length > 0 ? localCritic : (remoteCriticEvents ?? []);
-  const currentRunConfig = isActiveJob ? globalRunConfig : (resolvedRun?.currentRunConfig);
   // Direct-bind the global error-store setters so we can mirror local
   // page errors (load / refine / reexport / failed-job) into the global
   // error slot — that's what drives the floating ErrorBanner.
   const setGlobalError = (msg: string | undefined) =>
-    useGeneration.setState({ error: msg });
+    useGeneration.setState({ error: msg && jobId ? `[${t("logs.job")} ${jobId.slice(0, 8)}]\n${msg}` : msg });
 
   const [result, setResult] = useState<PreviewResponse | null>(null);
   const [job, setJob] = useState<JobStatus | null>(null);
@@ -104,7 +104,7 @@ export function ResultPage() {
       : undefined;
 
   // ── refine state ───────────────────────────────────────────────────────────
-  type SecondaryPanel = "log" | "config";
+  type SecondaryPanel = "log" | "critic";
   const [secondaryPanel, setSecondaryPanel] = useState<SecondaryPanel | null>(null);
   const [feedback, setFeedback] = useState("");
   const [refineLoading, setRefineLoading] = useState(false);
@@ -383,252 +383,384 @@ export function ResultPage() {
   };
 
   return (
-    <Layout contentClassName="result-page">
-      <section className="result-hero">
-        <div className="result-copy">
-          <p className="eyebrow">{t("result.eyebrow")}</p>
-          <h1>{t("result.title")}</h1>
-          <p className="muted-copy">{t("result.body")}</p>
-        </div>
-        <div className="result-actions">
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={() => {
-              reset();
-              navigate("/generate?fresh=1");
-            }}
-          >
-            {t("result.newRun")}
-          </button>
-          {downloadHref ? (
-            <a href={downloadHref} className="primary-button">
-              {t("result.download")}
-            </a>
-          ) : null}
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={() => void handleReexport()}
-            disabled={!jobId || reexportLoading}
-          >
-            {reexportLoading ? t("result.reexportLoading") : t("result.reexport")}
-          </button>
-          <button
-            type="button"
-            className={`secondary-action ${secondaryPanel === "log" ? "secondary-action-active" : ""}`}
-            onClick={() => setSecondaryPanel((current) => (current === "log" ? null : "log"))}
-          >
-            <Terminal size={16} />
-          </button>
-          <button
-            type="button"
-            className={`secondary-action ${secondaryPanel === "config" ? "secondary-action-active" : ""}`}
-            onClick={() => setSecondaryPanel((current) => (current === "config" ? null : "config"))}
-          >
-            <Settings size={16} />
-          </button>
-        </div>
-      </section>
+    <Layout showSidebar={false} contentClassName="studio-page result-page result-workspace-page">
+      <section className="scholarly-workspace result-studio-workspace">
+        <aside className="sources-panel result-sources-panel">
+          <div className="workspace-panel-header">
+            <div className="workspace-panel-title">
+              <Database size={17} />
+              <span>{t("source.title")}</span>
+            </div>
+          </div>
+          <div className="sources-content">
+            <ResultSourceSummary historyEntry={historyEntry} />
+            {(job?.status ?? result?.status ?? historyEntry?.status) === "complete" && jobId ? (
+              <div className="result-left-section">
+                <div className="panel-title-row result-left-section-title">
+                  <Type size={17} className="panel-title-icon" />
+                  <span>{t("result.fontsTitle")}</span>
+                </div>
+                <FontCustomizer
+                  jobId={jobId}
+                  onReexported={(outputPath) => {
+                    setJob((current) => current ? { ...current, output_path: outputPath, status: "complete", error: null } : current);
+                    setResult((current) => current ? { ...current, output_path: outputPath } : current);
+                    const projectDir = result?.project_dir ?? historyEntry?.projectDir;
+                    if (projectDir) {
+                      fetchProjectPreview(projectDir)
+                        .then((p) => { setSlides(p.slides); setResult((c) => c ? { ...c, slides: p.slides } : c); })
+                        .catch(() => undefined);
+                    }
+                  }}
+                />
+              </div>
+            ) : (
+              <div className="source-inline-process result-inline-process">
+                <div className="panel-title-row source-inline-process-title">
+                  <Bot size={17} className="panel-title-icon" />
+                  <span>{t("progress.title")}</span>
+                </div>
+                <ProgressPanel compact hideHeader job={job ?? liveJob ?? undefined} connectionStatus={connectionStatus} enrichmentStats={jobId ? runs[jobId]?.enrichmentStats : undefined} logs={logs} />
+              </div>
+            )}
+            <RecentTasksPanel history={history} runs={runs} currentJobId={jobId ?? undefined} locale={locale} />
+          </div>
+        </aside>
 
-      <section className="result-summary">
-        <div className="metric-stripe">
-          <span>{t("result.status")}</span>
-          <strong>{formatStatusLabel(job?.status ?? result?.status ?? historyEntry?.status, locale, t("common.unknown"))}</strong>
-        </div>
-        <div className="metric-stripe">
-          <span>{t("result.slides")}</span>
-          <strong>{slides.length}</strong>
-        </div>
-        <div className="metric-stripe" style={{ minWidth: 0 }}>
-          <span>{t("result.output")}</span>
-          <strong style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "block", maxWidth: "100%" }} title={outputPath ?? ""}>
-            {(() => {
-              const p = outputPath;
-              if (!p) return t("common.pending");
-              const parts = p.replace(/\\/g, "/").split("/");
-              return parts[parts.length - 1];
-            })()}
-          </strong>
-        </div>
-      </section>
-
-      <section className="result-grid">
-        <div className="column-stack">
-          <SlidePreview slides={slides} selectedSlide={selectedSlide} onSelect={setSelectedSlide} />
-        </div>
-        <SlideViewer slide={selectedSlide} />
-      </section>
-
-      {loadError ? <p className="error-text">{loadError}</p> : null}
-      {reexportError ? <p className="error-text">{reexportError}</p> : null}
-
-      {/* ── Font customization ── */}
-      {jobId && (job?.status === "complete" || job?.status === "error") ? (
-        <FontCustomizer
-          jobId={jobId}
-          onReexported={(outputPath) => {
-            setJob((current) => current ? { ...current, output_path: outputPath, status: "complete", error: null } : current);
-            setResult((current) => current ? { ...current, output_path: outputPath } : current);
-            // Refresh preview
-            const projectDir = result?.project_dir ?? historyEntry?.projectDir;
-            if (projectDir) {
-              fetchProjectPreview(projectDir)
-                .then((p) => { setSlides(p.slides); setResult((c) => c ? { ...c, slides: p.slides } : c); })
-                .catch(() => undefined);
-            }
+        <ResultSlideWorkspace
+          slides={slides}
+          selectedSlide={selectedSlide}
+          onSelect={setSelectedSlide}
+          downloadHref={downloadHref}
+          onReexport={() => void handleReexport()}
+          reexportLoading={reexportLoading}
+          onNewRun={() => {
+            reset();
+            navigate("/generate?fresh=1");
           }}
         />
-      ) : null}
 
-      {/* ── Feedback / Refine section ── */}
-      <section className="result-refine">
-        <div className="refine-header">
-          <h2>{t("result.refineTitle")}</h2>
-          <p className="muted-copy">{t("result.refineBody")}</p>
-        </div>
-
-        <div className="refine-form">
-          <div className="refine-form-row">
-            <div className="field-label" style={{ flex: 1 }}>
-              <div className="selectPages-toolbar">
-                <strong>{t("result.selectPages")}</strong>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setTargetPagesSet(
-                      targetPagesSet.size === slides.length
-                        ? new Set()
-                        : new Set(slides.map((_, i) => i + 1)),
-                    )
-                  }
-                  disabled={refineLoading || slides.length === 0}
-                  className="ghost-button"
-                >
-                  {t("result.selectAll")} ({targetPagesSet.size}/{slides.length})
+        <aside className="configuration-panel result-configuration-panel">
+          <div className="workspace-panel-header">
+            <div className="workspace-panel-title">
+              <Wand2 size={17} />
+              <span>{t("result.refineTitle")}</span>
+            </div>
+          </div>
+          <div className="configuration-scroll">
+            <section className="panel result-refine">
+              <div className="refine-form">
+                <div className="selectPages-toolbar">
+                  <strong>{t("result.selectPages")}</strong>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setTargetPagesSet(
+                        targetPagesSet.size === slides.length
+                          ? new Set()
+                          : new Set(slides.map((_, i) => i + 1)),
+                      )
+                    }
+                    disabled={refineLoading || slides.length === 0}
+                    className="ghost-button"
+                  >
+                    {t("result.selectAll")} ({targetPagesSet.size}/{slides.length})
+                  </button>
+                </div>
+                <div className="result-page-chip-grid">
+                  {slides.map((slide, idx) => {
+                    const page = idx + 1;
+                    const selected = targetPagesSet.has(page);
+                    return (
+                      <button
+                        type="button"
+                        key={slide.name ?? idx}
+                        className={`result-page-chip ${selected ? "result-page-chip-active" : ""}`}
+                        disabled={refineLoading}
+                        onClick={() => {
+                          setTargetPagesSet((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(page)) next.delete(page);
+                            else next.add(page);
+                            return next;
+                          });
+                        }}
+                      >
+                        {page}
+                      </button>
+                    );
+                  })}
+                </div>
+                <label className="checkbox-row">
+                  <Switch checked={allowStructureChanges} onCheckedChange={setAllowStructureChanges} disabled={refineLoading} />
+                  <span>{t("result.allowStructure")}</span>
+                </label>
+                <textarea className="refine-textarea" rows={4} placeholder={t("result.refinePlaceholder")} value={feedback} onChange={(e) => setFeedback(e.target.value)} disabled={refineLoading} />
+                <button type="button" className="primary-button full-width" disabled={!feedback.trim() || refineLoading || !jobId} onClick={() => void handleRefine()}>
+                  {refineLoading ? t("result.refineLoading") : t("result.refineSubmit")}
                 </button>
               </div>
-              <div className="slide-thumb-multiselect" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(110px, 1fr))", gap: 8 }}>
-                {slides.map((slide, idx) => {
-                  const page = idx + 1;
-                  const selected = targetPagesSet.has(page);
-                  return (
-                    <div
-                      key={slide.name ?? idx}
-                      className={`slide-thumb-selectable ${selected ? "slide-thumb-selected" : ""}`}
-                      onClick={() => {
-                        if (refineLoading) return;
-                        setTargetPagesSet((prev) => {
-                          const next = new Set(prev);
-                          if (next.has(page)) next.delete(page);
-                          else next.add(page);
-                          return next;
-                        });
-                      }}
-                      title={`Page ${page}`}
-                    >
-                      <div className="slide-thumb-checkbox">{selected ? "✓" : ""}</div>
-                      <div
-                        style={{
-                          background: "#fff",
-                          borderRadius: 6,
-                          overflow: "hidden",
-                          aspectRatio: "16/9",
-                        }}
-                        dangerouslySetInnerHTML={{ __html: slide.content ?? "" }}
-                      />
-                      <div style={{ textAlign: "center", fontSize: 11, marginTop: 4, color: "#9ba0a6" }}>
-                        {page}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-            <label className="checkbox-row">
-              <input
-                type="checkbox"
-                checked={allowStructureChanges}
-                onChange={(e) => setAllowStructureChanges(e.target.checked)}
-                disabled={refineLoading}
-              />
-              <span>{t("result.allowStructure")}</span>
-            </label>
+            </section>
+
+            <VersionHistory jobId={jobId} onError={setReexportError} />
           </div>
-          <textarea
-            className="refine-textarea"
-            rows={4}
-            placeholder={t("result.refinePlaceholder")}
-            value={feedback}
-            onChange={(e) => setFeedback(e.target.value)}
-            disabled={refineLoading}
-          />
-          {refineError ? <p className="error-text">{refineError}</p> : null}
-          <button
-            type="button"
-            className="primary-button"
-            disabled={!feedback.trim() || refineLoading || !jobId}
-            onClick={() => void handleRefine()}
-          >
-            {refineLoading ? t("result.refineLoading") : t("result.refineSubmit")}
-          </button>
-        </div>
+        </aside>
+
+        <ResultMonitor
+          job={job ?? undefined}
+          result={result}
+          historyEntry={historyEntry}
+          logs={logs}
+          criticEvents={criticEvents}
+          connectionStatus={connectionStatus}
+          activePanel={secondaryPanel}
+          onOpenPanel={setSecondaryPanel}
+        />
       </section>
 
-      <VersionHistory jobId={jobId} />
-
-      {jobId === activeJobId ? (
-        <section className="result-refine-monitor">
-          <div className="column-stack">
-            <ProgressPanel
-              job={liveJob}
-              connectionStatus={connectionStatus}
-              enrichmentStats={jobId ? runs[jobId]?.enrichmentStats : undefined}
-            />
-          </div>
-        </section>
-      ) : null}
-
-      <aside
-        className={`studio-secondary-panel ${secondaryPanel ? "studio-secondary-panel-open" : ""}`}
-        aria-hidden={!secondaryPanel}
+      <FloatingInspector
+        open={secondaryPanel === "log"}
+        title={t("log.title")}
+        icon={<MessageSquareText size={15} className="panel-title-icon" />}
+        onClose={() => setSecondaryPanel(null)}
       >
-        <div className="studio-secondary-header">
-          <div className="panel-title-row">
-            {secondaryPanel === "config" ? (
-              <Settings size={15} className="panel-title-icon" />
+        <AgentLog mode="logs" hideHeader logs={logs} criticEvents={[]} jobId={jobId ?? undefined} />
+      </FloatingInspector>
+      <FloatingInspector
+        open={secondaryPanel === "critic"}
+        title={t("monitor.review")}
+        icon={<Sparkles size={15} className="panel-title-icon" />}
+        onClose={() => setSecondaryPanel(null)}
+      >
+        <AgentLog mode="critic" hideHeader logs={[]} criticEvents={criticEvents} jobId={jobId ?? undefined} />
+      </FloatingInspector>
+    </Layout>
+  );
+}
+
+function ResultSourceSummary({ historyEntry }: { historyEntry?: GenerationHistoryItem }) {
+  const { t } = useLocale();
+  const type = (historyEntry?.sourceType ?? "pdf").toLowerCase();
+  const label = type.includes("doc") ? "DOC" : type.toUpperCase().slice(0, 3);
+  const meta = [
+    historyEntry?.sourceType?.toUpperCase(),
+    historyEntry?.slideCount ? `${historyEntry.slideCount} ${t("preview.slides")}` : undefined,
+    historyEntry?.updatedAt,
+  ].filter(Boolean).join(" · ");
+
+  if (!historyEntry) {
+    return (
+      <div className="source-empty-state result-source-summary">
+        <FileText size={22} />
+        <span>{t("source.empty")}</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="source-list source-list-compact result-source-summary">
+      <div className="source-row">
+        <span className={`source-file-type source-file-${type.includes("doc") ? "doc" : "pdf"}`}>{label}</span>
+        <span className="source-row-copy">
+          <strong>{historyEntry.fileName}</strong>
+          <em>{meta}</em>
+        </span>
+        <CircleCheck size={15} className="source-check" />
+      </div>
+    </div>
+  );
+}
+
+function ResultSlideWorkspace({
+  slides,
+  selectedSlide,
+  onSelect,
+  downloadHref,
+  onReexport,
+  reexportLoading,
+  onNewRun,
+}: {
+  slides: PreviewSlide[];
+  selectedSlide?: PreviewSlide;
+  onSelect: (slide: PreviewSlide) => void;
+  downloadHref?: string;
+  onReexport: () => void;
+  reexportLoading: boolean;
+  onNewRun: () => void;
+}) {
+  const { t } = useLocale();
+  return (
+    <main className="slide-workspace-panel">
+      <div className="slide-workspace-header">
+        <p>{t("preview.slidePreview")}</p>
+        <details className="result-export-menu">
+          <summary className="primary-button result-export-summary">
+            <Download size={16} />
+            <span>{t("result.download")}</span>
+            <ChevronDown size={14} />
+          </summary>
+          <div className="result-export-menu-content">
+            {downloadHref ? (
+              <a href={downloadHref}>
+                <Download size={15} />
+                <span>{t("result.download")}</span>
+              </a>
             ) : (
-              <Terminal size={15} className="panel-title-icon" />
+              <button type="button" disabled>
+                <Download size={15} />
+                <span>{t("common.pending")}</span>
+              </button>
             )}
-            <p className="panel-title">
-              {secondaryPanel === "config" ? t("config.title") : t("log.title")}
-            </p>
+            <button type="button" onClick={onReexport} disabled={reexportLoading}>
+              <Wand2 size={15} />
+              <span>{reexportLoading ? t("result.reexportLoading") : t("result.reexport")}</span>
+            </button>
+            <button type="button" onClick={onNewRun}>
+              <Plus size={15} />
+              <span>{t("result.newRun")}</span>
+            </button>
           </div>
-          <button
-            type="button"
-            className="icon-btn"
-            onClick={() => setSecondaryPanel(null)}
-            aria-label={t("common.close")}
-          >
-            <X size={17} />
+        </details>
+      </div>
+      <div className="slide-toolbar">
+        <button type="button" disabled><Plus size={15} /> {t("preview.newSlide")}</button>
+        <span className="toolbar-divider" />
+        <button type="button" disabled>Fit</button>
+        <button type="button" disabled>16:9</button>
+      </div>
+      <div className="slide-stage result-slide-stage">
+        <div className="thumbnail-rail">
+          {slides.length > 0 ? slides.map((slide) => (
+            <button
+              type="button"
+              key={slide.index}
+              className={`rail-slide ${selectedSlide?.index === slide.index ? "rail-slide-active" : ""}`}
+              onClick={() => onSelect(slide)}
+            >
+              <span>{slide.index}</span>
+              <div dangerouslySetInnerHTML={{ __html: slide.content }} />
+            </button>
+          )) : Array.from({ length: 7 }).map((_, index) => (
+            <button type="button" className={`rail-slide ${index === 0 ? "rail-slide-active" : ""}`} key={index}>
+              <span>{index + 1}</span>
+              <div className="rail-placeholder" />
+            </button>
+          ))}
+        </div>
+        <div className="slide-canvas-area">
+          {selectedSlide ? (
+            <div className="scholarly-slide-frame" dangerouslySetInnerHTML={{ __html: selectedSlide.content }} />
+          ) : (
+            <div className="scholarly-slide-frame viewer-empty" />
+          )}
+          <div className="speaker-notes">
+            <span>{t("preview.notesPlaceholder")}</span>
+            <em>0 / 1000</em>
+          </div>
+        </div>
+      </div>
+    </main>
+  );
+}
+
+function ResultRunStatus({
+  job,
+  historyEntry,
+  logs,
+  locale,
+}: {
+  job?: JobStatus;
+  historyEntry?: GenerationHistoryItem;
+  logs: string[];
+  locale: "en" | "zh";
+}) {
+  const { t } = useLocale();
+  const status = job?.status ?? historyEntry?.status;
+  const reason = job?.error ?? historyEntry?.error ?? (status === "cancelled" ? t("result.cancelledReason") : "");
+  const latest = logs.length ? logs[logs.length - 1].replace(/^\[[^\]]+\]\s*/, "") : job?.message;
+  return (
+    <section className="result-run-status">
+      <div className={`result-run-status-card result-run-status-${status ?? "unknown"}`}>
+        <strong>{formatStatusLabel(status, locale, t("common.unknown"))}</strong>
+        <span>{latest || t("monitor.waiting")}</span>
+        {reason ? <em>{reason}</em> : null}
+      </div>
+    </section>
+  );
+}
+
+function ResultMonitor({
+  job,
+  result,
+  historyEntry,
+  logs,
+  criticEvents,
+  connectionStatus,
+  activePanel,
+  onOpenPanel,
+}: {
+  job?: JobStatus;
+  result: PreviewResponse | null;
+  historyEntry?: GenerationHistoryItem;
+  logs: string[];
+  criticEvents: unknown[];
+  connectionStatus: string;
+  activePanel: "log" | "critic" | null;
+  onOpenPanel: (panel: "log" | "critic") => void;
+}) {
+  const { t, locale } = useLocale();
+  const status = job?.status ?? result?.status ?? historyEntry?.status;
+  const progress = Math.round((job?.progress ?? (status === "complete" ? 1 : 0)) * 100);
+  const latestText = logs.length ? logs[logs.length - 1].replace(/^\[[^\]]+\]\s*/, "") : t("monitor.waiting");
+  const outputPath = job?.output_path ?? result?.output_path ?? historyEntry?.outputPath;
+  const outputName = outputPath ? outputPath.replace(/\\/g, "/").split("/").pop() : t("common.pending");
+  const nextStep = status === "complete" ? t("result.refineTitle") : latestText;
+  const connectionLabel =
+    connectionStatus === "connected"
+      ? t("status.connected")
+      : connectionStatus === "connecting"
+        ? t("status.connecting")
+        : t("status.disconnected");
+  return (
+    <section className="agent-monitor-panel result-monitor-panel">
+      <div className="agent-monitor-header">
+        <div className="workspace-panel-title">
+          <Bot size={18} />
+          <span>{t("monitor.title")}</span>
+        </div>
+        <div className="monitor-tabs">
+          <button type="button" className={activePanel === "log" ? "monitor-tab-active" : ""} onClick={() => onOpenPanel("log")}>
+            <MessageSquareText size={14} />
+            {t("monitor.logs")}
+          </button>
+          <button type="button" className={activePanel === "critic" ? "monitor-tab-active" : ""} onClick={() => onOpenPanel("critic")}>
+            <Sparkles size={14} />
+            {t("monitor.review")}
           </button>
         </div>
-        <div className="studio-secondary-body">
-          {secondaryPanel === "log" ? (
-            <AgentLog logs={logs} criticEvents={criticEvents} jobId={jobId ?? undefined} />
-          ) : null}
-          {secondaryPanel === "config" ? (
-            <ConfigViewer
-              provider={currentRunConfig?.provider ?? historyEntry?.provider}
-              model={currentRunConfig?.model ?? historyEntry?.model}
-              baseUrl={currentRunConfig?.baseUrl ?? historyEntry?.baseUrl}
-              options={currentRunConfig?.options ?? historyEntry?.options}
-              parentJobId={currentRunConfig?.parentJobId ?? historyEntry?.parentJobId}
-            />
-          ) : null}
+      </div>
+      <div className="agent-monitor-body result-monitor-body">
+        <div className="agent-avatar"><Bot size={26} /></div>
+        <div className="agent-summary">
+          <strong>{formatStatusLabel(status, locale, t("common.unknown"))}</strong>
+          <span>{outputName}</span>
+          <em>{connectionLabel}</em>
         </div>
-      </aside>
-    </Layout>
+        <div className="monitor-progress-block">
+          <span><strong>{progress}%</strong> {t("monitor.slideGeneration")}</span>
+          <Progress value={progress} className="monitor-progress" />
+          <em>{job?.slides_completed ?? historyEntry?.slideCount ?? result?.slides.length ?? 0} / {job?.total_slides ?? historyEntry?.slideCount ?? result?.slides.length ?? "?"} {t("preview.slides")}</em>
+        </div>
+        <div className="monitor-event">
+          <strong>{t("monitor.lastEvent")}</strong>
+          <span title={latestText}><i className={connectionStatus === "connected" ? "event-dot-on" : ""} />{latestText}</span>
+        </div>
+        <div className="monitor-event">
+          <strong>{t("monitor.nextStep")}</strong>
+          <span title={nextStep}>{nextStep}</span>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -701,11 +833,11 @@ function buildStoredJob(historyItem: GenerationHistoryItem): JobStatus {
   return {
     status: historyItem.status,
     progress: historyItem.status === "complete" ? 1 : 0,
-    message: "",
+    message: historyItem.error ?? "",
     slides_completed: historyItem.slideCount,
     total_slides: historyItem.slideCount,
     output_path: historyItem.outputPath ?? null,
-    error: historyItem.status === "error" ? "Job not found." : null,
+    error: historyItem.status === "error" ? historyItem.error ?? "Job not found." : null,
   };
 }
 

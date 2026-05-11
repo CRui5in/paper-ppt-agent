@@ -102,7 +102,10 @@ async def _build_preview_response(
         for index, svg_path in enumerate(slide_files, start=1):
             # ``prepare_svg_file_for_render`` rewrites href base64 inlines etc.
             # — synchronous CPU work; offload it.
-            prepared_path = await aoffload(prepare_svg_file_for_render, svg_path)
+            try:
+                prepared_path = await aoffload(prepare_svg_file_for_render, svg_path)
+            except FileNotFoundError:
+                continue
             try:
                 content = await aread_text(prepared_path, encoding="utf-8")
             finally:
