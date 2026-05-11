@@ -2,6 +2,10 @@ import { useState } from "react";
 import type { DeepSeekSettings, OpenAISettings, ProviderListItem } from "../../lib/types";
 import { useLocale } from "../../i18n";
 import { Bot, Cpu, Zap, Globe, Key, Eye, EyeOff, BrainCircuit } from "lucide-react";
+import { Button } from "../ui/button";
+import { Input } from "../ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
+import { Switch } from "../ui/switch";
 
 interface ModelSelectorProps {
   providers: ProviderListItem[];
@@ -40,6 +44,7 @@ export function ModelSelector({
   const [showKey, setShowKey] = useState(false);
   const isDeepSeek = provider === "deepseek";
   const showOpenAISettings = provider === "openai" && isGpt5OrNewer(model);
+  const selectedProviderIcon = getProviderIcon(provider, selectedProvider?.display_name);
 
   return (
     <section className="panel">
@@ -55,15 +60,25 @@ export function ModelSelector({
 
       <label className="form-field">
         <span>{t("model.provider")}</span>
-        <div className="form-field-icon">
-          <Cpu size={14} className="field-icon" />
-          <select value={provider} onChange={(event) => onProviderChange(event.target.value)}>
+        <div className="provider-select-shell">
+          <Select value={provider} onValueChange={onProviderChange}>
+            <SelectTrigger className="provider-select-trigger">
+              <span className="provider-select-value">
+                <ProviderIcon icon={selectedProviderIcon} label={selectedProvider?.display_name ?? provider} />
+                <span>{selectedProvider?.display_name ?? (provider || t("model.waiting"))}</span>
+              </span>
+            </SelectTrigger>
+            <SelectContent>
             {providers.map((item) => (
-              <option key={item.name} value={item.name}>
-                {item.display_name}
-              </option>
+              <SelectItem key={item.name} value={item.name}>
+                <span className="provider-select-item">
+                  <ProviderIcon icon={getProviderIcon(item.name, item.display_name)} label={item.display_name} />
+                  <span>{item.display_name}</span>
+                </span>
+              </SelectItem>
             ))}
-          </select>
+            </SelectContent>
+          </Select>
         </div>
       </label>
 
@@ -71,9 +86,10 @@ export function ModelSelector({
         <span>{t("model.model")}</span>
         <div className="form-field-icon">
           <Zap size={14} className="field-icon" />
-          <input
+          <Input
             list={datalistId}
             value={model}
+            className="pl-9"
             placeholder={t("model.modelPlaceholder")}
             onChange={(event) => onModelChange(event.target.value)}
           />
@@ -91,8 +107,9 @@ export function ModelSelector({
         <span>{t("model.baseUrl")}</span>
         <div className="form-field-icon">
           <Globe size={14} className="field-icon" />
-          <input
+          <Input
             type="url"
+            className="pl-9"
             placeholder={t("model.baseUrlPlaceholder")}
             value={baseUrl}
             onChange={(event) => onBaseUrlChange(event.target.value)}
@@ -104,20 +121,23 @@ export function ModelSelector({
         <span>{t("model.apiKey")}</span>
         <div className="form-field-icon api-key-wrapper">
           <Key size={14} className="field-icon" />
-          <input
+          <Input
             type={showKey ? "text" : "password"}
+            className="pl-9 pr-10"
             placeholder={t("model.apiPlaceholder")}
             value={apiKey}
             onChange={(event) => onApiKeyChange(event.target.value)}
           />
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="icon"
             className="api-key-toggle"
             onClick={() => setShowKey((v) => !v)}
             tabIndex={-1}
           >
             {showKey ? <EyeOff size={14} /> : <Eye size={14} />}
-          </button>
+          </Button>
         </div>
       </label>
 
@@ -129,32 +149,25 @@ export function ModelSelector({
           </div>
           <p className="panel-support-text">{t("model.deepseekBody")}</p>
 
+          <div className="model-subsettings-grid model-subsettings-grid-deepseek">
           <label className="visual-qa-field deepseek-toggle-row">
-            <span
-              className={`visual-qa-control ${
-                deepSeekSettings.thinking_enabled ? "visual-qa-control-active" : ""
-              }`}
-            >
-              <input
-                className="visual-qa-input"
-                type="checkbox"
-                checked={deepSeekSettings.thinking_enabled}
-                onChange={(event) =>
-                  onDeepSeekSettingsChange({
-                    ...deepSeekSettings,
-                    thinking_enabled: event.target.checked,
-                  })
-                }
-              />
+            <span className={`visual-qa-control ${deepSeekSettings.thinking_enabled ? "visual-qa-control-active" : ""}`}>
               <span className="visual-qa-icon" aria-hidden="true">
                 <BrainCircuit size={16} />
               </span>
               <span className="visual-qa-copy">
                 <span className="visual-qa-name">{t("model.deepseekThinking")}</span>
               </span>
-              <span className="visual-qa-switch" aria-hidden="true">
-                <span />
-              </span>
+              <span />
+              <Switch
+                checked={deepSeekSettings.thinking_enabled}
+                onCheckedChange={(checked) =>
+                  onDeepSeekSettingsChange({
+                    ...deepSeekSettings,
+                    thinking_enabled: checked,
+                  })
+                }
+              />
             </span>
           </label>
 
@@ -162,21 +175,27 @@ export function ModelSelector({
             <span>{t("model.deepseekEffort")}</span>
             <div className="form-field-icon">
               <BrainCircuit size={14} className="field-icon" />
-              <select
+              <Select
                 value={deepSeekSettings.reasoning_effort}
                 disabled={!deepSeekSettings.thinking_enabled}
-                onChange={(event) =>
+                onValueChange={(value) =>
                   onDeepSeekSettingsChange({
                     ...deepSeekSettings,
-                    reasoning_effort: event.target.value as DeepSeekSettings["reasoning_effort"],
+                    reasoning_effort: value as DeepSeekSettings["reasoning_effort"],
                   })
                 }
               >
-                <option value="high">{t("model.deepseekEffortHigh")}</option>
-                <option value="max">{t("model.deepseekEffortMax")}</option>
-              </select>
+                <SelectTrigger className="pl-9">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="high">{t("model.deepseekEffortHigh")}</SelectItem>
+                  <SelectItem value="max">{t("model.deepseekEffortMax")}</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
           </label>
+          </div>
         </div>
       ) : null}
 
@@ -187,25 +206,31 @@ export function ModelSelector({
             <p className="panel-title">{t("model.openaiTitle")}</p>
           </div>
 
+          <div className="model-subsettings-grid">
           <label className="form-field">
             <span>{t("model.openaiReasoning")}</span>
             <div className="form-field-icon">
               <BrainCircuit size={14} className="field-icon" />
-              <select
+              <Select
                 value={openAISettings.reasoning_effort}
-                onChange={(event) =>
+                onValueChange={(value) =>
                   onOpenAISettingsChange({
                     ...openAISettings,
-                    reasoning_effort: event.target.value as OpenAISettings["reasoning_effort"],
+                    reasoning_effort: value as OpenAISettings["reasoning_effort"],
                   })
                 }
               >
-                <option value="none">{t("model.openaiReasoningNone")}</option>
-                <option value="low">{t("model.openaiReasoningLow")}</option>
-                <option value="medium">{t("model.openaiReasoningMedium")}</option>
-                <option value="high">{t("model.openaiReasoningHigh")}</option>
-                <option value="xhigh">{t("model.openaiReasoningXhigh")}</option>
-              </select>
+                <SelectTrigger className="pl-9">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">{t("model.openaiReasoningNone")}</SelectItem>
+                  <SelectItem value="low">{t("model.openaiReasoningLow")}</SelectItem>
+                  <SelectItem value="medium">{t("model.openaiReasoningMedium")}</SelectItem>
+                  <SelectItem value="high">{t("model.openaiReasoningHigh")}</SelectItem>
+                  <SelectItem value="xhigh">{t("model.openaiReasoningXhigh")}</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
           </label>
 
@@ -213,24 +238,63 @@ export function ModelSelector({
             <span>{t("model.openaiVerbosity")}</span>
             <div className="form-field-icon">
               <Zap size={14} className="field-icon" />
-              <select
+              <Select
                 value={openAISettings.verbosity}
-                onChange={(event) =>
+                onValueChange={(value) =>
                   onOpenAISettingsChange({
                     ...openAISettings,
-                    verbosity: event.target.value as OpenAISettings["verbosity"],
+                    verbosity: value as OpenAISettings["verbosity"],
                   })
                 }
               >
-                <option value="low">{t("model.openaiVerbosityLow")}</option>
-                <option value="medium">{t("model.openaiVerbosityMedium")}</option>
-                <option value="high">{t("model.openaiVerbosityHigh")}</option>
-              </select>
+                <SelectTrigger className="pl-9">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="low">{t("model.openaiVerbosityLow")}</SelectItem>
+                  <SelectItem value="medium">{t("model.openaiVerbosityMedium")}</SelectItem>
+                  <SelectItem value="high">{t("model.openaiVerbosityHigh")}</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
           </label>
+          </div>
         </div>
       ) : null}
     </section>
+  );
+}
+
+type ProviderIconKind = "openai" | "deepseek" | "claude" | "gemini" | "default";
+
+const PROVIDER_ICON_SRC: Record<Exclude<ProviderIconKind, "default">, string> = {
+  openai: "/provider-icons/openai.svg",
+  deepseek: "/provider-icons/deepseek.svg",
+  claude: "/provider-icons/claude.svg",
+  gemini: "/provider-icons/gemini.svg",
+};
+
+function getProviderIcon(name?: string, displayName?: string): ProviderIconKind {
+  const normalized = `${name ?? ""} ${displayName ?? ""}`.toLowerCase();
+  if (normalized.includes("deepseek")) return "deepseek";
+  if (normalized.includes("claude") || normalized.includes("anthropic")) return "claude";
+  if (normalized.includes("gemini") || normalized.includes("google")) return "gemini";
+  if (normalized.includes("openai") || normalized.includes("chatgpt") || normalized.includes("gpt")) return "openai";
+  return "default";
+}
+
+function ProviderIcon({ icon, label }: { icon: ProviderIconKind; label?: string }) {
+  if (icon === "default") {
+    return (
+      <span className="provider-icon provider-icon-fallback" aria-hidden="true" title={label}>
+        <Cpu size={14} />
+      </span>
+    );
+  }
+  return (
+    <span className="provider-icon" aria-hidden="true" title={label}>
+      <img src={PROVIDER_ICON_SRC[icon]} alt="" />
+    </span>
   );
 }
 

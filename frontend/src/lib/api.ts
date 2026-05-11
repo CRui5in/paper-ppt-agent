@@ -76,6 +76,10 @@ export interface UsageSnapshotResponse {
   recent: UsageRecordResponse[];
 }
 
+export interface HealthResponse {
+  status: string;
+}
+
 /**
  * Error thrown for non-2xx HTTP responses.
  *
@@ -119,6 +123,10 @@ export async function uploadPaper(file: File): Promise<UploadResponse> {
 
 export async function fetchProviders(): Promise<ProvidersResponse> {
   return request<ProvidersResponse>("/api/providers");
+}
+
+export async function fetchBackendHealth(init?: RequestInit): Promise<HealthResponse> {
+  return request<HealthResponse>("/healthz", init);
 }
 
 export async function fetchTemplates(): Promise<TemplateInfo[]> {

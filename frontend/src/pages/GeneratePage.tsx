@@ -1,25 +1,63 @@
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
-import { Terminal, X } from "lucide-react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import {
+  AlignCenter,
+  AlignLeft,
+  AlignRight,
+  BarChart3,
+  Bold,
+  Bot,
+  ChevronDown,
+  CircleCheck,
+  Database,
+  FileText,
+  Grid3X3,
+  Image,
+  Italic,
+  Layers,
+  Link as LinkIcon,
+  List,
+  MessageSquareText,
+  Plus,
+  Settings2,
+  Sparkles,
+  Table2,
+  Type,
+  Wand2,
+} from "lucide-react";
 import { Layout } from "../components/layout/Layout";
 import { ModelSelector } from "../components/config/ModelSelector";
 import { OptionsPanel } from "../components/config/OptionsPanel";
-import { SlidePreview } from "../components/preview/SlidePreview";
-import { SlideViewer } from "../components/preview/SlideViewer";
 import { AgentLog } from "../components/progress/AgentLog";
+import { FloatingInspector } from "../components/progress/FloatingInspector";
 import { ProgressPanel } from "../components/progress/ProgressPanel";
-import { FilePreview } from "../components/upload/FilePreview";
 import { UploadZone } from "../components/upload/UploadZone";
+import { RecentTasksPanel } from "../components/history/RecentTasksPanel";
 import { useGeneration } from "../hooks/useGeneration";
 import { useLocale } from "../i18n";
 import { fetchTemplates } from "../lib/api";
-import type { DeepSeekSettings, OpenAISettings, ResearchConfig, TemplateInfo } from "../lib/types";
+import type {
+  DeepSeekSettings,
+  GenerationHistoryItem,
+  JobStatus,
+  OpenAISettings,
+  PreviewSlide,
+  CriticEvent,
+  ResearchConfig,
+  ResearchEnrichmentStats,
+  TemplateInfo,
+  UploadResponse,
+} from "../lib/types";
 import { TemplateManager } from "../components/template/TemplateManager";
+import { Button } from "../components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
+import { Progress } from "../components/ui/progress";
+import { Tabs, TabsList, TabsTrigger } from "../components/ui/tabs";
 
 const ROUTING_PROFILE_STORAGE_KEY = "paper-ppt-agent-routing-profiles-v1";
 const PRESENTATION_SETTINGS_STORAGE_KEY = "paper-ppt-agent-presentation-settings-v1";
 type LanguageMode = "zh" | "en" | "custom";
-type SecondaryPanel = "log";
+type SecondaryPanel = "log" | "critic";
 const DEFAULT_DEEPSEEK_SETTINGS: DeepSeekSettings = {
   thinking_enabled: true,
   reasoning_effort: "max",
@@ -132,6 +170,7 @@ export function GeneratePage() {
     cancelCurrentRun,
     connect,
     resumeCurrentRun,
+    refreshHistoryStatuses,
     selectSlide,
     reset,
   } = useGeneration();
@@ -235,6 +274,21 @@ export function GeneratePage() {
   useEffect(() => {
     void loadProviders();
   }, [loadProviders]);
+
+  useEffect(() => {
+    let stopped = false;
+    const refresh = async () => {
+      if (!stopped) {
+        await refreshHistoryStatuses();
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 3000);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+    };
+  }, [refreshHistoryStatuses]);
 
   useEffect(() => {
     fetchTemplates()
@@ -438,212 +492,229 @@ export function GeneratePage() {
     }
   }, [job?.status, jobId, navigate]);
 
-  return (
-    <Layout contentClassName="studio-page">
-      <section className="studio-layout">
-        <div className="studio-column studio-column-left">
-          <UploadZone onFileSelect={(file) => void uploadFile(file)} />
-          <FilePreview session={uploadSession} />
-          <ProgressPanel job={job} connectionStatus={connectionStatus} enrichmentStats={enrichmentStats} />
-        </div>
-
-        <div className="studio-column studio-column-preview">
-          <SlideViewer slide={selectedSlide} />
-          <SlidePreview slides={slides} selectedSlide={selectedSlide} onSelect={selectSlide} />
-        </div>
-
-        <div className="studio-config-rail studio-column-right">
-          <ModelSelector
-            providers={providers}
-            provider={provider}
-            model={model}
-            baseUrl={baseUrl}
-            apiKey={apiKey}
-            deepSeekSettings={deepSeekSettings}
-            openAISettings={openAISettings}
-            onProviderChange={(nextProvider) => {
-              setProvider(nextProvider);
-            }}
-            onModelChange={setModel}
-            onBaseUrlChange={setBaseUrl}
-            onApiKeyChange={setApiKey}
-            onDeepSeekSettingsChange={setDeepSeekSettings}
-            onOpenAISettingsChange={setOpenAISettings}
-          />
-          <OptionsPanel
-            canvasFormat={canvasFormat}
-            languageMode={languageMode}
-            customLanguage={customLanguage}
-            numPages={numPages}
-            detailLevel={detailLevel}
-            timeoutSeconds={timeoutSeconds}
-            maxCriticAttempts={maxCriticAttempts}
-            visualQaMaxAttempts={visualQaMaxAttempts}
-            instruction={instruction}
-            enableDeepResearch={enableDeepResearch}
-            enableVisualCritic={enableVisualCritic}
-            enableIcon={enableIcon}
-            enableIconRag={enableIconRag}
-            geminiApiKey={geminiApiKey}
-            templateId={templateId}
-            templates={templates}
-            onCanvasFormatChange={setCanvasFormat}
-            onLanguageModeChange={setLanguageMode}
-            onCustomLanguageChange={setCustomLanguage}
-            onNumPagesChange={setNumPages}
-            onDetailLevelChange={setDetailLevel}
-            onTimeoutSecondsChange={setTimeoutSeconds}
-            onMaxCriticAttemptsChange={setMaxCriticAttempts}
-            onVisualQaMaxAttemptsChange={setVisualQaMaxAttempts}
-            onInstructionChange={setInstruction}
-            onEnableDeepResearchChange={setEnableDeepResearch}
-            onEnableVisualCriticChange={setEnableVisualCritic}
-            onEnableIconChange={setEnableIcon}
-            onEnableIconRagChange={setEnableIconRag}
-            onGeminiApiKeyChange={setGeminiApiKey}
-            onTemplateChange={setTemplateId}
-            onManageTemplates={() => setTemplateManagerOpen(true)}
-            density={density}
-            customFont={customFont}
-            headingFont={headingFont}
-            bodyFont={bodyFont}
-            cjkHeadingFont={cjkHeadingFont}
-            cjkBodyFont={cjkBodyFont}
-            onDensityChange={setDensity}
-            onCustomFontChange={setCustomFont}
-            onHeadingFontChange={setHeadingFont}
-            onBodyFontChange={setBodyFont}
-            onCjkHeadingFontChange={setCjkHeadingFont}
-            onCjkBodyFontChange={setCjkBodyFont}
-            researchConfig={researchConfig}
-            onResearchConfigChange={setResearchConfig}
-          />
-          <div className="studio-secondary-actions">
-            <button
-              type="button"
-              className={`secondary-action ${secondaryPanel === "log" ? "secondary-action-active" : ""}`}
-              onClick={() => setSecondaryPanel((current) => (current === "log" ? null : "log"))}
-            >
-              <Terminal size={16} />
-              <span>{t("log.title")}</span>
-            </button>
-          </div>
-          <button
-            type="button"
-            className="primary-button full-width launch-button"
-            disabled={
-              !uploadSession ||
-              !provider ||
-              !model.trim() ||
-              !apiKey ||
-              (languageMode === "custom" && !customLanguage.trim()) ||
-              canCancelCurrentRun
-            }
-            onClick={async () => {
-              if (!uploadSession) {
-                return;
+  const launchGeneration = async () => {
+    if (!uploadSession) {
+      return;
+    }
+    const normalizedModel = model.trim();
+    const profiles = readRoutingProfiles();
+    profiles[provider] = {
+      model: normalizedModel,
+      baseUrl,
+      apiKey,
+      deepseekSettings: provider === "deepseek" ? deepSeekSettings : undefined,
+      openaiSettings: provider === "openai" ? openAISettings : undefined,
+    };
+    writeRoutingProfiles(profiles);
+    const nextJobId = await startGeneration({
+      session_id: uploadSession.session_id,
+      instruction,
+      model_config: {
+        provider,
+        model: normalizedModel,
+        api_key: apiKey,
+        base_url: baseUrl || undefined,
+        deepseek_settings: provider === "deepseek" ? deepSeekSettings : undefined,
+        openai_settings: provider === "openai" ? openAISettings : undefined,
+      },
+      options: {
+        canvas_format: canvasFormat,
+        style: "academic",
+        language: resolveRequestedLanguage(languageMode, customLanguage),
+        num_pages: numPages ? Number(numPages) : undefined,
+        detail_level: detailLevel,
+        timeout_seconds: parseOptionalPositiveInt(timeoutSeconds),
+        max_critic_attempts: parseBoundedPositiveInt(maxCriticAttempts, 3, 1, 10),
+        style_overrides:
+          customFont || headingFont || bodyFont || cjkHeadingFont || cjkBodyFont || density !== "normal"
+            ? {
+                font: customFont || undefined,
+                font_heading: headingFont || undefined,
+                font_body: bodyFont || undefined,
+                cjk_heading: cjkHeadingFont || undefined,
+                cjk_body: cjkBodyFont || undefined,
+                density: density as "compact" | "normal" | "spacious",
               }
-              const normalizedModel = model.trim();
-              const profiles = readRoutingProfiles();
-              profiles[provider] = {
-                model: normalizedModel,
-                baseUrl,
-                apiKey,
-                deepseekSettings: provider === "deepseek" ? deepSeekSettings : undefined,
-                openaiSettings: provider === "openai" ? openAISettings : undefined,
-              };
-              writeRoutingProfiles(profiles);
-              const jobId = await startGeneration({
-                session_id: uploadSession.session_id,
-                instruction,
-                model_config: {
-                  provider,
-                  model: normalizedModel,
-                  api_key: apiKey,
-                  base_url: baseUrl || undefined,
-                  deepseek_settings: provider === "deepseek" ? deepSeekSettings : undefined,
-                  openai_settings: provider === "openai" ? openAISettings : undefined,
-                },
-                options: {
-                  canvas_format: canvasFormat,
-                  style: "academic",
-                  language: resolveRequestedLanguage(languageMode, customLanguage),
-                  num_pages: numPages ? Number(numPages) : undefined,
-                  detail_level: detailLevel,
-                  timeout_seconds: parseOptionalPositiveInt(timeoutSeconds),
-                  max_critic_attempts: parseBoundedPositiveInt(maxCriticAttempts, 3, 1, 10),
-                  style_overrides:
-                    customFont || headingFont || bodyFont || cjkHeadingFont || cjkBodyFont || density !== "normal"
-                      ? {
-                          font: customFont || undefined,
-                          font_heading: headingFont || undefined,
-                          font_body: bodyFont || undefined,
-                          cjk_heading: cjkHeadingFont || undefined,
-                          cjk_body: cjkBodyFont || undefined,
-                          density: density as "compact" | "normal" | "spacious",
-                        }
-                      : undefined,
-                  enable_visual_critic: enableVisualCritic,
-                  visual_qa_max_attempts: parseBoundedPositiveInt(visualQaMaxAttempts, 1, 1, 10),
-                  enable_deep_research: enableDeepResearch,
-                  enable_icon: enableIcon,
-                  enable_icon_rag: enableIconRag,
-                  gemini_api_key: geminiApiKey || undefined,
-                  template_id: templateId || undefined,
-                  research_config: (researchConfig.arxiv_search_enabled || researchConfig.semantic_scholar_enabled || researchConfig.web_search_enabled)
-                    ? researchConfig
-                    : undefined,
-                },
-              });
-              connect(jobId);
-            }}
-          >
-            {t("studio.launch")}
-          </button>
-          {canCancelCurrentRun ? (
+            : undefined,
+        enable_visual_critic: enableVisualCritic,
+        visual_qa_max_attempts: parseBoundedPositiveInt(visualQaMaxAttempts, 1, 1, 10),
+        enable_deep_research: enableDeepResearch,
+        enable_icon: enableIcon,
+        enable_icon_rag: enableIconRag,
+        gemini_api_key: geminiApiKey || undefined,
+        template_id: templateId || undefined,
+        research_config: (researchConfig.arxiv_search_enabled || researchConfig.semantic_scholar_enabled || researchConfig.web_search_enabled)
+          ? researchConfig
+          : undefined,
+      },
+    });
+    connect(nextJobId);
+  };
+
+  const generationDisabled =
+    !uploadSession ||
+    !provider ||
+    !model.trim() ||
+    !apiKey ||
+    (languageMode === "custom" && !customLanguage.trim()) ||
+    canCancelCurrentRun;
+
+  return (
+    <Layout showSidebar={false} contentClassName="studio-page scholarly-workspace-page">
+      <section className="scholarly-workspace">
+        <SourcesPanel
+          uploadSession={uploadSession}
+          job={job}
+          jobId={jobId}
+          connectionStatus={connectionStatus}
+          enrichmentStats={enrichmentStats}
+          logs={logs}
+          history={history}
+          runs={runs}
+          locale={locale}
+          onFileSelect={(file) => void uploadFile(file)}
+        />
+
+        <SlideWorkspace
+          slides={slides}
+          selectedSlide={selectedSlide}
+          onSelect={selectSlide}
+          canvasFormat={canvasFormat}
+        />
+
+        <aside className="configuration-panel">
+          <div className="workspace-panel-header">
+            <div className="workspace-panel-title">
+              <Settings2 size={18} />
+              <span>{t("config.title")}</span>
+            </div>
+          </div>
+          <div className="configuration-scroll">
+            <ModelSelector
+                providers={providers}
+                provider={provider}
+                model={model}
+                baseUrl={baseUrl}
+                apiKey={apiKey}
+                deepSeekSettings={deepSeekSettings}
+                openAISettings={openAISettings}
+                onProviderChange={(nextProvider) => {
+                  setProvider(nextProvider);
+                }}
+                onModelChange={setModel}
+                onBaseUrlChange={setBaseUrl}
+                onApiKeyChange={setApiKey}
+                onDeepSeekSettingsChange={setDeepSeekSettings}
+                onOpenAISettingsChange={setOpenAISettings}
+            />
+            <OptionsPanel
+                canvasFormat={canvasFormat}
+                languageMode={languageMode}
+                customLanguage={customLanguage}
+                numPages={numPages}
+                detailLevel={detailLevel}
+                timeoutSeconds={timeoutSeconds}
+                maxCriticAttempts={maxCriticAttempts}
+                visualQaMaxAttempts={visualQaMaxAttempts}
+                instruction={instruction}
+                enableDeepResearch={enableDeepResearch}
+                enableVisualCritic={enableVisualCritic}
+                enableIcon={enableIcon}
+                enableIconRag={enableIconRag}
+                geminiApiKey={geminiApiKey}
+                templateId={templateId}
+                templates={templates}
+                onCanvasFormatChange={setCanvasFormat}
+                onLanguageModeChange={setLanguageMode}
+                onCustomLanguageChange={setCustomLanguage}
+                onNumPagesChange={setNumPages}
+                onDetailLevelChange={setDetailLevel}
+                onTimeoutSecondsChange={setTimeoutSeconds}
+                onMaxCriticAttemptsChange={setMaxCriticAttempts}
+                onVisualQaMaxAttemptsChange={setVisualQaMaxAttempts}
+                onInstructionChange={setInstruction}
+                onEnableDeepResearchChange={setEnableDeepResearch}
+                onEnableVisualCriticChange={setEnableVisualCritic}
+                onEnableIconChange={setEnableIcon}
+                onEnableIconRagChange={setEnableIconRag}
+                onGeminiApiKeyChange={setGeminiApiKey}
+                onTemplateChange={setTemplateId}
+                onManageTemplates={() => setTemplateManagerOpen(true)}
+                density={density}
+                customFont={customFont}
+                headingFont={headingFont}
+                bodyFont={bodyFont}
+                cjkHeadingFont={cjkHeadingFont}
+                cjkBodyFont={cjkBodyFont}
+                onDensityChange={setDensity}
+                onCustomFontChange={setCustomFont}
+                onHeadingFontChange={setHeadingFont}
+                onBodyFontChange={setBodyFont}
+                onCjkHeadingFontChange={setCjkHeadingFont}
+                onCjkBodyFontChange={setCjkBodyFont}
+                researchConfig={researchConfig}
+                onResearchConfigChange={setResearchConfig}
+            />
+          </div>
+          <div className="configuration-actions">
             <button
               type="button"
-              className="secondary-button danger-button full-width cancel-generation-button"
-              disabled={cancelLoading || job?.status === "cancelling"}
-              onClick={async () => {
-                setCancelLoading(true);
-                try {
-                  await cancelCurrentRun();
-                } finally {
-                  setCancelLoading(false);
-                }
-              }}
+              className="primary-button full-width launch-button"
+              disabled={generationDisabled}
+              onClick={() => void launchGeneration()}
             >
-              {cancelLoading || job?.status === "cancelling"
-                ? t("studio.canceling")
-                : t("studio.cancel")}
+              <Wand2 size={17} />
+              {t("studio.launch")}
             </button>
-          ) : null}
-          {error ? <p className="error-text">{error}</p> : null}
-        </div>
-      </section>
-      <aside
-        className={`studio-secondary-panel ${secondaryPanel ? "studio-secondary-panel-open" : ""}`}
-        aria-hidden={!secondaryPanel}
-      >
-        <div className="studio-secondary-header">
-          <div className="panel-title-row">
-            <Terminal size={15} className="panel-title-icon" />
-            <p className="panel-title">{t("log.title")}</p>
+            {canCancelCurrentRun ? (
+              <button
+                type="button"
+                className="secondary-button danger-button full-width cancel-generation-button"
+                disabled={cancelLoading || job?.status === "cancelling"}
+                onClick={async () => {
+                  setCancelLoading(true);
+                  try {
+                    await cancelCurrentRun();
+                  } finally {
+                    setCancelLoading(false);
+                  }
+                }}
+              >
+                {cancelLoading || job?.status === "cancelling"
+                  ? t("studio.canceling")
+                  : t("studio.cancel")}
+              </button>
+            ) : null}
           </div>
-          <button
-            type="button"
-            className="icon-btn"
-            aria-label={t("common.close")}
-            onClick={() => setSecondaryPanel(null)}
-          >
-            <X size={17} />
-          </button>
-        </div>
-        <div className="studio-secondary-body">
-          {secondaryPanel === "log" ? <AgentLog logs={logs} criticEvents={criticEvents} jobId={jobId} /> : null}
-        </div>
-      </aside>
+        </aside>
+
+        <AgentMonitor
+          job={job}
+          logs={logs}
+          criticEvents={criticEvents}
+          jobId={jobId}
+          connectionStatus={connectionStatus}
+          enrichmentStats={enrichmentStats}
+          activePanel={secondaryPanel}
+          onOpenPanel={setSecondaryPanel}
+        />
+      </section>
+      <FloatingInspector
+        open={secondaryPanel === "log"}
+        title={t("log.title")}
+        icon={<MessageSquareText size={15} className="panel-title-icon" />}
+        onClose={() => setSecondaryPanel(null)}
+      >
+        <AgentLog mode="logs" hideHeader logs={logs} criticEvents={[]} jobId={jobId} />
+      </FloatingInspector>
+      <FloatingInspector
+        open={secondaryPanel === "critic"}
+        title={t("monitor.review")}
+        icon={<Sparkles size={15} className="panel-title-icon" />}
+        onClose={() => setSecondaryPanel(null)}
+      >
+        <CriticPanel criticEvents={criticEvents} jobId={jobId} />
+      </FloatingInspector>
       <TemplateManager
         open={templateManagerOpen}
         onClose={() => setTemplateManagerOpen(false)}
@@ -657,6 +728,301 @@ export function GeneratePage() {
       />
     </Layout>
   );
+}
+
+function SourcesPanel({
+  uploadSession,
+  job,
+  jobId,
+  connectionStatus,
+  enrichmentStats,
+  logs,
+  history,
+  runs,
+  locale,
+  onFileSelect,
+}: {
+  uploadSession?: UploadResponse;
+  job?: JobStatus;
+  jobId?: string;
+  connectionStatus: string;
+  enrichmentStats?: ResearchEnrichmentStats;
+  logs: string[];
+  history: GenerationHistoryItem[];
+  runs: ReturnType<typeof useGeneration.getState>["runs"];
+  locale: "en" | "zh";
+  onFileSelect: (file: File) => void;
+}) {
+  const { t } = useLocale();
+  const sourceItems = uploadSession
+    ? [
+        {
+          name: uploadSession.file_info.name,
+          meta: `${uploadSession.file_info.source_type.toUpperCase()} · ${(uploadSession.file_info.size / 1024).toFixed(1)} KB`,
+          type: uploadSession.file_info.source_type.toLowerCase(),
+        },
+      ]
+    : [];
+  const hasStartedTask = Boolean(jobId && job && job.status !== "idle");
+  return (
+    <Card className="sources-panel">
+      <CardHeader className="workspace-panel-header">
+        <div className="workspace-panel-title">
+          <Database size={17} />
+          <CardTitle>{t("source.title")}</CardTitle>
+        </div>
+      </CardHeader>
+      <CardContent className="sources-content">
+      {!hasStartedTask ? (
+        <>
+          <UploadZone onFileSelect={onFileSelect} />
+          <p className="source-limit-note">{t("source.limit")}</p>
+          <Tabs value="papers" className="w-full">
+            <TabsList className="source-tabs grid w-full grid-cols-3">
+              <TabsTrigger value="papers">{t("source.papers")} <span>{sourceItems.length}</span></TabsTrigger>
+              <TabsTrigger value="links" disabled title={t("common.pending")}>{t("source.links")} <span>0</span></TabsTrigger>
+              <TabsTrigger value="datasets" disabled title={t("common.pending")}>{t("source.datasets")} <span>0</span></TabsTrigger>
+            </TabsList>
+          </Tabs>
+          <SourceList sourceItems={sourceItems} />
+          <div className="source-footer">
+            <span>{sourceItems.length} / 1 source</span>
+            <Button variant="secondary" size="sm" type="button" disabled title="Multiple links are planned for a later version"><LinkIcon size={13} /> Add Link</Button>
+          </div>
+        </>
+      ) : (
+        <>
+          <SourceList sourceItems={sourceItems} compact />
+          <div className="source-inline-process">
+            <div className="panel-title-row source-inline-process-title">
+              <BarChart3 size={17} className="panel-title-icon" />
+              <span>{t("progress.title")}</span>
+            </div>
+            <ProgressPanel compact hideHeader job={job} connectionStatus={connectionStatus} enrichmentStats={enrichmentStats} logs={logs} />
+          </div>
+        </>
+      )}
+      <RecentTasksPanel history={history} runs={runs} locale={locale} />
+      </CardContent>
+    </Card>
+  );
+}
+
+function SourceList({
+  sourceItems,
+  compact = false,
+}: {
+  sourceItems: Array<{ name: string; meta: string; type: string }>;
+  compact?: boolean;
+}) {
+  const { t } = useLocale();
+  return (
+    <div className={`source-list ${compact ? "source-list-compact" : ""}`}>
+      {sourceItems.length > 0 ? sourceItems.map((item) => (
+        <div className="source-row" key={item.name}>
+          <span className={`source-file-type source-file-${item.type.includes("doc") ? "doc" : "pdf"}`}>
+            {item.type.includes("doc") ? "DOC" : item.type.toUpperCase().slice(0, 3)}
+          </span>
+          <span className="source-row-copy">
+            <strong>{item.name}</strong>
+            <em>{item.meta}</em>
+          </span>
+          <CircleCheck size={15} className="source-check" />
+        </div>
+      )) : (
+        <div className="source-empty-state">
+          <FileText size={22} />
+          <span>{t("source.empty")}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SlideWorkspace({
+  slides,
+  selectedSlide,
+  onSelect,
+  canvasFormat,
+}: {
+  slides?: PreviewSlide[];
+  selectedSlide?: PreviewSlide;
+  onSelect: (slide: PreviewSlide) => void;
+  canvasFormat: string;
+}) {
+  const { t } = useLocale();
+  const safeSlides = Array.isArray(slides) ? slides : [];
+  return (
+    <main className="slide-workspace-panel">
+      <div className="slide-workspace-header">
+        <p>{t("preview.slidePreview")}</p>
+      </div>
+      <div className="slide-toolbar">
+        <button type="button" disabled title={t("common.pending")}><Plus size={15} /> {t("preview.newSlide")}</button>
+        <span className="toolbar-divider" />
+        <button type="button" disabled title="Undo is not available yet">↶</button>
+        <button type="button" disabled title="Redo is not available yet">↷</button>
+        <button type="button" disabled title="Layout editing is not available yet">Layout <ChevronDown size={13} /></button>
+        <span className="toolbar-divider" />
+        {[Bold, Italic, AlignLeft, AlignCenter, AlignRight, List, Sparkles].map((Icon, index) => (
+          <button type="button" key={index} disabled title="Slide editing is not available yet"><Icon size={15} /></button>
+        ))}
+        <span className="toolbar-divider" />
+        <button type="button" disabled title="Insert tools are not available yet">Insert <ChevronDown size={13} /></button>
+        {[Type, BarChart3, Image, Grid3X3, Table2].map((Icon, index) => (
+          <button type="button" key={index} disabled title="Slide editing is not available yet"><Icon size={15} /></button>
+        ))}
+        <span className="toolbar-spacer" />
+        <button type="button" disabled>Fit</button>
+        <button type="button" disabled>{canvasFormat === "ppt43" ? "4:3" : "16:9"} <ChevronDown size={13} /></button>
+      </div>
+      <div className="slide-stage">
+        <div className="thumbnail-rail">
+          {safeSlides.length > 0 ? safeSlides.map((slide) => (
+            <button
+              type="button"
+              key={slide.index}
+              className={`rail-slide ${selectedSlide?.index === slide.index ? "rail-slide-active" : ""}`}
+              onClick={() => onSelect(slide)}
+            >
+              <span>{slide.index}</span>
+              <div dangerouslySetInnerHTML={{ __html: slide.content }} />
+            </button>
+          )) : Array.from({ length: 7 }).map((_, index) => (
+            <button type="button" className={`rail-slide ${index === 0 ? "rail-slide-active" : ""}`} key={index}>
+              <span>{index + 1}</span>
+              <div className="rail-placeholder" />
+            </button>
+          ))}
+          <button className="rail-add" type="button" disabled title="Manual slide creation is not available yet"><Plus size={18} /></button>
+        </div>
+        <div className="slide-canvas-area">
+          {selectedSlide ? (
+            <div className="scholarly-slide-frame" dangerouslySetInnerHTML={{ __html: selectedSlide.content }} />
+          ) : (
+            <div className="scholarly-slide-frame demo-title-slide">
+              <div>
+                <p className="demo-brand"><BookOpenCheckIcon /> Paper PPT Agent</p>
+                <h1>{t("preview.demoTitle").split("\n").map((line) => <span key={line}>{line}<br /></span>)}</h1>
+                <h2>{t("preview.demoSubtitle")}</h2>
+                <p className="demo-meta">{t("preview.demoMeta")}</p>
+              </div>
+              <div className="network-art" aria-hidden="true" />
+            </div>
+          )}
+          <div className="speaker-notes">
+            <span>{t("preview.notesPlaceholder")}</span>
+            <em>0 / 1000</em>
+          </div>
+        </div>
+      </div>
+    </main>
+  );
+}
+
+function BookOpenCheckIcon() {
+  return <Layers size={20} />;
+}
+
+function AgentMonitor({
+  job,
+  logs,
+  criticEvents,
+  jobId,
+  connectionStatus,
+  enrichmentStats,
+  activePanel,
+  onOpenPanel,
+}: {
+  job?: JobStatus;
+  logs: string[];
+  criticEvents: unknown[];
+  jobId?: string;
+  connectionStatus: string;
+  enrichmentStats?: ResearchEnrichmentStats;
+  activePanel: SecondaryPanel | null;
+  onOpenPanel: (panel: SecondaryPanel) => void;
+}) {
+  const { t } = useLocale();
+  const progress = Math.round((job?.progress ?? 0) * 100);
+  const status = job?.status ?? "idle";
+  const latestText = logs.length > 0
+    ? logs[logs.length - 1].replace(/^\[[^\]]+\]\s*/, "")
+    : job?.message ?? t("monitor.waiting");
+  const isConnected = connectionStatus === "connected";
+  const totalSlides = job?.total_slides || job?.slides_completed || 0;
+  const connectionLabel =
+    connectionStatus === "connected"
+      ? t("status.connected")
+      : connectionStatus === "connecting"
+        ? t("status.connecting")
+        : t("status.disconnected");
+  const nextStep =
+    status === "idle"
+      ? t("monitor.nextUpload")
+      : jobId
+        ? t("monitor.trackingJob").replace("{job}", jobId.slice(0, 8))
+        : t("monitor.continuing").replace("{status}", status);
+
+  return (
+    <section className="agent-monitor-panel">
+      <div className="agent-monitor-header">
+        <div className="workspace-panel-title">
+          <Bot size={18} />
+          <span>{t("monitor.title")}</span>
+        </div>
+        <div className="monitor-tabs">
+          <button
+            type="button"
+            className={activePanel === "log" ? "monitor-tab-active" : ""}
+            onClick={() => onOpenPanel("log")}
+          >
+            <MessageSquareText size={14} />
+            {t("monitor.logs")}
+          </button>
+          <button
+            type="button"
+            className={activePanel === "critic" ? "monitor-tab-active" : ""}
+            onClick={() => onOpenPanel("critic")}
+          >
+            <Sparkles size={14} />
+            {t("monitor.review")}
+          </button>
+        </div>
+      </div>
+      <div className="agent-monitor-body">
+        <div className="agent-avatar"><Bot size={26} /></div>
+        <div className="agent-summary">
+          <strong>{status === "idle" ? t("monitor.ready") : latestText}</strong>
+          <span>
+            {enrichmentStats?.total_findings
+              ? t("monitor.findings").replace("{count}", String(enrichmentStats.total_findings))
+              : t("monitor.counts")
+                  .replace("{logs}", String(logs.length))
+                  .replace("{reviews}", String(criticEvents.length))}
+          </span>
+          <em>{connectionLabel}</em>
+        </div>
+        <div className="monitor-progress-block">
+          <span><strong>{progress}%</strong> {t("monitor.slideGeneration")}</span>
+          <Progress value={progress} className="monitor-progress" />
+          <em>{job?.slides_completed ?? 0} / {totalSlides || "?"} {t("preview.slides")}</em>
+        </div>
+        <div className="monitor-event">
+          <strong>{t("monitor.lastEvent")}</strong>
+          <span title={latestText}><i className={isConnected ? "event-dot-on" : ""} />{latestText}</span>
+        </div>
+        <div className="monitor-event">
+          <strong>{t("monitor.nextStep")}</strong>
+          <span title={nextStep}>{nextStep}</span>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function CriticPanel({ criticEvents, jobId }: { criticEvents: unknown[]; jobId?: string }) {
+  return <AgentLog mode="critic" hideHeader logs={[]} criticEvents={criticEvents as CriticEvent[]} jobId={jobId} />;
 }
 
 function parseOptionalPositiveInt(value: string): number | undefined {
