@@ -5,17 +5,44 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import AsyncIterator
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException
 
 from backend.api.router import api_router
 from backend.api.websocket import router as websocket_router
-from backend.config import settings
+from backend.config import RESOURCE_ROOT, settings
 from backend.runtime.offload import init_offload, shutdown_offload
 
 logger = logging.getLogger(__name__)
+
+
+class SpaStaticFiles(StaticFiles):
+    """Serve the built SPA and fall back to index.html for client routes."""
+
+    def __init__(self, *, directory: str | Path, index_path: str | Path, **kwargs) -> None:
+        super().__init__(directory=directory, **kwargs)
+        self.index_path = Path(index_path)
+
+    async def get_response(self, path: str, scope):  # type: ignore[override]
+        try:
+            response = await super().get_response(path, scope)
+        except HTTPException as exc:
+            if exc.status_code == 404 and "." not in Path(path).name:
+                return FileResponse(self.index_path)
+            raise
+        if response.status_code == 404 and "." not in Path(path).name:
+            return FileResponse(self.index_path)
+        return response
+
+
+def _frontend_dist_dir() -> Path:
+    return RESOURCE_ROOT / "frontend" / "dist"
 
 
 @asynccontextmanager
@@ -95,15 +122,31 @@ def create_app() -> FastAPI:
             "tasks": tasks,
         }
 
+    app.include_router(api_router)
+    app.include_router(websocket_router)
+
+    frontend_dist = _frontend_dist_dir()
+    if frontend_dist.exists():
+        app.mount(
+            "/",
+            SpaStaticFiles(
+                directory=frontend_dist,
+                index_path=frontend_dist / "index.html",
+                html=True,
+            ),
+            name="frontend",
+        )
+
     @app.get("/")
     async def root() -> dict[str, str]:
         return {
             "name": "Paper PPT Agent",
-            "frontend": "Open the Vite frontend to upload a paper PDF or TeX source package and generate a PPT draft.",
+            "frontend": (
+                "Frontend build not found. Start the Vite dev server in development, "
+                "or build the frontend before packaging."
+            ),
         }
 
-    app.include_router(api_router)
-    app.include_router(websocket_router)
     return app
 
 

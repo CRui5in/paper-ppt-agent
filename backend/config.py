@@ -1,11 +1,61 @@
 """Global configuration using Pydantic Settings."""
 
+from __future__ import annotations
+
+import os
+import sys
 from pathlib import Path
 from typing import Literal
 
+from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+def _resolve_resource_root() -> Path:
+    override = os.getenv("PAPER_PPT_AGENT_PROJECT_ROOT")
+    if override:
+        return Path(override).resolve()
+    if getattr(sys, "frozen", False):
+        bundle_dir = getattr(sys, "_MEIPASS", None)
+        if bundle_dir:
+            return Path(bundle_dir).resolve()
+    return Path(__file__).resolve().parent.parent
+
+
+def _resolve_data_root(resource_root: Path) -> Path:
+    override = os.getenv("PAPER_PPT_AGENT_DATA_DIR")
+    if override:
+        return Path(override).resolve()
+    if getattr(sys, "frozen", False):
+        local_app_data = os.getenv("LOCALAPPDATA")
+        if local_app_data:
+            return Path(local_app_data).resolve() / "PaperPPTAgent"
+        return Path.home() / "AppData" / "Local" / "PaperPPTAgent"
+    return resource_root
+
+
+RESOURCE_ROOT = _resolve_resource_root()
+DATA_ROOT = _resolve_data_root(RESOURCE_ROOT)
+
+
+def _load_env_files() -> None:
+    candidates: list[Path] = []
+    if getattr(sys, "frozen", False):
+        candidates.append(Path(sys.executable).resolve().parent / ".env")
+    candidates.extend([
+        Path.cwd() / ".env",
+        RESOURCE_ROOT / ".env",
+    ])
+    seen: set[Path] = set()
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if resolved in seen or not resolved.exists():
+            continue
+        load_dotenv(resolved, override=False)
+        seen.add(resolved)
+
+
+_load_env_files()
 
 # Canvas format definitions (adapted from ppt-master)
 CANVAS_FORMATS = {
@@ -81,12 +131,12 @@ class Settings(BaseSettings):
     image_backend: str | None = None
 
     # Paths
-    assets_dir: Path = PROJECT_ROOT / "assets"
-    workspaces_dir: Path = PROJECT_ROOT / "workspaces"
-    runtime_dir: Path = PROJECT_ROOT / ".runtime"
-    templates_dir: Path = PROJECT_ROOT / "assets" / "templates"
-    icons_dir: Path = PROJECT_ROOT / "assets" / "icons"
-    references_dir: Path = PROJECT_ROOT / "assets" / "references"
+    assets_dir: Path = RESOURCE_ROOT / "assets"
+    workspaces_dir: Path = DATA_ROOT / "workspaces"
+    runtime_dir: Path = DATA_ROOT / ".runtime"
+    templates_dir: Path = RESOURCE_ROOT / "assets" / "templates"
+    icons_dir: Path = RESOURCE_ROOT / "assets" / "icons"
+    references_dir: Path = RESOURCE_ROOT / "assets" / "references"
 
     # Limits
     # Historical compatibility knob. Job scheduling is now immediate and
