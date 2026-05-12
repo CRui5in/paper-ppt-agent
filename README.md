@@ -43,7 +43,6 @@
 | **多智能体流水线** | Strategist → Executor → Critic 三阶段协作，内容提炼与版式生成一体化 |
 | **静态 + 视觉 QA** | 自动检测文字溢出、元素重叠、低对比度等问题并触发修复 |
 | **图标语义匹配** | 基于 Gemini Embedding 的 RAG 语义搜索，自动匹配最合适的图标 |
-| **在线搜图** | 根据幻灯片内容搜索在线配图，支持 AI 智能布局插入与一键撤消 |
 | **反馈迭代** | 指定单页或全量重生成，支持结构调整（增删插排），自动版本快照 |
 | **实时可观测** | Agent 日志流、Token 用量聚合、Critic 逐页详情面板 |
 | **多语言** | 支持中英双语及自定义语言输出 |
@@ -127,8 +126,8 @@ cd frontend && npm run dev -- --host 127.0.0.1 --port 5173 --strictPort
 ## 🗺️ 开发计划
 
 - [ ] 🎨 UI 重构
-- [x] 🖼️ 在线搜图 — 利用 Tavily / SerpAPI Key 在线搜索配图，AI 智能布局插入
 - [ ] 📐 模板管理进一步实现和优化
+- [ ] 🧠 本地大模型支持
 
 ---
 
@@ -136,6 +135,15 @@ cd frontend && npm run dev -- --host 127.0.0.1 --port 5173 --strictPort
 
 - [PPTAgent](https://github.com/icip-cas/PPTAgent) — 流程设计与 Agent 架构参考
 - [ppt-master](https://github.com/hugohe3/ppt-master) — 部分工程实现参考
+
+## 📄 许可证
+
+[MIT License](./LICENSE)
+
+## 📬 联系方式
+
+- 💬 GitHub Issues: [CRui5in/paper-ppt-agent/issues](https://github.com/CRui5in/paper-ppt-agent/issues)
+- 📧 Email: qinruoxuan2018@gmail.com
 
 ## ⭐ Star History
 
@@ -146,12 +154,3 @@ cd frontend && npm run dev -- --host 127.0.0.1 --port 5173 --strictPort
     <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=CRui5in/paper-ppt-agent&type=date&legend=top-left" />
   </picture>
 </a>
-
-## 📄 许可证
-
-[MIT License](./LICENSE)
-
-## 📬 联系方式
-
-- 💬 GitHub Issues: [CRui5in/paper-ppt-agent/issues](https://github.com/CRui5in/paper-ppt-agent/issues)
-- 📧 Email: qinruoxuan2018@gmail.com
