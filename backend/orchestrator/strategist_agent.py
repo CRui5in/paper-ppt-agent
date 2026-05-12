@@ -319,6 +319,52 @@ def _design_spec_validation_error(
     return None
 
 
+def _align_content_outline_page_types(
+    content: str,
+    expected_inventory: list[dict[str, str | int]] | None,
+) -> str:
+    """Repair outline page-type labels when the page contract is otherwise intact."""
+    if not expected_inventory:
+        return content
+
+    outline = _extract_design_spec_section(content, "IX")
+    if not outline:
+        return content
+
+    page_type_words = r"(cover|chapter|transition|toc|content|ending)"
+    repaired = outline
+    for item in expected_inventory:
+        page_num = item["page"]
+        expected_type = str(item["type"])
+        line_pattern = rf"(?im)^(\s*[-*]?\s*(?:page|slide)\s*0*{page_num}\s*[:：\-–—]\s*)(?:\*\*)?{page_type_words}(?:\*\*)?"
+        repaired = re.sub(line_pattern, rf"\g<1>{expected_type}", repaired, count=1)
+
+        block_pattern = rf"(?is)(\b(?:page|slide)\s*0*{page_num}\b.+?)(?=\b(?:page|slide)\s*0*\d+\b|\Z)"
+        block_match = re.search(block_pattern, repaired)
+        if not block_match:
+            continue
+        block = block_match.group(1)
+        if expected_type in block.lower():
+            continue
+
+        typed_block = re.sub(
+            rf"(?im)^(\s*(?:[-*]\s*)?(?:page\s*)?type\s*[:：]\s*){page_type_words}\b",
+            rf"\g<1>{expected_type}",
+            block,
+            count=1,
+        )
+        if typed_block != block:
+            start, end = block_match.span(1)
+            repaired = repaired[:start] + typed_block + repaired[end:]
+
+    if repaired == outline:
+        return content
+    start = content.find(outline)
+    if start < 0:
+        return content
+    return content[:start] + repaired + content[start + len(outline):]
+
+
 def _language_constraint(language: str) -> str:
     normalized = language.strip().lower()
     if normalized == "zh":
@@ -570,6 +616,8 @@ async def create_design_spec(
             max_tokens=DESIGN_SPEC_MAX_TOKENS,
         )
         content = response.content.strip()
+        if enforce_page_types:
+            content = _align_content_outline_page_types(content, inventory)
         error = _design_spec_validation_error(
             content,
             expected_page_count=page_count,

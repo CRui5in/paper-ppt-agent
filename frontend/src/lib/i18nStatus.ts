@@ -2,10 +2,14 @@ import type { Locale } from "../i18n";
 
 type StageContext = "progress" | "history" | "logs";
 
-const PROGRESS_STAGE_ALIASES: Record<string, string> = {};
+const PROGRESS_STAGE_ALIASES: Record<string, string> = {
+  visual_qa: "generation",
+  repair: "generation",
+};
 
 const STAGE_LABELS: Record<string, { zh: string; en: string }> = {
   pending: { zh: "等待中", en: "Pending" },
+  queued: { zh: "排队中", en: "Queued" },
   started: { zh: "已开始", en: "Started" },
   idle: { zh: "空闲", en: "Idle" },
   parsing: { zh: "解析论文", en: "Parsing" },
@@ -13,7 +17,7 @@ const STAGE_LABELS: Record<string, { zh: string; en: string }> = {
   strategy: { zh: "策略规划", en: "Strategy" },
   image_search: { zh: "搜索配图", en: "Image Search" },
   generation: { zh: "生成页面", en: "Generation" },
-  visual_qa: { zh: "视觉 QA", en: "Visual QA" },
+  visual_qa: { zh: "视觉QA", en: "Visual QA" },
   repair: { zh: "修复", en: "Repair" },
   postprocess: { zh: "后处理", en: "Post-process" },
   export: { zh: "导出文件", en: "Export" },
@@ -29,12 +33,13 @@ const STAGE_LABELS: Record<string, { zh: string; en: string }> = {
 
 const HISTORY_LABELS: Record<string, { zh: string; en: string }> = {
   pending: { zh: "处理中", en: "Pending" },
+  queued: { zh: "排队中", en: "Queued" },
   started: { zh: "处理中", en: "Started" },
   parsing: { zh: "解析中", en: "Parsing" },
   research: { zh: "研究中", en: "Research" },
   strategy: { zh: "规划中", en: "Strategy" },
   generation: { zh: "生成中", en: "Generation" },
-  visual_qa: { zh: "视觉 QA 中", en: "Visual QA" },
+  visual_qa: { zh: "视觉QA中", en: "Visual QA" },
   repair: { zh: "修复中", en: "Repair" },
   postprocess: { zh: "后处理中", en: "Post-process" },
   export: { zh: "导出中", en: "Export" },

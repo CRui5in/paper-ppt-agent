@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
-import { cancelJob, deleteJob, fetchJobStatus, fetchPreview, fetchProjectPreview, fetchProviders, generatePresentation, isNotFoundError, refinePresentation, uploadPaper } from "../lib/api";
+import { cancelJob, deleteJob, deleteSession, fetchBackendHealth, fetchJobStatus, fetchPreview, fetchProjectPreview, fetchProviders, generatePresentation, isNotFoundError, refinePresentation, uploadPaper } from "../lib/api";
 import type {
   CriticEvent,
   GenerateRequestPayload,
@@ -27,6 +27,7 @@ const GENERATION_STORAGE_KEY = "paper-ppt-agent-generation-v2";
 const PERSISTED_LOG_LIMIT = 200;
 const LIVE_JOB_STORAGE_PREFIX = "paper-ppt-live-job:";
 const HISTORY_STATUS_SYNC_TIMEOUT_MS = 4000;
+const BACKEND_HEALTH_TIMEOUT_MS = 2500;
 
 /** Per-job seq deduper. Replays after reconnect can re-deliver events
  *  the client already processed; we drop anything with seq <= the last
@@ -101,6 +102,7 @@ interface GenerationState {
   enrichmentStats?: ResearchEnrichmentStats;
   selectedSlide?: PreviewSlide;
   connectionStatus: ConnectionStatus;
+  backendStatus: ConnectionStatus;
   error?: string;
   result?: PreviewResponse;
   history: GenerationHistoryItem[];
@@ -108,8 +110,10 @@ interface GenerationState {
   activeJobId?: string;
   currentRunConfig?: RunConfigSnapshot;
   socketsByJob: Record<string, import("../lib/ws").ReconnectingSocket>;
+  checkBackendStatus: () => Promise<void>;
   loadProviders: () => Promise<void>;
   uploadFile: (file: File) => Promise<void>;
+  clearUploadSession: () => Promise<void>;
   startGeneration: (payload: GenerateRequestPayload) => Promise<string>;
   startRefine: (payload: RefineRequestPayload) => Promise<string>;
   cancelCurrentRun: () => Promise<void>;
@@ -440,6 +444,16 @@ async function fetchJobStatusWithTimeout(jobId: string, timeoutMs = HISTORY_STAT
   }
 }
 
+async function fetchBackendHealthWithTimeout(timeoutMs = BACKEND_HEALTH_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetchBackendHealth({ signal: controller.signal });
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
 export const useGeneration = create<GenerationState>()(
   persist(
     (set, get) => ({
@@ -448,12 +462,29 @@ export const useGeneration = create<GenerationState>()(
       logs: [],
       criticEvents: [],
       connectionStatus: "disconnected",
+      backendStatus: "connecting",
       history: [],
       runs: {},
       socketsByJob: {},
+      async checkBackendStatus() {
+        set((state) => ({
+          backendStatus: state.backendStatus === "connected" ? "connected" : "connecting",
+        }));
+        try {
+          const response = await fetchBackendHealthWithTimeout();
+          set({ backendStatus: response.status === "ok" ? "connected" : "disconnected" });
+        } catch {
+          set({ backendStatus: "disconnected" });
+        }
+      },
       async loadProviders() {
-        const response = await fetchProviders();
-        set({ providers: response.providers });
+        try {
+          const response = await fetchProviders();
+          set({ providers: response.providers, backendStatus: "connected" });
+        } catch (error) {
+          set({ backendStatus: "disconnected" });
+          throw error;
+        }
       },
       dismissError() {
         // Clear the global error so the floating banner closes. Per-page
@@ -464,6 +495,13 @@ export const useGeneration = create<GenerationState>()(
       async uploadFile(file) {
         const uploadSession = await uploadPaper(file);
         set({ uploadSession, error: undefined });
+      },
+      async clearUploadSession() {
+        const sessionId = get().uploadSession?.session_id;
+        if (sessionId) {
+          await deleteSession(sessionId).catch(() => undefined);
+        }
+        set({ uploadSession: undefined, error: undefined });
       },
       async startGeneration(payload) {
         const response = await generatePresentation(payload);
@@ -1137,6 +1175,7 @@ export const useGeneration = create<GenerationState>()(
           history: Array.isArray(state.history) ? state.history : [],
           runs,
           connectionStatus: "disconnected" as const,
+          backendStatus: "connecting" as const,
           socketsByJob: {},
         };
       },
@@ -1145,6 +1184,7 @@ export const useGeneration = create<GenerationState>()(
         jobId: state.jobId,
         job: state.job,
         connectionStatus: "disconnected",
+        backendStatus: "connecting",
         error: state.error,
         history: state.history,
         runs: serializeRunsForStorage(state.runs),

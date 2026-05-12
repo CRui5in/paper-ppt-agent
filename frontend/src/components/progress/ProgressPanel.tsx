@@ -5,7 +5,7 @@ import { useLocale } from "../../i18n";
 import { normalizeProgressStage, translateJobMessage, translateStageStatus } from "../../lib/i18nStatus";
 import { HoverTooltip } from "../common/HoverTooltip";
 
-const STAGES: Array<{ id: string; icon: ComponentType<{ size?: number; color?: string }> }> = [
+export const PROGRESS_STAGES: Array<{ id: string; icon: ComponentType<{ size?: number; color?: string }> }> = [
   { id: "parsing", icon: FileSearch },
   { id: "research", icon: Search },
   { id: "strategy", icon: Target },
@@ -18,18 +18,22 @@ interface ProgressPanelProps {
   job?: JobStatus;
   connectionStatus: string;
   enrichmentStats?: ResearchEnrichmentStats;
+  hideHeader?: boolean;
+  compact?: boolean;
+  logs?: string[];
 }
 
-const STAGE_INDEX = new Map(STAGES.map((stage, index) => [stage.id, index]));
+const STAGE_INDEX = new Map(PROGRESS_STAGES.map((stage, index) => [stage.id, index]));
 
-export function ProgressPanel({ job, connectionStatus, enrichmentStats }: ProgressPanelProps) {
+export function ProgressPanel({ job, connectionStatus, enrichmentStats, hideHeader = false, compact = false, logs = [] }: ProgressPanelProps) {
   const { t, locale } = useLocale();
   const isConnected = connectionStatus === "connected";
   const isConnecting = connectionStatus === "connecting";
-  const activeStatus = normalizeProgressStage(job?.status);
+  const activeStatus = inferActiveStage(job, logs);
   const activeStageIndex =
     activeStatus && STAGE_INDEX.has(activeStatus) ? STAGE_INDEX.get(activeStatus)! : -1;
   const allComplete = job?.status === "complete";
+  const isStopped = job?.status === "error" || job?.status === "cancelled";
   const statusLabel = translateStageStatus(job?.status ?? "idle", locale, "progress");
   const activeMessage = translateJobMessage(job?.message, locale);
   const showEnrichment = !!enrichmentStats && (
@@ -38,10 +42,50 @@ export function ProgressPanel({ job, connectionStatus, enrichmentStats }: Progre
     !!enrichmentStats.web ||
     typeof enrichmentStats.total_findings === "number"
   );
+  const activeStage = activeStageIndex >= 0 ? PROGRESS_STAGES[activeStageIndex] : undefined;
+  const ActiveIcon = activeStage?.icon ?? Circle;
+  const activeStageLabel = activeStage ? translateStageStatus(activeStage.id, locale, "progress") : statusLabel;
+
+  if (compact) {
+    const detail = isStopped
+      ? (activeMessage || activeStageLabel)
+      : activeMessage ?? t("progress.currentAt").replace("{stage}", activeStageLabel);
+    return (
+      <section className={`panel monitor-panel monitor-panel-compact ${isStopped ? "monitor-panel-stopped" : ""} ${job?.status === "error" ? "monitor-panel-error" : ""}`}>
+        <div className={`compact-stage-current ${activeStage && !isStopped && !allComplete ? "compact-stage-current-active" : ""}`}>
+          <span className="compact-stage-current-icon">
+            <ActiveIcon size={16} />
+          </span>
+          <div>
+            <strong>{activeStageLabel}</strong>
+            <HoverTooltip content={detail} className="compact-stage-detail-wrap">
+              <span>{detail}</span>
+            </HoverTooltip>
+          </div>
+        </div>
+        <ol className="compact-stage-list">
+          {PROGRESS_STAGES.map((stage, index) => {
+            const Icon = stage.icon;
+            const isComplete = allComplete || (activeStageIndex >= 0 && index < activeStageIndex);
+            const isActive = activeStageIndex === index;
+            return (
+              <li
+                key={stage.id}
+                className={`compact-stage-item ${isComplete ? "compact-stage-complete" : ""} ${isActive ? "compact-stage-active" : ""} ${isActive && isStopped ? "compact-stage-stopped" : ""}`}
+              >
+                <span><Icon size={13} /></span>
+                <em>{translateStageStatus(stage.id, locale, "progress")}</em>
+              </li>
+            );
+          })}
+        </ol>
+      </section>
+    );
+  }
 
   return (
     <section className="panel monitor-panel">
-      <div className="panel-header-row" style={{ justifyContent: "space-between" }}>
+      {!hideHeader ? <div className="panel-header-row" style={{ justifyContent: "space-between" }}>
         <div>
           <p className="panel-title">{t("progress.title")}</p>
         </div>
@@ -56,12 +100,12 @@ export function ProgressPanel({ job, connectionStatus, enrichmentStats }: Progre
             }`}
           />
           {isConnected
-            ? locale === "zh" ? "已连接" : "Connected"
+            ? t("status.connected")
             : isConnecting
-            ? locale === "zh" ? "连接中" : "Connecting"
-            : locale === "zh" ? "未连接" : "Offline"}
+            ? t("status.connecting")
+            : t("status.disconnected")}
         </div>
-      </div>
+      </div> : null}
 
       <div className="monitor-metrics">
         <div>
@@ -85,7 +129,7 @@ export function ProgressPanel({ job, connectionStatus, enrichmentStats }: Progre
       </div>
 
       <ul className="stage-list">
-        {STAGES.map((stage, index) => {
+        {PROGRESS_STAGES.map((stage, index) => {
           const isComplete =
             allComplete ||
             (activeStageIndex >= 0 && index < activeStageIndex);
@@ -134,6 +178,29 @@ export function ProgressPanel({ job, connectionStatus, enrichmentStats }: Progre
       ) : null}
     </section>
   );
+}
+
+export function inferActiveStage(job?: JobStatus, logs: string[] = []): string {
+  const normalized = normalizeProgressStage(job?.status);
+  if (STAGE_INDEX.has(normalized)) {
+    return normalized;
+  }
+  for (let index = logs.length - 1; index >= 0; index -= 1) {
+    const match = logs[index]?.match(/^\[([^\]]+)\]/);
+    const stage = normalizeProgressStage(match?.[1]);
+    if (STAGE_INDEX.has(stage)) {
+      return stage;
+    }
+  }
+  const message = (job?.message ?? "").toLowerCase();
+  if (message.includes("export")) return "export";
+  if (message.includes("repair")) return "generation";
+  if (message.includes("visual") || message.includes("critic") || message.includes("qa")) return "generation";
+  if (message.includes("svg") || message.includes("slide") || message.includes("generat")) return "generation";
+  if (message.includes("design") || message.includes("strateg") || message.includes("content outline")) return "strategy";
+  if (message.includes("research") || message.includes("analyz") || message.includes("analysis")) return "research";
+  if (message.includes("pars") || message.includes("paper")) return "parsing";
+  return "";
 }
 
 interface EnrichmentSummaryProps {

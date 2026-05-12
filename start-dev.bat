@@ -4,6 +4,7 @@ setlocal
 set "ROOT=%~dp0"
 if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
 set "FRONTEND_DIR=%ROOT%\frontend"
+set "FRONTEND_URL=http://127.0.0.1:5173"
 
 where uv >nul 2>nul
 if errorlevel 1 (
@@ -43,11 +44,11 @@ echo ==> Starting backend
 start "Paper PPT Agent Backend" cmd /k "cd /d ""%ROOT%"" && set PYTHONUNBUFFERED=1 && uv run python -m uvicorn backend.app:app --host 127.0.0.1 --port 8000 --reload --reload-dir backend --reload-include=*.py"
 
 echo ==> Starting frontend
-start "Paper PPT Agent Frontend" cmd /k "cd /d ""%FRONTEND_DIR%"" && npm run dev -- --host 127.0.0.1 --port 5173 --strictPort"
+start "Paper PPT Agent Frontend" cmd /k "cd /d ""%FRONTEND_DIR%"" && npm run dev -- --host 127.0.0.1 --port 5173 --strictPort --open"
 
 echo.
 echo Paper PPT Agent is starting:
 echo   Backend:  http://127.0.0.1:8000
-echo   Frontend: http://127.0.0.1:5173
+echo   Frontend: %FRONTEND_URL%
 
 endlocal

@@ -167,7 +167,11 @@ def get_svg_files(project_dir: Path, source: str = "final") -> list[Path]:
     svg_dir = project_dir / f"svg_{source}"
     if not svg_dir.exists():
         return []
-    return sorted(svg_dir.glob("*.svg"))
+    return sorted(
+        path
+        for path in svg_dir.glob("*.svg")
+        if not path.name.startswith(".__render_") and not path.name.startswith(".__preview_")
+    )
 
 
 def get_notes(project_dir: Path, svg_files: list[Path]) -> dict[str, str]:

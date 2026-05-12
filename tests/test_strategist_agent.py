@@ -174,6 +174,24 @@ def test_design_spec_validation_rejects_page_type_drift() -> None:
     assert "page types do not match" in error
 
 
+@pytest.mark.asyncio
+async def test_create_design_spec_repairs_outline_page_type_drift() -> None:
+    bad = _valid_design_spec().replace(
+        "- Page 1: content — title cover",
+        "- Page 1: cover — invented cover",
+    )
+    llm = _FakeLLM([bad])
+
+    spec = await strategist_agent.create_design_spec(
+        "<!-- page_type: content -->\n# Real content\n\nBody",
+        llm,
+        "fake-model",
+    )
+
+    assert "- Page 1: content" in spec
+    assert len(llm.calls) == 1
+
+
 def test_design_spec_validation_rejects_missing_icon_asset() -> None:
     bad = _valid_design_spec().replace(
         "## IX. Content Outline\n- Page 1: content — title cover",
