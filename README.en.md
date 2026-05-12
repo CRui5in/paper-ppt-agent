@@ -1,118 +1,156 @@
 # Paper PPT Agent
 
-[![MIT License](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
+<p align="center">
+  <b>Upload a paper, AI generates your presentation</b>
+</p>
 
-English | [中文](./README.md)
+<p align="center">
+  <a href="https://github.com/CRui5in/paper-ppt-agent/blob/master/LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="MIT License"></a>
+  <img src="https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white" alt="Python">
+  <img src="https://img.shields.io/badge/FastAPI-0.115+-009688?logo=fastapi&logoColor=white" alt="FastAPI">
+  <img src="https://img.shields.io/badge/React-18+-61DAFB?logo=react&logoColor=black" alt="React">
+  <img src="https://img.shields.io/badge/TypeScript-5+-3178C6?logo=typescript&logoColor=white" alt="TypeScript">
+  <img src="https://img.shields.io/badge/uv-powered-DE5FE9?logo=astral&logoColor=white" alt="uv">
+</p>
+
+<p align="center">
+  <a href="./README.md">中文</a> | English
+</p>
+
+---
 
 A multi-agent pipeline for automatically generating editable PowerPoint presentations from academic papers. Upload a PDF or TeX source, and the AI handles content extraction, structural planning, layout design, and visual quality assurance.
 
 ![screenshot](./screenshot.png)
 
-## Core Capabilities
+## Table of Contents
 
-### Content Generation
+- [✨ Features](#-features)
+- [📸 Demo](#-demo)
+- [⚙️ Requirements](#️-requirements)
+- [🚀 Quick Start](#-quick-start)
+- [📋 Changelog](#-changelog)
+- [🗺️ Roadmap](#️-roadmap)
+- [🙏 Acknowledgements](#-acknowledgements)
+- [📄 License](#-license)
 
-> Supports paper PDF and TeX source input; uploading the full TeX archive is recommended for best results. The multi-agent pipeline (Strategist → Executor → Critic) collaborates on content extraction and layout generation. Supports Chinese, English, bilingual, and custom language output with configurable page count, detail level, and canvas format.
+---
 
-### Visual Quality Assurance
+## ✨ Features
 
-> The static Critic automatically detects text overflow, element overlap, and decorative-line occlusion, then triggers self-repair. Visual QA (experimental) invokes a multimodal LLM to inspect rendered slide images. Repair cycles archive pre/post snapshots for side-by-side comparison with real-time full-screen preview.
+| Feature | Description |
+|:--------|:------------|
+| **Multi-Agent Pipeline** | Strategist → Executor → Critic three-stage collaboration for content extraction and layout generation |
+| **Static + Visual QA** | Automatically detects text overflow, element overlap, low contrast, and triggers repair |
+| **Icon Semantic Matching** | RAG semantic search via Gemini Embedding to automatically match icons to slide content |
+| **Feedback Iteration** | Targeted or full regeneration with structural changes (insert, remove, reorder) and version snapshots |
+| **Real-time Observability** | Agent log stream, Token usage aggregation, per-page Critic detail panel |
+| **Multi-language** | Chinese, English, bilingual, and custom language output |
+| **Multi-model** | OpenAI / Anthropic / Gemini / DeepSeek and custom-compatible APIs |
+| **Template System** | Pre-built industry-style templates with custom font configuration |
+| **Deep Research** | External research enrichment (arXiv / Semantic Scholar / Web) with relevance filtering |
 
-### Icons and Decoration
+## 📸 Demo
 
-> Built-in icon library with automatic semantic matching to slide content. RAG semantic search (via Gemini Embedding) retrieves the most relevant icon candidates. Icon decoration and RAG search can be independently toggled.
+<p align="center">
+  <img src="./demo.png" width="700" alt="Demo">
+</p>
 
-### Feedback Iteration
+## ⚙️ Requirements
 
-> After generation, specify one or more slides for targeted feedback refinement, with optional structural changes (insert, remove, reorder). Each iteration automatically saves version snapshots with comparison and rollback support.
+| Dependency | Version |
+|:-----------|:--------|
+| 🐍 Python | 3.11+ |
+| 📦 [uv](https://docs.astral.sh/uv/) | latest |
+| 🟢 Node.js | 18+ |
 
-### Logging and Observability
+An API key for at least one model provider: OpenAI / Anthropic / Gemini / DeepSeek or a custom BaseURL-compatible API.
 
-> Real-time Agent log stream shows stage-level events and progress. Token usage is aggregated by model, stage, and time period with filtering and detail drill-down. The Critic event panel displays per-page violations, repair prompts, and archived SVG paths. The result page includes a full run configuration viewer.
-
-## Requirements
-
-- Python 3.11+
-- [uv](https://docs.astral.sh/uv/)
-- Node.js 18+ and npm
-- An API key for at least one supported provider:
-  - OpenAI
-  - DeepSeek
-  - Anthropic
-  - Gemini
-  - Custom BaseURL-compatible APIs (model quality has a significant impact on results; recommended: `GPT-5.5` and `Gemini 3.1 Pro`)
-- (Optional) Gemini API Key: required for icon RAG semantic search
-
-## Quick Start
-
-**Windows:**
-
-```powershell
-.\start-dev.bat
-```
-
-**Linux:**
+## 🚀 Quick Start
 
 ```bash
+# Clone the repository
+git clone https://github.com/CRui5in/paper-ppt-agent.git
+cd paper-ppt-agent
+
+# One-click start (auto-installs deps + launches frontend & backend)
+# Windows
+.\start-dev.bat
+# Linux
 sh start-dev.sh
 ```
 
-The startup script installs dependencies and launches both frontend and backend automatically.
+After starting: Frontend [http://127.0.0.1:5173](http://127.0.0.1:5173) · Backend [http://127.0.0.1:8000](http://127.0.0.1:8000)
 
-**Manual start (run backend and frontend separately):**
+<details>
+<summary>📎 Manual start</summary>
 
-```powershell
+```bash
+# Install dependencies
+uv sync --locked
+cd frontend && npm install && cd ..
+
 # Backend
-uv run python -m uvicorn backend.app:app --host 127.0.0.1 --port 8000 --reload --reload-dir backend --reload-include=*.py
+uv run python -m uvicorn backend.app:app --host 127.0.0.1 --port 8000 --reload --reload-dir backend
 
 # Frontend
 cd frontend && npm run dev -- --host 127.0.0.1 --port 5173 --strictPort
 ```
 
-For manual start, install dependencies first:
+</details>
 
-```powershell
-uv sync --locked
-cd frontend && npm install && cd ..
-```
+---
 
-After starting:
+## 📋 Changelog
 
-- Frontend: [http://127.0.0.1:5173](http://127.0.0.1:5173)
-- Backend: [http://127.0.0.1:8000](http://127.0.0.1:8000)
+### May 2026
 
-## Notable Changes
+- 🧠 **DeepSeek Provider** — Dedicated DeepSeek provider support with thinking mode configuration
+- 👁️ **Visual QA (Experimental)** — Multimodal LLM renders slides as images for layout and contrast review
+- 🖥️ **Real-time SVG Preview + Log Panel + Critic Detail View** — Live slide preview, Agent logs, and review details during generation
+- 🎯 **Icon RAG Semantic Search** — Gemini Embedding-based semantic search for icon candidates, independently toggleable
+- 🎨 **Template System & Custom Fonts** — Pre-built industry-style templates with custom heading/body font configuration
+- 🔬 **Deep Research Workflow** — External research enrichment (arXiv / Semantic Scholar / Web) with relevance filtering
+- 🖼️ **Online Image Search** — Search for images online using Tavily / SerpAPI, with AI layout analysis, one-click undo, and download
 
-- **Critic History Persistence**: Saves violations, repair prompts, and archive paths to `critic_history.json`; frontend detail panel for per-page drill-down
-- **Pre-repair SVG Comparison**: Archives SVG snapshots before repair with side-by-side comparison and real-time full-screen preview
-- **Icon RAG Semantic Search**: Uses Gemini Embedding to retrieve matching icon candidates from the library; independently toggleable
-- **Icon Decoration Master Switch**: Generate slides with plain SVG shapes only, without icon insertion
-- **Visual QA (Experimental)**: Multimodal LLM renders each slide as an image to inspect layout and contrast
-- **Static Critic Enhancements**: Accent-line occlusion detection, low-contrast text detection, multi-line text width estimation fix
-- **Version History**: Automatic snapshot archival per feedback iteration with comparison and rollback
-- **Token Log Filtering**: Filter LLM calls by model, stage, page, and job with click-to-expand detail view
-- **Generation Cancellation**: Cancel a running pipeline mid-execution
-- **DeepSeek Provider**: Dedicated provider support with thinking mode configuration
-- **Multi-Agent Pipeline**: Strategist → Executor → Critic with automatic SVG repair and feedback iteration
+### April 2026
 
-## Acknowledgements and References
+- 🔒 **Static Critic Enhancements** — Decorative-line occlusion detection, low-contrast text detection, multi-line text width estimation fix
+- 📁 **Version History Management** — Automatic snapshot archival per feedback iteration with comparison and rollback
+- 🔎 **Token Log Filtering** — Filter LLM calls by model, stage, page, and job with click-to-expand detail view
+- ⏹️ **Generation Cancellation** — Cancel a running pipeline mid-execution
+- 🤖 **Multi-Agent Pipeline** — Strategist → Executor → Critic three-stage collaboration with automatic SVG repair and feedback iteration
 
-This project references the following open-source projects for product ideas, pipeline structuring, and parts of the engineering approach:
+---
 
-- [PPTAgent](https://github.com/icip-cas/PPTAgent)
-- [ppt-master](https://github.com/hugohe3/ppt-master)
+## 🗺️ Roadmap
 
-## License
+- [ ] 🎨 UI Refactor
+- [ ] 📐 Template management further implementation and optimization
+- [ ] 🧠 Local model support
 
-This project is licensed under the [MIT License](./LICENSE).
+---
 
-## Contact
+## 🙏 Acknowledgements
 
-For questions or suggestions, please reach out via:
+- [PPTAgent](https://github.com/icip-cas/PPTAgent) — Pipeline design and Agent architecture reference
+- [ppt-master](https://github.com/hugohe3/ppt-master) — Parts of the engineering approach reference
 
-- GitHub Issues: [CRui5in/paper-ppt-agent](https://github.com/CRui5in/paper-ppt-agent/issues)
-- Email: qinruoxuan2018@gmail.com
+## ⭐ Star History
 
-## Disclaimer
+<a href="https://www.star-history.com/?repos=CRui5in%2Fpaper-ppt-agent&type=date&legend=top-left">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=CRui5in/paper-ppt-agent&type=date&theme=dark&legend=top-left" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=CRui5in/paper-ppt-agent&type=date&legend=top-left" />
+    <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=CRui5in/paper-ppt-agent&type=date&legend=top-left" />
+  </picture>
+</a>
 
-This project is an academic research assistance tool. The generated presentation content is produced by AI models and is for reference only. Users are solely responsible for the accuracy and compliance of the generated content. By using this tool, you agree to assume all risks arising from the use of the generated content.
+## 📄 License
+
+[MIT License](./LICENSE)
+
+## 📬 Contact
+
+- 💬 GitHub Issues: [CRui5in/paper-ppt-agent/issues](https://github.com/CRui5in/paper-ppt-agent/issues)
+- 📧 Email: qinruoxuan2018@gmail.com

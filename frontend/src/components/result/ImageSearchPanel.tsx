@@ -245,7 +245,8 @@ export function ImageSearchPanel({
     <div className="image-search-panel">
       <div className="image-search-header">
         <ImagePlus size={16} />
-        <span className="image-search-title">{t("imageSearch.title")}</span>
+        <span className="image-search-title">{t("imageSearch.title")}（{t("imageSearch.titleHint")}）</span>
+        <span className="visual-qa-experimental">{t("common.experimental")}</span>
       </div>
 
       {/* ── Toolbar row ── */}
