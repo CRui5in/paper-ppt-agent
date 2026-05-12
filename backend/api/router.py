@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter
 
-from .endpoints import download, font_update, generate, preview, providers, refine, session, status, template_import, templates, upload, usage, versions
+from .endpoints import download, font_update, generate, image_search, preview, providers, refine, session, status, template_import, templates, upload, usage, versions
 
 api_router = APIRouter(prefix="/api")
 api_router.include_router(upload.router, tags=["upload"])
@@ -18,3 +18,4 @@ api_router.include_router(templates.router, tags=["templates"])
 api_router.include_router(template_import.router, tags=["template-import"])
 api_router.include_router(usage.router, tags=["usage"])
 api_router.include_router(versions.router, tags=["versions"])
+api_router.include_router(image_search.router, tags=["image-search"])

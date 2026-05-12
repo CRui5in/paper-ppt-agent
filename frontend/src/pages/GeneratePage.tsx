@@ -46,8 +46,6 @@ interface PresentationSettingsDraft {
   numPages?: string;
   detailLevel?: string;
   timeoutSeconds?: string;
-  maxCriticAttempts?: string;
-  visualQaMaxAttempts?: string;
   instruction?: string;
   density?: string;
   customFont?: string;
@@ -125,7 +123,6 @@ export function GeneratePage() {
     error,
     currentRunConfig,
     history,
-    runs,
     loadProviders,
     uploadFile,
     startGeneration,
@@ -161,8 +158,6 @@ export function GeneratePage() {
   const [numPages, setNumPages] = useState(initialSettings.numPages ?? "");
   const [detailLevel, setDetailLevel] = useState(initialSettings.detailLevel ?? "normal");
   const [timeoutSeconds, setTimeoutSeconds] = useState(initialSettings.timeoutSeconds ?? "");
-  const [maxCriticAttempts, setMaxCriticAttempts] = useState(initialSettings.maxCriticAttempts ?? "3");
-  const [visualQaMaxAttempts, setVisualQaMaxAttempts] = useState(initialSettings.visualQaMaxAttempts ?? "1");
   const [instruction, setInstruction] = useState(initialSettings.instruction ?? "");
   const GEMINI_KEY_STORAGE = "paper-ppt-agent-gemini-api-key";
   const RESEARCH_KEYS_STORAGE = "paper-ppt-agent-research-keys";
@@ -178,7 +173,6 @@ export function GeneratePage() {
         const parsed = JSON.parse(saved) as Record<string, string>;
         return {
           ...base,
-          web_search_provider: base.web_search_provider || (parsed.web_search_provider as "tavily" | "serpapi" | undefined) || undefined,
           semantic_scholar_api_key: base.semantic_scholar_api_key || parsed.semantic_scholar_api_key || undefined,
           tavily_api_key: base.tavily_api_key || parsed.tavily_api_key || undefined,
           serpapi_key: base.serpapi_key || parsed.serpapi_key || undefined,
@@ -201,31 +195,24 @@ export function GeneratePage() {
     ? history.find((entry) => entry.jobId === targetJobId)
     : undefined;
   const selectedRunConfig = useMemo(() => {
-    if (targetJobId) {
-      const targetRunConfig = runs[targetJobId]?.currentRunConfig;
-      if (targetRunConfig) {
-        return targetRunConfig;
-      }
-      if (
-        targetHistoryEntry?.provider &&
-        targetHistoryEntry.model &&
-        targetHistoryEntry.options
-      ) {
-        return {
-          provider: targetHistoryEntry.provider,
-          model: targetHistoryEntry.model,
-          baseUrl: targetHistoryEntry.baseUrl ?? undefined,
-          options: targetHistoryEntry.options,
-          parentJobId: targetHistoryEntry.parentJobId ?? null,
-        };
-      }
-      return undefined;
-    }
     if (currentRunConfig) {
       return currentRunConfig;
     }
+    if (
+      targetHistoryEntry?.provider &&
+      targetHistoryEntry.model &&
+      targetHistoryEntry.options
+    ) {
+      return {
+        provider: targetHistoryEntry.provider,
+        model: targetHistoryEntry.model,
+        baseUrl: targetHistoryEntry.baseUrl ?? undefined,
+        options: targetHistoryEntry.options,
+        parentJobId: targetHistoryEntry.parentJobId ?? null,
+      };
+    }
     return undefined;
-  }, [currentRunConfig, runs, targetHistoryEntry, targetJobId]);
+  }, [currentRunConfig, targetHistoryEntry]);
   const canCancelCurrentRun = Boolean(
     jobId &&
       job &&
@@ -333,22 +320,11 @@ export function GeneratePage() {
     setNumPages(options.num_pages ? String(options.num_pages) : "");
     setDetailLevel(options.detail_level || "normal");
     setTimeoutSeconds(options.timeout_seconds ? String(options.timeout_seconds) : "");
-    setMaxCriticAttempts(String(options.max_critic_attempts ?? 3));
     setEnableDeepResearch(Boolean(options.enable_deep_research));
     setEnableVisualCritic(Boolean(options.enable_visual_critic));
-    setVisualQaMaxAttempts(String(options.visual_qa_max_attempts ?? 1));
     setEnableIcon(options.enable_icon !== false);
     setEnableIconRag(options.enable_icon_rag !== false);
-    setResearchConfig((prev) => {
-      const incoming = options.research_config ?? {};
-      return {
-        ...incoming,
-        web_search_provider: incoming.web_search_provider || prev.web_search_provider,
-        semantic_scholar_api_key: incoming.semantic_scholar_api_key || prev.semantic_scholar_api_key,
-        tavily_api_key: incoming.tavily_api_key || prev.tavily_api_key,
-        serpapi_key: incoming.serpapi_key || prev.serpapi_key,
-      };
-    });
+    setResearchConfig(options.research_config ?? {});
     setGeminiApiKey(options.gemini_api_key ?? "");
     setTemplateId(options.template_id ?? "");
   }, [selectedRunConfig, targetJobId]);
@@ -363,18 +339,14 @@ export function GeneratePage() {
 
   useEffect(() => {
     try {
-      const existingRaw = window.localStorage.getItem(RESEARCH_KEYS_STORAGE);
-      const existing = existingRaw ? (JSON.parse(existingRaw) as Record<string, string>) : {};
-      const next = {
-        web_search_provider: researchConfig.web_search_provider || existing.web_search_provider || "tavily",
-        semantic_scholar_api_key:
-          researchConfig.semantic_scholar_api_key || existing.semantic_scholar_api_key || "",
-        tavily_api_key: researchConfig.tavily_api_key || existing.tavily_api_key || "",
-        serpapi_key: researchConfig.serpapi_key || existing.serpapi_key || "",
+      const keys = {
+        semantic_scholar_api_key: researchConfig.semantic_scholar_api_key ?? "",
+        tavily_api_key: researchConfig.tavily_api_key ?? "",
+        serpapi_key: researchConfig.serpapi_key ?? "",
       };
-      window.localStorage.setItem(RESEARCH_KEYS_STORAGE, JSON.stringify(next));
+      window.localStorage.setItem(RESEARCH_KEYS_STORAGE, JSON.stringify(keys));
     } catch { /* noop */ }
-  }, [researchConfig.web_search_provider, researchConfig.semantic_scholar_api_key, researchConfig.tavily_api_key, researchConfig.serpapi_key]);
+  }, [researchConfig.semantic_scholar_api_key, researchConfig.tavily_api_key, researchConfig.serpapi_key]);
 
   useEffect(() => {
     if (targetJobId) {
@@ -388,8 +360,6 @@ export function GeneratePage() {
         numPages,
         detailLevel,
         timeoutSeconds,
-        maxCriticAttempts,
-        visualQaMaxAttempts,
         instruction,
         density,
         customFont,
@@ -419,8 +389,6 @@ export function GeneratePage() {
     enableIcon,
     enableIconRag,
     enableVisualCritic,
-    maxCriticAttempts,
-    visualQaMaxAttempts,
     headingFont,
     bodyFont,
     instruction,
@@ -477,8 +445,6 @@ export function GeneratePage() {
             numPages={numPages}
             detailLevel={detailLevel}
             timeoutSeconds={timeoutSeconds}
-            maxCriticAttempts={maxCriticAttempts}
-            visualQaMaxAttempts={visualQaMaxAttempts}
             instruction={instruction}
             enableDeepResearch={enableDeepResearch}
             enableVisualCritic={enableVisualCritic}
@@ -493,8 +459,6 @@ export function GeneratePage() {
             onNumPagesChange={setNumPages}
             onDetailLevelChange={setDetailLevel}
             onTimeoutSecondsChange={setTimeoutSeconds}
-            onMaxCriticAttemptsChange={setMaxCriticAttempts}
-            onVisualQaMaxAttemptsChange={setVisualQaMaxAttempts}
             onInstructionChange={setInstruction}
             onEnableDeepResearchChange={setEnableDeepResearch}
             onEnableVisualCriticChange={setEnableVisualCritic}
@@ -571,7 +535,6 @@ export function GeneratePage() {
                   num_pages: numPages ? Number(numPages) : undefined,
                   detail_level: detailLevel,
                   timeout_seconds: parseOptionalPositiveInt(timeoutSeconds),
-                  max_critic_attempts: parseBoundedPositiveInt(maxCriticAttempts, 3, 1, 10),
                   style_overrides:
                     customFont || headingFont || bodyFont || cjkHeadingFont || cjkBodyFont || density !== "normal"
                       ? {
@@ -584,7 +547,6 @@ export function GeneratePage() {
                         }
                       : undefined,
                   enable_visual_critic: enableVisualCritic,
-                  visual_qa_max_attempts: parseBoundedPositiveInt(visualQaMaxAttempts, 1, 1, 10),
                   enable_deep_research: enableDeepResearch,
                   enable_icon: enableIcon,
                   enable_icon_rag: enableIconRag,
@@ -669,19 +631,6 @@ function parseOptionalPositiveInt(value: string): number | undefined {
     return undefined;
   }
   return Math.floor(parsed);
-}
-
-function parseBoundedPositiveInt(
-  value: string,
-  fallback: number,
-  min: number,
-  max: number,
-): number {
-  const parsed = parseOptionalPositiveInt(value);
-  if (parsed === undefined) {
-    return fallback;
-  }
-  return Math.min(max, Math.max(min, parsed));
 }
 
 function resolveRequestedLanguage(languageMode: LanguageMode, customLanguage: string): string {

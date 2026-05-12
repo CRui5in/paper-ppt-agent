@@ -53,7 +53,6 @@ export interface ResearchConfig {
   semantic_scholar_enabled?: boolean;
   web_search_enabled?: boolean;
   semantic_scholar_api_key?: string;
-  web_search_provider?: "tavily" | "serpapi";
   tavily_api_key?: string;
   serpapi_key?: string;
   max_results_per_source?: number;
@@ -87,11 +86,9 @@ export interface GenerationOptions {
   language: string;
   detail_level: string;
   timeout_seconds?: number;
-  max_critic_attempts?: number;
   style_overrides?: StyleOverridesPayload;
   enable_deep_research?: boolean;
   enable_visual_critic?: boolean;
-  visual_qa_max_attempts?: number;
   enable_icon?: boolean;
   enable_icon_rag?: boolean;
   gemini_api_key?: string;
@@ -332,4 +329,35 @@ export interface UpdateFontsRequest {
 export interface UpdateFontsResponse {
   svg_fonts_replaced: number;
   status: string;
+}
+
+// ── Image Search ─────────────────────────────────────────────────────────
+
+export interface ImageSearchResultItem {
+  url: string;
+  thumbnail: string;
+  description: string;
+  source: string;
+}
+
+export interface ImageSearchRequest {
+  query: string;
+  slide_index?: number;
+  max_results?: number;
+}
+
+export interface ImageSearchResponse {
+  results: ImageSearchResultItem[];
+}
+
+export interface ImageApplyRequest {
+  image_url: string;
+  slide_index: number;
+  target_element?: string;
+}
+
+export interface ImageApplyResponse {
+  status: string;
+  local_path?: string;
+  svg_updated: boolean;
 }

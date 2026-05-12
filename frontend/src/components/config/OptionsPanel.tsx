@@ -1,5 +1,4 @@
-import { useState } from "react";
-import { BookOpen, Eye, EyeOff, FlaskConical, HelpCircle, Key, Layers, Puzzle, Search, Settings2, Sparkles } from "lucide-react";
+import { BookOpen, Eye, FlaskConical, HelpCircle, Key, Layers, Puzzle, Search, Settings2, Sparkles } from "lucide-react";
 import { useLocale } from "../../i18n";
 import type { ResearchConfig, TemplateInfo } from "../../lib/types";
 import { FontSelector } from "./FontSelector";
@@ -11,8 +10,6 @@ interface OptionsPanelProps {
   numPages: string;
   detailLevel: string;
   timeoutSeconds: string;
-  maxCriticAttempts: string;
-  visualQaMaxAttempts: string;
   instruction: string;
   enableDeepResearch: boolean;
   enableVisualCritic: boolean;
@@ -34,8 +31,6 @@ interface OptionsPanelProps {
   onNumPagesChange: (value: string) => void;
   onDetailLevelChange: (value: string) => void;
   onTimeoutSecondsChange: (value: string) => void;
-  onMaxCriticAttemptsChange: (value: string) => void;
-  onVisualQaMaxAttemptsChange: (value: string) => void;
   onInstructionChange: (value: string) => void;
   onEnableDeepResearchChange: (value: boolean) => void;
   onEnableVisualCriticChange: (value: boolean) => void;
@@ -55,10 +50,6 @@ interface OptionsPanelProps {
 
 export function OptionsPanel(props: OptionsPanelProps) {
   const { t } = useLocale();
-  const [showGeminiKey, setShowGeminiKey] = useState(false);
-  const [showScholarKey, setShowScholarKey] = useState(false);
-  const [showTavilyKey, setShowTavilyKey] = useState(false);
-  const [showSerpApiKey, setShowSerpApiKey] = useState(false);
   return (
     <section className="panel">
       <div className="panel-title-row" style={{ marginBottom: "0.75rem" }}>
@@ -154,16 +145,6 @@ export function OptionsPanel(props: OptionsPanelProps) {
             placeholder={t("options.timeoutPlaceholder")}
           />
         </label>
-        <label className="form-field">
-          <span>{t("options.maxCriticAttempts")}</span>
-          <input
-            type="number"
-            min="1"
-            max="10"
-            value={props.maxCriticAttempts}
-            onChange={(event) => props.onMaxCriticAttemptsChange(event.target.value)}
-          />
-        </label>
         <label className="visual-qa-field">
           <span
             className={`visual-qa-control ${
@@ -197,18 +178,6 @@ export function OptionsPanel(props: OptionsPanelProps) {
             </span>
           </span>
         </label>
-        {props.enableVisualCritic ? (
-          <label className="form-field">
-            <span>{t("options.visualQaMaxAttempts")}</span>
-            <input
-              type="number"
-              min="1"
-              max="10"
-              value={props.visualQaMaxAttempts}
-              onChange={(event) => props.onVisualQaMaxAttemptsChange(event.target.value)}
-            />
-          </label>
-        ) : null}
       </div>
 
       {/* Deep research section */}
@@ -328,23 +297,12 @@ export function OptionsPanel(props: OptionsPanelProps) {
                   <Key size={12} style={{ marginRight: 4, verticalAlign: "middle" }} />
                   Gemini API Key
                 </span>
-                <div className="form-field-icon api-key-wrapper">
-                  <Key size={14} className="field-icon" />
-                  <input
-                    type={showGeminiKey ? "text" : "password"}
-                    value={props.geminiApiKey}
-                    onChange={(event) => props.onGeminiApiKeyChange(event.target.value)}
-                    placeholder="AIza..."
-                  />
-                  <button
-                    type="button"
-                    className="api-key-toggle"
-                    onClick={() => setShowGeminiKey((v) => !v)}
-                    tabIndex={-1}
-                  >
-                    {showGeminiKey ? <EyeOff size={14} /> : <Eye size={14} />}
-                  </button>
-                </div>
+                <input
+                  type="password"
+                  value={props.geminiApiKey}
+                  onChange={(event) => props.onGeminiApiKeyChange(event.target.value)}
+                  placeholder="AIza..."
+                />
               </label>
             ) : null}
           </div>
@@ -489,28 +447,17 @@ export function OptionsPanel(props: OptionsPanelProps) {
                     <Key size={12} style={{ marginRight: 4, verticalAlign: "middle" }} />
                     {t("options.semanticScholarApiKey")}
                   </span>
-                  <div className="form-field-icon api-key-wrapper">
-                    <Key size={14} className="field-icon" />
-                    <input
-                      type={showScholarKey ? "text" : "password"}
-                      value={props.researchConfig.semantic_scholar_api_key ?? ""}
-                      onChange={(event) => {
-                        props.onResearchConfigChange({
-                          ...props.researchConfig,
-                          semantic_scholar_api_key: event.target.value || undefined,
-                        });
-                      }}
-                      placeholder={t("options.semanticScholarApiKeyPlaceholder")}
-                    />
-                    <button
-                      type="button"
-                      className="api-key-toggle"
-                      onClick={() => setShowScholarKey((v) => !v)}
-                      tabIndex={-1}
-                    >
-                      {showScholarKey ? <EyeOff size={14} /> : <Eye size={14} />}
-                    </button>
-                  </div>
+                  <input
+                    type="password"
+                    value={props.researchConfig.semantic_scholar_api_key ?? ""}
+                    onChange={(event) => {
+                      props.onResearchConfigChange({
+                        ...props.researchConfig,
+                        semantic_scholar_api_key: event.target.value || undefined,
+                      });
+                    }}
+                    placeholder={t("options.semanticScholarApiKeyPlaceholder")}
+                  />
                 </label>
               </div>
             ) : null}
@@ -556,97 +503,41 @@ export function OptionsPanel(props: OptionsPanelProps) {
             </label>
             {props.researchConfig.web_search_enabled ? (
               <div className="options-icon-sub">
-                <div className="research-provider-select">
-                  <label className="research-provider-option">
-                    <input
-                      type="radio"
-                      name="web-search-provider"
-                      checked={(props.researchConfig.web_search_provider ?? "tavily") === "tavily"}
-                      onChange={() => {
-                        props.onResearchConfigChange({
-                          ...props.researchConfig,
-                          web_search_provider: "tavily",
-                        });
-                      }}
-                    />
-                    <span>{t("options.tavilyApiKey")}</span>
-                  </label>
-                  <label className="research-provider-option">
-                    <input
-                      type="radio"
-                      name="web-search-provider"
-                      checked={props.researchConfig.web_search_provider === "serpapi"}
-                      onChange={() => {
-                        props.onResearchConfigChange({
-                          ...props.researchConfig,
-                          web_search_provider: "serpapi",
-                        });
-                      }}
-                    />
-                    <span>{t("options.serpApiKey")}</span>
-                  </label>
-                </div>
-                {(props.researchConfig.web_search_provider ?? "tavily") === "tavily" ? (
-                  <label className="form-field options-api-key-field">
-                    <span>
-                      <Key size={12} style={{ marginRight: 4, verticalAlign: "middle" }} />
-                      {t("options.tavilyApiKey")}
-                    </span>
-                    <div className="form-field-icon api-key-wrapper">
-                      <Key size={14} className="field-icon" />
-                      <input
-                        type={showTavilyKey ? "text" : "password"}
-                        value={props.researchConfig.tavily_api_key ?? ""}
-                        onChange={(event) => {
-                          props.onResearchConfigChange({
-                            ...props.researchConfig,
-                            tavily_api_key: event.target.value || undefined,
-                          });
-                        }}
-                        placeholder="tvly-..."
-                      />
-                      <button
-                        type="button"
-                        className="api-key-toggle"
-                        onClick={() => setShowTavilyKey((v) => !v)}
-                        tabIndex={-1}
-                      >
-                        {showTavilyKey ? <EyeOff size={14} /> : <Eye size={14} />}
-                      </button>
-                    </div>
-                  </label>
-                ) : (
-                  <label className="form-field options-api-key-field">
-                    <span>
-                      <Key size={12} style={{ marginRight: 4, verticalAlign: "middle" }} />
-                      {t("options.serpApiKey")}
-                    </span>
-                    <div className="form-field-icon api-key-wrapper">
-                      <Key size={14} className="field-icon" />
-                      <input
-                        type={showSerpApiKey ? "text" : "password"}
-                        value={props.researchConfig.serpapi_key ?? ""}
-                        onChange={(event) => {
-                          props.onResearchConfigChange({
-                            ...props.researchConfig,
-                            serpapi_key: event.target.value || undefined,
-                          });
-                        }}
-                        placeholder="serp-..."
-                      />
-                      <button
-                        type="button"
-                        className="api-key-toggle"
-                        onClick={() => setShowSerpApiKey((v) => !v)}
-                        tabIndex={-1}
-                      >
-                        {showSerpApiKey ? <EyeOff size={14} /> : <Eye size={14} />}
-                      </button>
-                    </div>
-                  </label>
-                )}
-                {((props.researchConfig.web_search_provider ?? "tavily") === "tavily" && !props.researchConfig.tavily_api_key) ||
-                (props.researchConfig.web_search_provider === "serpapi" && !props.researchConfig.serpapi_key) ? (
+                <label className="form-field options-api-key-field">
+                  <span>
+                    <Key size={12} style={{ marginRight: 4, verticalAlign: "middle" }} />
+                    {t("options.tavilyApiKey")}
+                  </span>
+                  <input
+                    type="password"
+                    value={props.researchConfig.tavily_api_key ?? ""}
+                    onChange={(event) => {
+                      props.onResearchConfigChange({
+                        ...props.researchConfig,
+                        tavily_api_key: event.target.value || undefined,
+                      });
+                    }}
+                    placeholder="tvly-..."
+                  />
+                </label>
+                <label className="form-field options-api-key-field">
+                  <span>
+                    <Key size={12} style={{ marginRight: 4, verticalAlign: "middle" }} />
+                    {t("options.serpApiKey")}
+                  </span>
+                  <input
+                    type="password"
+                    value={props.researchConfig.serpapi_key ?? ""}
+                    onChange={(event) => {
+                      props.onResearchConfigChange({
+                        ...props.researchConfig,
+                        serpapi_key: event.target.value || undefined,
+                      });
+                    }}
+                    placeholder="serp-..."
+                  />
+                </label>
+                {!props.researchConfig.tavily_api_key && !props.researchConfig.serpapi_key ? (
                   <p className="research-warning">
                     <FlaskConical size={11} style={{ marginRight: 4, verticalAlign: "middle" }} />
                     {t("options.webSearchNoKey")}

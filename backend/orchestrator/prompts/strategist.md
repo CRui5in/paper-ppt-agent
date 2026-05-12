@@ -32,6 +32,7 @@ Follow this structure exactly:
 
 ### VIII. Image Resource List
 - Images from the paper to include, with dimensions and placement notes
+- For images with Status "Pending" (not from the paper), generate an English "Search Query" column — a concise keyword phrase suitable for searching online image libraries (e.g., "modern technology abstract blue gradient background", "team collaboration office illustration")
 
 ### IX. Content Outline
 - Per-page content outline with: page number, page type, title, layout type, content elements

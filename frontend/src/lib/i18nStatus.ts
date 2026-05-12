@@ -11,6 +11,7 @@ const STAGE_LABELS: Record<string, { zh: string; en: string }> = {
   parsing: { zh: "解析论文", en: "Parsing" },
   research: { zh: "研究分析", en: "Research" },
   strategy: { zh: "策略规划", en: "Strategy" },
+  image_search: { zh: "搜索配图", en: "Image Search" },
   generation: { zh: "生成页面", en: "Generation" },
   visual_qa: { zh: "视觉 QA", en: "Visual QA" },
   repair: { zh: "修复", en: "Repair" },
