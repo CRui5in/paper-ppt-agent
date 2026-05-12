@@ -2,12 +2,17 @@ import type { Config } from "tailwindcss";
 
 const config: Config = {
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
+  darkMode: ["selector", "[data-theme='dark']"],
   theme: {
     extend: {
       colors: {
         background: "hsl(var(--background))",
         foreground: "hsl(var(--foreground))",
-        border: "hsl(var(--border))",
+        border: {
+          DEFAULT: "hsl(var(--border))",
+          soft: "var(--border-soft)",
+          strong: "var(--border-strong)",
+        },
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
         primary: {
@@ -21,6 +26,7 @@ const config: Config = {
         muted: {
           DEFAULT: "hsl(var(--muted))",
           foreground: "hsl(var(--muted-foreground))",
+          text: "var(--muted-text)",
         },
         accent: {
           DEFAULT: "hsl(var(--accent))",
@@ -30,6 +36,21 @@ const config: Config = {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
+        // Custom semantic colors
+        si: {
+          accent: "var(--si-accent)",
+          muted: "var(--si-muted)",
+        },
+        heading: "var(--heading-color)",
+        body: "var(--body-color)",
+        subtle: "var(--subtle-text)",
+        surface: {
+          DEFAULT: "var(--surface)",
+          hover: "var(--surface-hover)",
+          inset: "var(--surface-inset)",
+          strong: "var(--surface-strong)",
+        },
+        line: "var(--line)",
       },
       borderRadius: {
         lg: "var(--radius)",
@@ -42,8 +63,8 @@ const config: Config = {
         mono: ["JetBrains Mono", "Cascadia Code", "monospace"],
       },
       boxShadow: {
-        paper: "0 4px 18px rgba(15, 23, 42, 0.06)",
-        panel: "0 1px 0 rgba(255,255,255,0.8), 0 18px 42px rgba(15,23,42,0.06)",
+        paper: "var(--shadow)",
+        panel: "var(--header-shadow), var(--shadow)",
       },
     },
   },
