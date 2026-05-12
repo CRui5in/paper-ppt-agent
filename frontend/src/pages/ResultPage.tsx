@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { BringToFront, Bot, ChevronDown, CircleCheck, Copy, Database, Download, FileText, Image, Info, Layers, MessageSquareText, MousePointer2, Play, Plus, Redo2, Save, SendToBack, Sparkles, Square, Table2, Trash2, Type, Undo2, Wand2, X } from "lucide-react";
 import { Layout } from "../components/layout/Layout";
@@ -602,7 +602,6 @@ function ResultSourceSummary({ historyEntry }: { historyEntry?: GenerationHistor
   const label = type.includes("doc") ? "DOC" : type.toUpperCase().slice(0, 3);
   const meta = [
     historyEntry?.sourceType?.toUpperCase(),
-    historyEntry?.slideCount ? `${historyEntry.slideCount} ${t("preview.slides")}` : undefined,
     historyEntry?.updatedAt,
   ].filter(Boolean).join(" · ");
 
@@ -670,6 +669,8 @@ function ResultSlideWorkspace({
   const [notesDraft, setNotesDraft] = useState(selectedSlide?.notes ?? "");
   const [slideshowOpen, setSlideshowOpen] = useState(false);
   const [slideshowIndex, setSlideshowIndex] = useState(0);
+  const exportMenuRef = useRef<HTMLDetailsElement | null>(null);
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const visibleSlides = slides.filter((slide) => !pendingDeleteIndexes.includes(slide.index));
   const runCommand = (type: EditorCommandType) => {
     if (type === "save" && pendingDeleteIndexes.length) {
@@ -719,6 +720,16 @@ function ResultSlideWorkspace({
       window.removeEventListener("keydown", onKeyDown);
     };
   }, [thumbnailMenu]);
+  useEffect(() => {
+    if (!exportMenuOpen) return undefined;
+    const closeOnOutside = (event: PointerEvent) => {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(event.target as Node)) {
+        setExportMenuOpen(false);
+      }
+    };
+    window.addEventListener("pointerdown", closeOnOutside);
+    return () => window.removeEventListener("pointerdown", closeOnOutside);
+  }, [exportMenuOpen]);
   return (
     <main className="slide-workspace-panel">
       <div className="slide-workspace-header">
@@ -726,15 +737,21 @@ function ResultSlideWorkspace({
           <span>{t("preview.slidePreview")}</span>
           <HoverTooltip content={t("preview.editorWarning")}><span className="preview-info-tip"><Info size={15} /></span></HoverTooltip>
         </p>
-        <details className="result-export-menu">
-          <summary className="primary-button result-export-summary">
+        <details ref={exportMenuRef} className="result-export-menu" open={exportMenuOpen}>
+          <summary
+            className="result-export-summary"
+            onClick={(event) => {
+              event.preventDefault();
+              setExportMenuOpen((open) => !open);
+            }}
+          >
             <Download size={16} />
             <span>{t("result.download")}</span>
             <ChevronDown size={14} />
           </summary>
           <div className="result-export-menu-content">
             {downloadHref ? (
-              <a href={downloadHref}>
+              <a href={downloadHref} onClick={() => setExportMenuOpen(false)}>
                 <Download size={15} />
                 <span>{t("result.download")}</span>
               </a>
@@ -744,11 +761,24 @@ function ResultSlideWorkspace({
                 <span>{t("common.pending")}</span>
               </button>
             )}
-            <button type="button" onClick={onReexport} disabled={reexportLoading || !editable}>
+            <button
+              type="button"
+              onClick={() => {
+                setExportMenuOpen(false);
+                onReexport();
+              }}
+              disabled={reexportLoading || !editable}
+            >
               <Wand2 size={15} />
               <span>{reexportLoading ? t("result.reexportLoading") : t("result.reexport")}</span>
             </button>
-            <button type="button" onClick={onNewRun}>
+            <button
+              type="button"
+              onClick={() => {
+                setExportMenuOpen(false);
+                onNewRun();
+              }}
+            >
               <Plus size={15} />
               <span>{t("result.newRun")}</span>
             </button>
@@ -814,12 +844,17 @@ function ResultSlideWorkspace({
               <span>{slide.index}</span>
               <div dangerouslySetInnerHTML={{ __html: slide.content }} />
             </button>
-          )) : Array.from({ length: 7 }).map((_, index) => (
+          )) : Array.from({ length: 1 }).map((_, index) => (
             <button type="button" className={`rail-slide ${index === 0 ? "rail-slide-active" : ""}`} key={index}>
               <span>{index + 1}</span>
               <div className="rail-placeholder" />
             </button>
           ))}
+          <HoverTooltip content={editable ? t("preview.newSlide") : t("common.pending")}>
+            <button className="rail-add" type="button" disabled={!editable} onClick={onCreateSlide}>
+              <Plus size={18} />
+            </button>
+          </HoverTooltip>
           {thumbnailMenu ? (
             <div
               className="konva-context-menu thumbnail-context-menu"
