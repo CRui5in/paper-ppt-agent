@@ -2,7 +2,10 @@ import type { Locale } from "../i18n";
 
 type StageContext = "progress" | "history" | "logs";
 
-const PROGRESS_STAGE_ALIASES: Record<string, string> = {};
+const PROGRESS_STAGE_ALIASES: Record<string, string> = {
+  visual_qa: "generation",
+  repair: "generation",
+};
 
 const STAGE_LABELS: Record<string, { zh: string; en: string }> = {
   pending: { zh: "等待中", en: "Pending" },

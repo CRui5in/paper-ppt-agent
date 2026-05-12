@@ -9,7 +9,7 @@ export function Progress({
   return (
     <div className={cn("relative h-2 w-full overflow-hidden rounded-full bg-muted", className)} {...props}>
       <div
-        className="h-full rounded-full bg-gradient-to-r from-primary to-cyan-500 transition-all"
+        className="motion-progress-fill h-full rounded-full bg-gradient-to-r from-primary to-cyan-500 transition-all"
         style={{ width: `${Math.max(0, Math.min(100, value))}%` }}
       />
     </div>

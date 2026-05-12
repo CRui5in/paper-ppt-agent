@@ -76,6 +76,18 @@ def test_critic_rejects_text_overflow_inside_card() -> None:
     assert any(v.rule == "text_overflow_in_container" for v in report.violations)
 
 
+def test_critic_rejects_inline_emphasis_drift() -> None:
+    svg = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720">
+  <text x="120" y="260" font-size="18" fill="#0f172a">将乘客按时间排序的上车序列视为</text>
+  <text x="760" y="260" font-size="18" fill="#3b82f6">“句子”</text>
+</svg>"""
+
+    report = check_svg(svg)
+
+    assert not report.passed
+    assert any(v.rule == "inline_emphasis_drift" for v in report.violations)
+
+
 def test_repair_converts_html_span_inside_svg_text(workspace_tmp: Path) -> None:
     svg_path = workspace_tmp / "span.svg"
     svg_path.write_text(

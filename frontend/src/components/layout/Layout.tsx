@@ -18,7 +18,7 @@ export function Layout({ children, showSidebar = true, contentClassName = "" }: 
         {showSidebar ? (
           <Sidebar collapsed={sidebarCollapsed} onCollapsedChange={setSidebarCollapsed} />
         ) : null}
-        <main className={`app-content ${showSidebar ? "app-content-with-sidebar" : "app-content-full"} ${contentClassName}`.trim()}>
+        <main className={`app-content motion-page ${showSidebar ? "app-content-with-sidebar" : "app-content-full"} ${contentClassName}`.trim()}>
           <div className={`app-content-inner ${showSidebar ? "app-content-inner-wide" : "app-content-inner-centered"}`}>
             {children}
           </div>

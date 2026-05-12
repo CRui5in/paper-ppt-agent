@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
-import { cancelJob, deleteJob, fetchBackendHealth, fetchJobStatus, fetchPreview, fetchProjectPreview, fetchProviders, generatePresentation, isNotFoundError, refinePresentation, uploadPaper } from "../lib/api";
+import { cancelJob, deleteJob, deleteSession, fetchBackendHealth, fetchJobStatus, fetchPreview, fetchProjectPreview, fetchProviders, generatePresentation, isNotFoundError, refinePresentation, uploadPaper } from "../lib/api";
 import type {
   CriticEvent,
   GenerateRequestPayload,
@@ -113,6 +113,7 @@ interface GenerationState {
   checkBackendStatus: () => Promise<void>;
   loadProviders: () => Promise<void>;
   uploadFile: (file: File) => Promise<void>;
+  clearUploadSession: () => Promise<void>;
   startGeneration: (payload: GenerateRequestPayload) => Promise<string>;
   startRefine: (payload: RefineRequestPayload) => Promise<string>;
   cancelCurrentRun: () => Promise<void>;
@@ -494,6 +495,13 @@ export const useGeneration = create<GenerationState>()(
       async uploadFile(file) {
         const uploadSession = await uploadPaper(file);
         set({ uploadSession, error: undefined });
+      },
+      async clearUploadSession() {
+        const sessionId = get().uploadSession?.session_id;
+        if (sessionId) {
+          await deleteSession(sessionId).catch(() => undefined);
+        }
+        set({ uploadSession: undefined, error: undefined });
       },
       async startGeneration(payload) {
         const response = await generatePresentation(payload);

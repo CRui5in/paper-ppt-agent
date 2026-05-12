@@ -5,13 +5,11 @@ import { useLocale } from "../../i18n";
 import { normalizeProgressStage, translateJobMessage, translateStageStatus } from "../../lib/i18nStatus";
 import { HoverTooltip } from "../common/HoverTooltip";
 
-const STAGES: Array<{ id: string; icon: ComponentType<{ size?: number; color?: string }> }> = [
+export const PROGRESS_STAGES: Array<{ id: string; icon: ComponentType<{ size?: number; color?: string }> }> = [
   { id: "parsing", icon: FileSearch },
   { id: "research", icon: Search },
   { id: "strategy", icon: Target },
   { id: "generation", icon: Wand2 },
-  { id: "visual_qa", icon: Sparkles },
-  { id: "repair", icon: Settings },
   { id: "postprocess", icon: Settings },
   { id: "export", icon: Download },
 ];
@@ -25,7 +23,7 @@ interface ProgressPanelProps {
   logs?: string[];
 }
 
-const STAGE_INDEX = new Map(STAGES.map((stage, index) => [stage.id, index]));
+const STAGE_INDEX = new Map(PROGRESS_STAGES.map((stage, index) => [stage.id, index]));
 
 export function ProgressPanel({ job, connectionStatus, enrichmentStats, hideHeader = false, compact = false, logs = [] }: ProgressPanelProps) {
   const { t, locale } = useLocale();
@@ -44,7 +42,7 @@ export function ProgressPanel({ job, connectionStatus, enrichmentStats, hideHead
     !!enrichmentStats.web ||
     typeof enrichmentStats.total_findings === "number"
   );
-  const activeStage = activeStageIndex >= 0 ? STAGES[activeStageIndex] : undefined;
+  const activeStage = activeStageIndex >= 0 ? PROGRESS_STAGES[activeStageIndex] : undefined;
   const ActiveIcon = activeStage?.icon ?? Circle;
   const activeStageLabel = activeStage ? translateStageStatus(activeStage.id, locale, "progress") : statusLabel;
 
@@ -53,8 +51,8 @@ export function ProgressPanel({ job, connectionStatus, enrichmentStats, hideHead
       ? (activeMessage || activeStageLabel)
       : activeMessage ?? t("progress.currentAt").replace("{stage}", activeStageLabel);
     return (
-      <section className={`panel monitor-panel monitor-panel-compact ${isStopped ? "monitor-panel-stopped" : ""}`}>
-        <div className="compact-stage-current">
+      <section className={`panel monitor-panel monitor-panel-compact ${isStopped ? "monitor-panel-stopped" : ""} ${job?.status === "error" ? "monitor-panel-error" : ""}`}>
+        <div className={`compact-stage-current ${activeStage && !isStopped && !allComplete ? "compact-stage-current-active" : ""}`}>
           <span className="compact-stage-current-icon">
             <ActiveIcon size={16} />
           </span>
@@ -66,7 +64,7 @@ export function ProgressPanel({ job, connectionStatus, enrichmentStats, hideHead
           </div>
         </div>
         <ol className="compact-stage-list">
-          {STAGES.map((stage, index) => {
+          {PROGRESS_STAGES.map((stage, index) => {
             const Icon = stage.icon;
             const isComplete = allComplete || (activeStageIndex >= 0 && index < activeStageIndex);
             const isActive = activeStageIndex === index;
@@ -131,7 +129,7 @@ export function ProgressPanel({ job, connectionStatus, enrichmentStats, hideHead
       </div>
 
       <ul className="stage-list">
-        {STAGES.map((stage, index) => {
+        {PROGRESS_STAGES.map((stage, index) => {
           const isComplete =
             allComplete ||
             (activeStageIndex >= 0 && index < activeStageIndex);
@@ -182,7 +180,7 @@ export function ProgressPanel({ job, connectionStatus, enrichmentStats, hideHead
   );
 }
 
-function inferActiveStage(job?: JobStatus, logs: string[] = []): string {
+export function inferActiveStage(job?: JobStatus, logs: string[] = []): string {
   const normalized = normalizeProgressStage(job?.status);
   if (STAGE_INDEX.has(normalized)) {
     return normalized;
@@ -196,10 +194,10 @@ function inferActiveStage(job?: JobStatus, logs: string[] = []): string {
   }
   const message = (job?.message ?? "").toLowerCase();
   if (message.includes("export")) return "export";
-  if (message.includes("repair")) return "repair";
-  if (message.includes("visual") || message.includes("critic") || message.includes("qa")) return "visual_qa";
+  if (message.includes("repair")) return "generation";
+  if (message.includes("visual") || message.includes("critic") || message.includes("qa")) return "generation";
   if (message.includes("svg") || message.includes("slide") || message.includes("generat")) return "generation";
-  if (message.includes("design") || message.includes("strateg")) return "strategy";
+  if (message.includes("design") || message.includes("strateg") || message.includes("content outline")) return "strategy";
   if (message.includes("research") || message.includes("analyz") || message.includes("analysis")) return "research";
   if (message.includes("pars") || message.includes("paper")) return "parsing";
   return "";

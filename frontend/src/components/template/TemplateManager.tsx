@@ -27,13 +27,18 @@ export function TemplateManager({ open, onClose, onSelect }: TemplateManagerProp
   const [preview, setPreview] = useState<TemplatePreview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [importedLoading, setImportedLoading] = useState(false);
+  const [previewLoadingId, setPreviewLoadingId] = useState<string | null>(null);
 
   const loadImported = useCallback(async () => {
+    setImportedLoading(true);
     try {
       const list = await fetchImportedTemplates();
       setImported(list);
     } catch {
       /* ignore */
+    } finally {
+      setImportedLoading(false);
     }
   }, []);
 
@@ -173,7 +178,12 @@ export function TemplateManager({ open, onClose, onSelect }: TemplateManagerProp
 
               {/* Imported templates list */}
               <div className="template-list">
-                {imported.length === 0 ? (
+                {importedLoading ? (
+                  <>
+                    <div className="template-preview-loading motion-skeleton" />
+                    <div className="template-preview-loading motion-skeleton" />
+                  </>
+                ) : imported.length === 0 ? (
                   <p className="muted-copy" style={{ textAlign: "center", padding: "1rem" }}>
                     {t("template.noTemplates")}
                   </p>
@@ -200,12 +210,17 @@ export function TemplateManager({ open, onClose, onSelect }: TemplateManagerProp
                           className="ghost-button"
                           style={{ padding: "6px 8px" }}
                           onClick={() => {
-                            void fetchTemplatePreview(tmpl.template_id).then((pv) => {
-                              setPreview(pv);
-                              setView("preview");
-                            });
+                            setPreviewLoadingId(tmpl.template_id);
+                            void fetchTemplatePreview(tmpl.template_id)
+                              .then((pv) => {
+                                setPreview(pv);
+                                setView("preview");
+                              })
+                              .finally(() => setPreviewLoadingId(null));
                           }}
+                          disabled={previewLoadingId === tmpl.template_id}
                         >
+                          {previewLoadingId === tmpl.template_id ? <Loader2 size={14} className="spin" /> : null}
                           {t("template.preview")}
                         </button>
                         <button

@@ -720,10 +720,9 @@ async def generate_svg_pages(
     svg_output_dir.mkdir(parents=True, exist_ok=True)
     repair_archive_dir = project_dir / "svg_archive" / "repair"
     used_paper_figures: dict[str, int] = {}
-    max_critic_attempts = max(
-        1,
-        int(max_critic_attempts or DEFAULT_MAX_CRITIC_ATTEMPTS),
-    )
+    if max_critic_attempts is None:
+        max_critic_attempts = DEFAULT_MAX_CRITIC_ATTEMPTS
+    max_critic_attempts = max(0, int(max_critic_attempts))
     visual_qa_max_attempts = max(0, int(visual_qa_max_attempts or 0))
 
     extra_sections = []
@@ -781,7 +780,7 @@ async def generate_svg_pages(
         # recent ones to avoid unbounded context growth.  Each page
         # produces up to max_critic_attempts * 2 messages
         # (user prompt + assistant SVG per round).
-        _max_context_msgs = MAX_PRIOR_PAGES_IN_CONTEXT * max_critic_attempts * 2
+        _max_context_msgs = MAX_PRIOR_PAGES_IN_CONTEXT * max(1, max_critic_attempts) * 2
         _beyond_preamble = len(conversation) - _preamble_len
         if _beyond_preamble > _max_context_msgs:
             _trim = _beyond_preamble - _max_context_msgs
@@ -908,6 +907,9 @@ async def generate_svg_pages(
             visual_attempts = 0
             critic_attempt = 1
             while True:
+                if max_critic_attempts <= 0:
+                    best_svg = svg_content
+                    break
                 report = _merge_reports(
                     check_svg(svg_content, critic_config),
                     _validate_paper_figure_refs(
