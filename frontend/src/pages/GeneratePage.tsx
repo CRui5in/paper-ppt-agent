@@ -10,6 +10,7 @@ import {
   Database,
   FileText,
   Image,
+  ImagePlus,
   Info,
   Layers,
   LoaderCircle,
@@ -40,6 +41,7 @@ import { FloatingInspector } from "../components/progress/FloatingInspector";
 import { inferActiveStage, PROGRESS_STAGES, ProgressPanel } from "../components/progress/ProgressPanel";
 import { UploadZone } from "../components/upload/UploadZone";
 import { RecentTasksPanel } from "../components/history/RecentTasksPanel";
+import { ImageSearchPanel } from "../components/result/ImageSearchPanel";
 import { useGeneration } from "../hooks/useGeneration";
 import { useLocale } from "../i18n";
 import { fetchTemplates } from "../lib/api";
@@ -179,6 +181,7 @@ export function GeneratePage() {
     cancelCurrentRun,
     connect,
     resumeCurrentRun,
+    hydrateResult,
     refreshHistoryStatuses,
     selectSlide,
     reset,
@@ -586,12 +589,19 @@ export function GeneratePage() {
         />
 
         <SlideWorkspace
+          jobId={jobId}
           slides={slides}
           selectedSlide={selectedSlide}
           onSelect={selectSlide}
           canvasFormat={canvasFormat}
           isGenerating={canCancelCurrentRun}
           loading={Boolean(targetJobId && !job && slides.length === 0)}
+          onImageApplied={async (slideIndex) => {
+            if (!jobId) return;
+            await hydrateResult(jobId);
+            const refreshed = useGeneration.getState().runs[jobId]?.slides ?? useGeneration.getState().slides;
+            selectSlide(refreshed.find((slide) => slide.index === slideIndex) ?? refreshed[0]);
+          }}
         />
 
         <aside className="configuration-panel">
@@ -873,22 +883,28 @@ function SourceList({
 }
 
 function SlideWorkspace({
+  jobId,
   slides,
   selectedSlide,
   onSelect,
   canvasFormat,
   isGenerating,
   loading,
+  onImageApplied,
 }: {
+  jobId?: string;
   slides?: PreviewSlide[];
   selectedSlide?: PreviewSlide;
   onSelect: (slide: PreviewSlide) => void;
   canvasFormat: string;
   isGenerating: boolean;
   loading?: boolean;
+  onImageApplied?: (slideIndex: number) => Promise<void> | void;
 }) {
   const { t } = useLocale();
   const safeSlides = Array.isArray(slides) ? slides : [];
+  const [imageSearchOpen, setImageSearchOpen] = useState(false);
+  const canUseImageSearch = Boolean(jobId && selectedSlide && !loading);
   return (
     <main className="slide-workspace-panel">
       <div className="slide-workspace-header">
@@ -903,6 +919,16 @@ function SlideWorkspace({
         <HoverTooltip content={t("editor.textTool")}><button type="button" disabled><Type size={15} /></button></HoverTooltip>
         <HoverTooltip content={t("editor.shapeTool")}><button type="button" disabled><Square size={15} /></button></HoverTooltip>
         <HoverTooltip content={t("editor.pictureTool")}><button type="button" disabled><Image size={15} /></button></HoverTooltip>
+        <HoverTooltip content={t("imageSearch.title")}>
+          <button
+            type="button"
+            className={imageSearchOpen ? "slide-toolbar-button-active" : undefined}
+            disabled={!canUseImageSearch}
+            onClick={() => setImageSearchOpen((open) => !open)}
+          >
+            <ImagePlus size={15} /> {t("imageSearch.shortTitle")}
+          </button>
+        </HoverTooltip>
         <HoverTooltip content={t("editor.tableTool")}><button type="button" disabled><Table2 size={15} /></button></HoverTooltip>
         <span className="toolbar-divider" />
         <HoverTooltip content={t("editor.undo")}><button type="button" disabled><Undo2 size={15} /></button></HoverTooltip>
@@ -961,6 +987,15 @@ function SlideWorkspace({
             <textarea value="" disabled placeholder={t("preview.notesPlaceholder")} readOnly />
             <em>0 / 1000</em>
           </label>
+          {imageSearchOpen && jobId && selectedSlide ? (
+            <ImageSearchPanel
+              jobId={jobId}
+              slideIndex={selectedSlide.index}
+              slideTitle={selectedSlide.name}
+              onClose={() => setImageSearchOpen(false)}
+              onImageApplied={() => onImageApplied?.(selectedSlide.index)}
+            />
+          ) : null}
         </div>
       </div>
     </main>
@@ -987,9 +1022,9 @@ function AgentMonitor({
   onOpenPanel: (panel: SecondaryPanel) => void;
 }) {
   const { t, locale } = useLocale();
-  const totalSlides = job?.total_slides || job?.slides_completed || 0;
-  const completedSlides = job?.slides_completed ?? 0;
-  const progress = totalSlides > 0 ? Math.round((completedSlides / totalSlides) * 100) : 0;
+  const totalSlides = Math.max(job?.total_slides ?? 0, job?.slides_completed ?? 0, 0);
+  const completedSlides = clamp(job?.slides_completed ?? 0, 0, totalSlides);
+  const progress = clamp(Math.round((job?.progress ?? (totalSlides > 0 ? completedSlides / totalSlides : 0)) * 100), 0, 100);
   const status = job?.status ?? "idle";
   const rawLatestText = logs.length > 0
     ? logs[logs.length - 1].replace(/^\[[^\]]+\]\s*/, "")
@@ -1130,4 +1165,8 @@ function resolveRequestedLanguage(languageMode: LanguageMode, customLanguage: st
     return customLanguage.trim();
   }
   return languageMode;
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
 }

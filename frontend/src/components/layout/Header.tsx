@@ -50,7 +50,7 @@ export function Header() {
         </Link>
         <nav className="workspace-nav" aria-label="Primary">
           <Link
-            to="/generate"
+            to="/generate?fresh=1"
             className={`workspace-nav-item ${isWorkspace ? "workspace-nav-item-active" : ""}`}
           >
             <LayoutDashboard size={17} strokeWidth={1.8} />

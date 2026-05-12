@@ -120,6 +120,8 @@ class ReexportResponse(BaseModel):
     job_id: str
     status: str
     output_path: str
+    fallback_slides: list[int] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
 
 
 class PreviewSlide(BaseModel):

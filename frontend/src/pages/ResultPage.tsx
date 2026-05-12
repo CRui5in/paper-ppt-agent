@@ -66,6 +66,7 @@ export function ResultPage() {
     reset,
     history,
     startRefine,
+    cancelCurrentRun,
     connect,
     activeJobId,
     job: liveJob,
@@ -116,11 +117,20 @@ export function ResultPage() {
   const [secondaryPanel, setSecondaryPanel] = useState<SecondaryPanel | null>(null);
   const [feedback, setFeedback] = useState("");
   const [refineLoading, setRefineLoading] = useState(false);
+  const [cancelLoading, setCancelLoading] = useState(false);
   const [refineError, setRefineError] = useState<string | null>(null);
   const [targetPagesSet, setTargetPagesSet] = useState<Set<number>>(new Set());
   const [allowStructureChanges, setAllowStructureChanges] = useState(false);
   const [reexportLoading, setReexportLoading] = useState(false);
   const [reexportError, setReexportError] = useState<string | null>(null);
+  const [reexportNotice, setReexportNotice] = useState<string | null>(null);
+  const resultRunStatus = job?.status ?? result?.status ?? historyEntry?.status;
+  const canCancelDisplayedRun = Boolean(
+    jobId &&
+      jobId === activeJobId &&
+      job &&
+      !["complete", "error", "cancelled"].includes(job.status),
+  );
 
   useEffect(() => {
     if (!jobId || jobId !== activeJobId) {
@@ -354,8 +364,15 @@ export function ResultPage() {
     if (!jobId) return;
     setReexportLoading(true);
     setReexportError(null);
+    setReexportNotice(null);
     try {
       const response = await reexportPresentation(jobId);
+      const fallbackSlides = response.fallback_slides ?? [];
+      setReexportNotice(
+        fallbackSlides.length
+          ? t("result.reexportFallback").replace("{slides}", fallbackSlides.join(", "))
+          : t("result.reexportSuccess"),
+      );
       setJob((current) =>
         current
           ? {
@@ -504,6 +521,8 @@ export function ResultPage() {
           downloadHref={downloadHref}
           onReexport={() => void handleReexport()}
           reexportLoading={reexportLoading}
+          reexportNotice={reexportNotice}
+          onDismissReexportNotice={() => setReexportNotice(null)}
           editable={canEditPreview}
           onSaveSlide={handleSaveSlideContent}
           onSaveNotes={handleSaveSlideNotes}
@@ -577,10 +596,28 @@ export function ResultPage() {
                   <span>{t("result.allowStructure")}</span>
                 </label>
                 <textarea className="refine-textarea" rows={4} placeholder={t("result.refinePlaceholder")} value={feedback} onChange={(e) => setFeedback(e.target.value)} disabled={refineLoading} />
-                <button type="button" className="primary-button full-width" disabled={!feedback.trim() || refineLoading || !jobId} onClick={() => void handleRefine()}>
-                  {refineLoading ? <Loader2 size={16} className="spin" /> : <Wand2 size={16} />}
-                  {refineLoading ? t("result.refineLoading") : t("result.refineSubmit")}
+                <button type="button" className="primary-button full-width" disabled={!feedback.trim() || refineLoading || canCancelDisplayedRun || !jobId} onClick={() => void handleRefine()}>
+                  {refineLoading || canCancelDisplayedRun ? <Loader2 size={16} className="spin" /> : <Wand2 size={16} />}
+                  {refineLoading || canCancelDisplayedRun ? t("result.refineLoading") : t("result.refineSubmit")}
                 </button>
+                {canCancelDisplayedRun ? (
+                  <button
+                    type="button"
+                    className="secondary-button danger-button full-width cancel-generation-button"
+                    disabled={cancelLoading || resultRunStatus === "cancelling"}
+                    onClick={async () => {
+                      setCancelLoading(true);
+                      try {
+                        await cancelCurrentRun();
+                      } finally {
+                        setCancelLoading(false);
+                      }
+                    }}
+                  >
+                    {cancelLoading || resultRunStatus === "cancelling" ? <Loader2 size={15} className="spin" /> : null}
+                    {cancelLoading || resultRunStatus === "cancelling" ? t("studio.canceling") : t("studio.cancel")}
+                  </button>
+                ) : null}
               </div>
             </section>
 
@@ -660,6 +697,8 @@ function ResultSlideWorkspace({
   downloadHref,
   onReexport,
   reexportLoading,
+  reexportNotice,
+  onDismissReexportNotice,
   editable,
   onSaveSlide,
   onSaveNotes,
@@ -677,6 +716,8 @@ function ResultSlideWorkspace({
   downloadHref?: string;
   onReexport: () => void;
   reexportLoading: boolean;
+  reexportNotice: string | null;
+  onDismissReexportNotice: () => void;
   editable: boolean;
   onSaveSlide: (slide: PreviewSlide, content: string, document: SlideDocument) => Promise<void>;
   onSaveNotes: (slide: PreviewSlide, notes: string) => Promise<void>;
@@ -702,7 +743,7 @@ function ResultSlideWorkspace({
   const [slideshowOpen, setSlideshowOpen] = useState(false);
   const [slideshowIndex, setSlideshowIndex] = useState(0);
   const [imageSearchOpen, setImageSearchOpen] = useState(false);
-  const exportMenuRef = useRef<HTMLDetailsElement | null>(null);
+  const exportMenuRef = useRef<HTMLDivElement | null>(null);
   const deleteRunRef = useRef<HTMLButtonElement | null>(null);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [deleteRunConfirmOpen, setDeleteRunConfirmOpen] = useState(false);
@@ -785,30 +826,37 @@ function ResultSlideWorkspace({
             <span>{t("result.deleteTask")}</span>
           </button>
         ) : null}
-        <details ref={exportMenuRef} className="result-export-menu" open={exportMenuOpen}>
-          <summary
-            className="result-export-summary"
-            onClick={(event) => {
-              event.preventDefault();
-              setExportMenuOpen((open) => !open);
-            }}
-          >
-            <Download size={16} />
-            <span>{t("result.download")}</span>
-            <ChevronDown size={14} />
-          </summary>
-          <div className="result-export-menu-content">
-            {downloadHref ? (
-              <a href={downloadHref} onClick={() => setExportMenuOpen(false)}>
-                <Download size={15} />
+        <div ref={exportMenuRef} className="result-export-menu">
+          <div className="result-export-split">
+            {reexportLoading ? (
+              <button type="button" className="result-export-main" disabled>
+                <Loader2 size={16} className="spin" />
+                <span>{t("result.reexportLoading")}</span>
+              </button>
+            ) : downloadHref ? (
+              <a className="result-export-main" href={downloadHref} onClick={() => setExportMenuOpen(false)}>
+                <Download size={16} />
                 <span>{t("result.download")}</span>
               </a>
             ) : (
-              <button type="button" disabled>
-                <Download size={15} />
+              <button type="button" className="result-export-main" disabled>
+                <Download size={16} />
                 <span>{t("common.pending")}</span>
               </button>
             )}
+            <button
+              type="button"
+              className="result-export-caret"
+              aria-expanded={exportMenuOpen}
+              aria-label={t("result.download")}
+              disabled={reexportLoading}
+              onClick={() => setExportMenuOpen((open) => !open)}
+            >
+              <ChevronDown size={14} />
+            </button>
+          </div>
+          {exportMenuOpen ? (
+            <div className="result-export-menu-content">
             <button
               type="button"
               onClick={() => {
@@ -830,8 +878,9 @@ function ResultSlideWorkspace({
               <Plus size={15} />
               <span>{t("result.newRun")}</span>
             </button>
-          </div>
-        </details>
+            </div>
+          ) : null}
+        </div>
         {deleteRunConfirmOpen && onDeleteRun ? (
           <DeleteConfirmTooltip
             anchorRef={deleteRunRef}
@@ -852,6 +901,22 @@ function ResultSlideWorkspace({
           />
         ) : null}
       </div>
+      {reexportLoading || reexportNotice ? (
+        <div className={`result-export-status ${reexportLoading ? "result-export-status-loading" : ""}`}>
+          {reexportLoading ? <Loader2 size={15} className="spin" /> : <Info size={15} />}
+          <span>{reexportLoading ? t("result.reexportLoading") : reexportNotice}</span>
+          {!reexportLoading ? (
+            <button
+              type="button"
+              className="result-export-status-close"
+              aria-label={t("versions.close")}
+              onClick={onDismissReexportNotice}
+            >
+              <X size={14} />
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       <div className="slide-toolbar">
         <button type="button" disabled={!editable} onClick={onCreateSlide}><Plus size={15} /> {t("preview.newSlide")}</button>
         <span className="toolbar-divider" />
@@ -1060,13 +1125,13 @@ function ResultMonitor({
 }) {
   const { t, locale } = useLocale();
   const status = job?.status ?? result?.status ?? historyEntry?.status;
-  const completedSlides = job?.slides_completed ?? historyEntry?.slideCount ?? result?.slides.length ?? 0;
-  const totalSlides = job?.total_slides ?? historyEntry?.slideCount ?? result?.slides.length ?? 0;
-  const progress = totalSlides > 0 ? Math.round((completedSlides / totalSlides) * 100) : 0;
+  const fallbackSlides = historyEntry?.slideCount ?? result?.slides.length ?? 0;
+  const totalSlides = Math.max(job?.total_slides ?? fallbackSlides, fallbackSlides, 0);
+  const completedSlides = clamp(job?.slides_completed ?? fallbackSlides, 0, totalSlides || fallbackSlides);
+  const progress = clamp(Math.round((job?.progress ?? (totalSlides > 0 ? completedSlides / totalSlides : 0)) * 100), 0, 100);
   const rawLatestText = logs.length ? logs[logs.length - 1].replace(/^\[[^\]]+\]\s*/, "") : job?.message ?? t("monitor.waiting");
   const latestText = translateJobMessage(rawLatestText, locale) ?? rawLatestText;
-  const outputPath = job?.output_path ?? result?.output_path ?? historyEntry?.outputPath;
-  const outputName = outputPath ? outputPath.replace(/\\/g, "/").split("/").pop() : t("common.pending");
+  const monitorOutputPath = job?.output_path ?? result?.output_path ?? historyEntry?.outputPath ?? null;
   const nextStep = formatMonitorNextStep(
     job ?? (status ? {
       status,
@@ -1074,7 +1139,7 @@ function ResultMonitor({
       message: "",
       slides_completed: completedSlides,
       total_slides: totalSlides,
-      output_path: outputPath ?? null,
+      output_path: monitorOutputPath,
       error: null,
     } : undefined),
     logs,
@@ -1082,12 +1147,13 @@ function ResultMonitor({
     t,
   );
   const isActiveRun = Boolean(job && status && !["idle", "complete", "error", "cancelled"].includes(status));
-  const connectionLabel =
-    connectionStatus === "connected"
-      ? t("status.connected")
-      : connectionStatus === "connecting"
-        ? t("status.connecting")
-        : t("status.disconnected");
+  const summaryText = criticEvents.length
+    ? t("monitor.counts")
+        .replace("{logs}", String(logs.length))
+        .replace("{reviews}", String(criticEvents.length))
+    : t("monitor.counts")
+        .replace("{logs}", String(logs.length))
+        .replace("{reviews}", String(criticEvents.length));
   return (
     <section className="agent-monitor-panel result-monitor-panel">
       <div className="agent-monitor-header">
@@ -1109,9 +1175,8 @@ function ResultMonitor({
       <div className="agent-monitor-body result-monitor-body">
         <div className={`agent-avatar ${isActiveRun ? "agent-avatar-active" : ""}`}><Bot size={26} /></div>
         <div className="agent-summary">
-          <strong>{formatStatusLabel(status, locale, t("common.unknown"))}</strong>
-          <span>{outputName}</span>
-          <em>{connectionLabel}</em>
+          <strong>{status === "idle" ? t("monitor.ready") : latestText}</strong>
+          <span>{summaryText}</span>
         </div>
         <div className="monitor-progress-block">
           <span><strong>{progress}%</strong> {t("monitor.slideGeneration")}</span>
@@ -1153,6 +1218,10 @@ function formatMonitorNextStep(
   return nextStage
     ? translateStageStatus(nextStage.id, locale, "progress")
     : translateStageStatus(status, locale, "progress");
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
 }
 
 function ConfigViewer({
