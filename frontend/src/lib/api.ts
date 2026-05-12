@@ -6,6 +6,8 @@ import type {
   ImportStatus,
   JobStatus,
   PreviewResponse,
+  PreviewSlide,
+  SlideDocument,
   ProvidersResponse,
   ReexportResponse,
   RefineRequestPayload,
@@ -195,6 +197,28 @@ export async function fetchPreview(jobId: string): Promise<PreviewResponse> {
 export async function fetchProjectPreview(projectDir: string): Promise<PreviewResponse> {
   const params = new URLSearchParams({ project_dir: projectDir });
   return request<PreviewResponse>(`/api/preview-project?${params.toString()}`);
+}
+
+export async function updatePreviewSlide(jobId: string, slideIndex: number, content: string, document?: SlideDocument, notes?: string): Promise<PreviewSlide> {
+  return request<PreviewSlide>(`/api/preview/${jobId}/slides/${slideIndex}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content, document, notes }),
+  });
+}
+
+export async function createPreviewSlide(jobId: string, content?: string, document?: SlideDocument, notes?: string): Promise<PreviewSlide> {
+  return request<PreviewSlide>(`/api/preview/${jobId}/slides`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content, document, notes }),
+  });
+}
+
+export async function deletePreviewSlide(jobId: string, slideIndex: number): Promise<PreviewResponse> {
+  return request<PreviewResponse>(`/api/preview/${jobId}/slides/${slideIndex}`, {
+    method: "DELETE",
+  });
 }
 
 export async function refinePresentation(

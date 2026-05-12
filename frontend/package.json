@@ -19,9 +19,11 @@
     "clsx": "^2.1.1",
     "echarts": "^6.0.0",
     "echarts-for-react": "^3.0.6",
+    "konva": "^10.3.0",
     "lucide-react": "^1.8.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "react-konva": "^19.2.4",
     "react-router-dom": "^7.0.0",
     "tailwind-merge": "^3.6.0",
     "zustand": "^5.0.3"

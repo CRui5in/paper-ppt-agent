@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -127,6 +127,8 @@ class PreviewSlide(BaseModel):
     name: str
     source: str  # "output" or "final"
     content: str
+    notes: str = ""
+    document: dict[str, Any] | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class PreviewResponse(BaseModel):
