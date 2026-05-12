@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { BringToFront, Bot, ChevronDown, CircleCheck, Copy, Database, Download, FileText, Image, Info, Layers, Loader2, MessageSquareText, MousePointer2, Play, Plus, Redo2, Save, SendToBack, Sparkles, Square, Table2, Trash2, Type, Undo2, Wand2, X } from "lucide-react";
+import { BringToFront, Bot, ChevronDown, CircleCheck, Copy, Database, Download, FileText, Image, ImagePlus, Info, Layers, Loader2, MessageSquareText, MousePointer2, Play, Plus, Redo2, Save, SendToBack, Sparkles, Square, Table2, Trash2, Type, Undo2, Wand2, X } from "lucide-react";
 import { Layout } from "../components/layout/Layout";
 import { AgentLog } from "../components/progress/AgentLog";
 import { FloatingInspector } from "../components/progress/FloatingInspector";
 import { inferActiveStage, PROGRESS_STAGES, ProgressPanel } from "../components/progress/ProgressPanel";
 import { KonvaSlideEditor, type EditorCommand, type EditorCommandType, type EditorState } from "../components/preview/KonvaSlideEditor";
 import { VersionHistory } from "../components/result/VersionHistory";
+import { ImageSearchPanel } from "../components/result/ImageSearchPanel";
 import { useGeneration } from "../hooks/useGeneration";
 import { useLocale } from "../i18n";
 import { createPreviewSlide, deletePreviewSlide, fetchCriticHistory, fetchJobStatus, fetchPreview, fetchProjectPreview, getDownloadUrl, getDownloadUrlForOutput, isNotFoundError, reexportPresentation, updatePreviewSlide } from "../lib/api";
@@ -438,6 +439,18 @@ export function ResultPage() {
     setResult((current) => current ? { ...current, slides: current.slides.map((item) => item.index === updated.index ? updated : item) } : current);
   };
 
+  const handleRefreshPreview = async (preferredSlideIndex?: number) => {
+    if (!jobId) return;
+    const projectDir = result?.project_dir ?? historyEntry?.projectDir;
+    const preview = projectDir ? await fetchProjectPreview(projectDir) : await fetchPreview(jobId);
+    setSlides(preview.slides);
+    setResult((current) => current ? { ...current, slides: preview.slides, output_path: preview.output_path ?? current.output_path, status: preview.status } : preview);
+    setSelectedSlide((current) => {
+      const targetIndex = preferredSlideIndex ?? current?.index;
+      return preview.slides.find((slide) => slide.index === targetIndex) ?? preview.slides[0];
+    });
+  };
+
   return (
     <Layout showSidebar={false} contentClassName="studio-page result-page result-workspace-page">
       <section className="scholarly-workspace result-studio-workspace">
@@ -484,6 +497,7 @@ export function ResultPage() {
         </aside>
 
         <ResultSlideWorkspace
+          jobId={jobId ?? undefined}
           slides={slides}
           selectedSlide={selectedSlide}
           onSelect={setSelectedSlide}
@@ -495,6 +509,7 @@ export function ResultPage() {
           onSaveNotes={handleSaveSlideNotes}
           onCreateSlide={() => void handleCreateSlide()}
           onDeleteSlide={handleDeleteSlide}
+          onImageApplied={(slideIndex) => handleRefreshPreview(slideIndex)}
           onNewRun={() => {
             reset();
             navigate("/generate?fresh=1");
@@ -638,6 +653,7 @@ function ResultSourceSummary({ historyEntry }: { historyEntry?: GenerationHistor
 }
 
 function ResultSlideWorkspace({
+  jobId,
   slides,
   selectedSlide,
   onSelect,
@@ -649,10 +665,12 @@ function ResultSlideWorkspace({
   onSaveNotes,
   onCreateSlide,
   onDeleteSlide,
+  onImageApplied,
   onNewRun,
   loading,
   onDeleteRun,
 }: {
+  jobId?: string;
   slides: PreviewSlide[];
   selectedSlide?: PreviewSlide;
   onSelect: (slide: PreviewSlide) => void;
@@ -664,6 +682,7 @@ function ResultSlideWorkspace({
   onSaveNotes: (slide: PreviewSlide, notes: string) => Promise<void>;
   onCreateSlide: () => void;
   onDeleteSlide: (slide: PreviewSlide) => Promise<void>;
+  onImageApplied: (slideIndex: number) => Promise<void>;
   onNewRun: () => void;
   loading?: boolean;
   onDeleteRun?: () => Promise<void>;
@@ -682,6 +701,7 @@ function ResultSlideWorkspace({
   const [notesDraft, setNotesDraft] = useState(selectedSlide?.notes ?? "");
   const [slideshowOpen, setSlideshowOpen] = useState(false);
   const [slideshowIndex, setSlideshowIndex] = useState(0);
+  const [imageSearchOpen, setImageSearchOpen] = useState(false);
   const exportMenuRef = useRef<HTMLDetailsElement | null>(null);
   const deleteRunRef = useRef<HTMLButtonElement | null>(null);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
@@ -838,6 +858,16 @@ function ResultSlideWorkspace({
         <HoverTooltip content={t("editor.textTool")}><button type="button" disabled={!editable} onClick={() => runCommand("addText")}><Type size={15} /></button></HoverTooltip>
         <HoverTooltip content={t("editor.shapeTool")}><button type="button" disabled={!editable} onClick={() => runCommand("addRect")}><Square size={15} /></button></HoverTooltip>
         <HoverTooltip content={t("editor.pictureTool")}><button type="button" disabled={!editable} onClick={() => runCommand("addImage")}><Image size={15} /></button></HoverTooltip>
+        <HoverTooltip content={t("imageSearch.title")}>
+          <button
+            type="button"
+            className={imageSearchOpen ? "slide-toolbar-button-active" : undefined}
+            disabled={!editable || !jobId || !selectedSlide}
+            onClick={() => setImageSearchOpen((open) => !open)}
+          >
+            <ImagePlus size={15} /> {t("imageSearch.shortTitle")}
+          </button>
+        </HoverTooltip>
         <HoverTooltip content={t("editor.tableTool")}><button type="button" disabled={!editable} onClick={() => runCommand("addTable")}><Table2 size={15} /></button></HoverTooltip>
         <span className="toolbar-divider" />
         <HoverTooltip content={t("editor.undo")}><button type="button" disabled={!editable || !editorState.canUndo} onClick={() => runCommand("undo")}><Undo2 size={15} /></button></HoverTooltip>
@@ -954,6 +984,15 @@ function ResultSlideWorkspace({
             />
             <em>{notesDraft.length} / 1000</em>
           </label>
+          {imageSearchOpen && jobId && selectedSlide ? (
+            <ImageSearchPanel
+              jobId={jobId}
+              slideIndex={selectedSlide.index}
+              slideTitle={selectedSlide.name}
+              onClose={() => setImageSearchOpen(false)}
+              onImageApplied={() => onImageApplied(selectedSlide.index)}
+            />
+          ) : null}
         </div>
       </div>
       {slideshowOpen && visibleSlides[slideshowIndex] ? (

@@ -63,3 +63,4 @@ htmlcov/
 
 # Logs
 *.log
+.reference/
