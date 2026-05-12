@@ -194,7 +194,7 @@ function FontStackPicker({
         {dropdownOpen && (
           <div
             style={{
-              position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 20,
+              position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 10,
               maxHeight: 260, overflowY: "auto", borderRadius: 12,
               border: "1px solid var(--line)", background: "var(--surface-strong)",
               boxShadow: "0 16px 40px rgba(0,0,0,0.28)", padding: "0.35rem",
