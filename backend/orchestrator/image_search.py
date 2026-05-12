@@ -96,7 +96,6 @@ async def download_image(
 
             async with httpx.AsyncClient(
                 follow_redirects=True,
-                verify=False,
                 timeout=15.0,
             ) as client:
                 resp = await client.get(url)
@@ -415,7 +414,6 @@ def _insert_image_fallback(
     content_top = 100
     content_w = 1200
     content_h = 520
-    gap = 30
 
     if avg_text_x < canvas_w * 0.5:
         # Text is on the LEFT → place image on the RIGHT

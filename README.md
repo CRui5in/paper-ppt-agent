@@ -112,6 +112,7 @@ cd frontend && npm run dev -- --host 127.0.0.1 --port 5173 --strictPort
 - 🎯 **图标 RAG 语义搜索** — 基于 Gemini Embedding 从图标库中语义检索匹配候选，可独立开关
 - 🎨 **模板系统与自定义字体** — 预设行业风格模板，支持自定义标题/正文字体配置
 - 🔬 **Deep Research 工作流** — 外部研究增强（arXiv / Semantic Scholar / Web）+ 相关性过滤
+- 🖼️ **在线搜图** — 利用 Tavily / SerpAPI Key 在线搜索配图，支持 AI 智能布局分析与插入、一键撤消、图片下载
 
 ### 2026 年 4 月
 
@@ -126,7 +127,7 @@ cd frontend && npm run dev -- --host 127.0.0.1 --port 5173 --strictPort
 ## 🗺️ 开发计划
 
 - [ ] 🎨 UI 重构
-- [ ] 🖼️ 在线搜图
+- [x] 🖼️ 在线搜图 — 利用 Tavily / SerpAPI Key 在线搜索配图，AI 智能布局插入
 - [ ] 📐 模板管理进一步实现和优化
 
 ---
@@ -135,6 +136,16 @@ cd frontend && npm run dev -- --host 127.0.0.1 --port 5173 --strictPort
 
 - [PPTAgent](https://github.com/icip-cas/PPTAgent) — 流程设计与 Agent 架构参考
 - [ppt-master](https://github.com/hugohe3/ppt-master) — 部分工程实现参考
+
+## ⭐ Star History
+
+<a href="https://www.star-history.com/?repos=CRui5in%2Fpaper-ppt-agent&type=date&legend=top-left">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=CRui5in/paper-ppt-agent&type=date&theme=dark&legend=top-left" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=CRui5in/paper-ppt-agent&type=date&legend=top-left" />
+    <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=CRui5in/paper-ppt-agent&type=date&legend=top-left" />
+  </picture>
+</a>
 
 ## 📄 许可证
 

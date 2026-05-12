@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class FileInfo(BaseModel):
@@ -173,9 +173,9 @@ class ProvidersResponse(BaseModel):
 class ImageSearchRequest(BaseModel):
     """Request to search for images online."""
 
-    query: str
-    slide_index: int | None = None
-    max_results: int = 8
+    query: str = Field(min_length=1, max_length=200)
+    slide_index: int | None = Field(default=None, ge=1)
+    max_results: int = Field(default=8, ge=1, le=20)
     tavily_api_key: str | None = None  # Client-provided key (takes priority)
     serpapi_key: str | None = None
 
@@ -198,8 +198,8 @@ class ImageSearchResponse(BaseModel):
 class ImageApplyRequest(BaseModel):
     """Request to apply a selected image to a slide."""
 
-    image_url: str
-    slide_index: int
+    image_url: str = Field(min_length=1)
+    slide_index: int = Field(ge=1)
     target_element: str | None = None
     image_description: str = ""  # Description for LLM context
     # LLM config for AI-powered image insertion (when no <image> in SVG)
@@ -207,6 +207,13 @@ class ImageApplyRequest(BaseModel):
     provider: str = "openai"
     model: str = "gpt-4o"
     base_url: str | None = None
+
+    @field_validator("image_url")
+    @classmethod
+    def validate_image_url(cls, v: str) -> str:
+        if not v.startswith(("http://", "https://")):
+            raise ValueError("image_url must start with http:// or https://")
+        return v
 
 
 class ImageApplyResponse(BaseModel):
