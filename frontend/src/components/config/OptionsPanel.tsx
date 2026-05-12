@@ -85,7 +85,7 @@ export function OptionsPanel(props: OptionsPanelProps) {
               }
             }}
           >
-            <SelectTrigger>
+            <SelectTrigger className="template-select-trigger">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -187,7 +187,7 @@ export function OptionsPanel(props: OptionsPanelProps) {
           <span>{t("options.maxCriticAttempts")}</span>
           <input
             type="number"
-            min="1"
+            min="0"
             max="10"
             value={props.maxCriticAttempts}
             onChange={(event) => props.onMaxCriticAttemptsChange(event.target.value)}
@@ -223,7 +223,7 @@ export function OptionsPanel(props: OptionsPanelProps) {
                 <input
                   className="visual-qa-number-input"
                   type="number"
-                  min="1"
+                  min="0"
                   max="10"
                   value={props.visualQaMaxAttempts}
                   onChange={(event) => props.onVisualQaMaxAttemptsChange(event.target.value)}

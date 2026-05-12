@@ -29,6 +29,7 @@ import {
   Type,
   Undo2,
   Wand2,
+  X,
 } from "lucide-react";
 import { Layout } from "../components/layout/Layout";
 import { HoverTooltip } from "../components/common/HoverTooltip";
@@ -36,7 +37,7 @@ import { ModelSelector } from "../components/config/ModelSelector";
 import { OptionsPanel } from "../components/config/OptionsPanel";
 import { AgentLog } from "../components/progress/AgentLog";
 import { FloatingInspector } from "../components/progress/FloatingInspector";
-import { ProgressPanel } from "../components/progress/ProgressPanel";
+import { inferActiveStage, PROGRESS_STAGES, ProgressPanel } from "../components/progress/ProgressPanel";
 import { UploadZone } from "../components/upload/UploadZone";
 import { RecentTasksPanel } from "../components/history/RecentTasksPanel";
 import { useGeneration } from "../hooks/useGeneration";
@@ -59,6 +60,7 @@ import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Progress } from "../components/ui/progress";
 import { Tabs, TabsList, TabsTrigger } from "../components/ui/tabs";
+import { translateJobMessage, translateStageStatus } from "../lib/i18nStatus";
 
 const ROUTING_PROFILE_STORAGE_KEY = "paper-ppt-agent-routing-profiles-v1";
 const PRESENTATION_SETTINGS_STORAGE_KEY = "paper-ppt-agent-presentation-settings-v1";
@@ -172,6 +174,7 @@ export function GeneratePage() {
     runs,
     loadProviders,
     uploadFile,
+    clearUploadSession,
     startGeneration,
     cancelCurrentRun,
     connect,
@@ -530,7 +533,7 @@ export function GeneratePage() {
         num_pages: numPages ? Number(numPages) : undefined,
         detail_level: detailLevel,
         timeout_seconds: parseOptionalPositiveInt(timeoutSeconds),
-        max_critic_attempts: parseBoundedPositiveInt(maxCriticAttempts, 3, 1, 10),
+        max_critic_attempts: parseBoundedInt(maxCriticAttempts, 3, 0, 10),
         style_overrides:
           customFont || headingFont || bodyFont || cjkHeadingFont || cjkBodyFont || density !== "normal"
             ? {
@@ -543,7 +546,7 @@ export function GeneratePage() {
               }
             : undefined,
         enable_visual_critic: enableVisualCritic,
-        visual_qa_max_attempts: parseBoundedPositiveInt(visualQaMaxAttempts, 1, 1, 10),
+        visual_qa_max_attempts: parseBoundedInt(visualQaMaxAttempts, 1, 0, 10),
         enable_deep_research: enableDeepResearch,
         enable_icon: enableIcon,
         enable_icon_rag: enableIconRag,
@@ -579,6 +582,7 @@ export function GeneratePage() {
           runs={runs}
           locale={locale}
           onFileSelect={(file) => void uploadFile(file)}
+          onSourceRemove={() => void clearUploadSession()}
         />
 
         <SlideWorkspace
@@ -587,6 +591,7 @@ export function GeneratePage() {
           onSelect={selectSlide}
           canvasFormat={canvasFormat}
           isGenerating={canCancelCurrentRun}
+          loading={Boolean(targetJobId && !job && slides.length === 0)}
         />
 
         <aside className="configuration-panel">
@@ -670,7 +675,7 @@ export function GeneratePage() {
               disabled={generationDisabled}
               onClick={() => void launchGeneration()}
             >
-              <Wand2 size={17} />
+              {canCancelCurrentRun ? <LoaderCircle size={17} className="spin" /> : <Wand2 size={17} />}
               {t("studio.launch")}
             </button>
             {canCancelCurrentRun ? (
@@ -687,6 +692,7 @@ export function GeneratePage() {
                   }
                 }}
               >
+                {cancelLoading || job?.status === "cancelling" ? <LoaderCircle size={15} className="spin" /> : null}
                 {cancelLoading || job?.status === "cancelling"
                   ? t("studio.canceling")
                   : t("studio.cancel")}
@@ -748,6 +754,7 @@ function SourcesPanel({
   runs,
   locale,
   onFileSelect,
+  onSourceRemove,
 }: {
   uploadSession?: UploadResponse;
   job?: JobStatus;
@@ -759,6 +766,7 @@ function SourcesPanel({
   runs: ReturnType<typeof useGeneration.getState>["runs"];
   locale: "en" | "zh";
   onFileSelect: (file: File) => void;
+  onSourceRemove: () => void;
 }) {
   const { t } = useLocale();
   const sourceItems = uploadSession
@@ -791,7 +799,7 @@ function SourcesPanel({
               <HoverTooltip content={t("common.pending")}><TabsTrigger value="datasets" disabled>{t("source.datasets")} <span>0</span></TabsTrigger></HoverTooltip>
             </TabsList>
           </Tabs>
-          <SourceList sourceItems={sourceItems} />
+          <SourceList sourceItems={sourceItems} onRemove={onSourceRemove} />
           <div className="source-footer">
             <span>{sourceItems.length} / 1 source</span>
             <HoverTooltip content="Multiple links are planned for a later version"><Button variant="secondary" size="sm" type="button" disabled><LinkIcon size={13} /> Add Link</Button></HoverTooltip>
@@ -809,7 +817,7 @@ function SourcesPanel({
           </div>
         </>
       )}
-      <RecentTasksPanel history={history} runs={runs} locale={locale} />
+      <RecentTasksPanel history={history} runs={runs} currentJobId={jobId} locale={locale} />
       </CardContent>
     </Card>
   );
@@ -818,17 +826,35 @@ function SourcesPanel({
 function SourceList({
   sourceItems,
   compact = false,
+  onRemove,
 }: {
   sourceItems: Array<{ name: string; meta: string; type: string }>;
   compact?: boolean;
+  onRemove?: () => Promise<void> | void;
 }) {
   const { t } = useLocale();
   return (
     <div className={`source-list ${compact ? "source-list-compact" : ""}`}>
       {sourceItems.length > 0 ? sourceItems.map((item) => (
-        <div className="source-row" key={item.name}>
-          <span className={`source-file-type source-file-${item.type.includes("doc") ? "doc" : "pdf"}`}>
-            {item.type.includes("doc") ? "DOC" : item.type.toUpperCase().slice(0, 3)}
+        <div className={`source-row ${onRemove ? "source-row-removable" : ""}`} key={item.name}>
+          <span className="source-row-leading">
+            <span className={`source-file-type source-file-${item.type.includes("doc") ? "doc" : "pdf"}`}>
+              {item.type.includes("doc") ? "DOC" : item.type.toUpperCase().slice(0, 3)}
+            </span>
+            {onRemove ? (
+              <button
+                type="button"
+                className="source-remove-button"
+                aria-label={t("versions.delete")}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  void onRemove();
+                }}
+              >
+                <X size={13} />
+              </button>
+            ) : null}
           </span>
           <span className="source-row-copy">
             <strong>{item.name}</strong>
@@ -852,12 +878,14 @@ function SlideWorkspace({
   onSelect,
   canvasFormat,
   isGenerating,
+  loading,
 }: {
   slides?: PreviewSlide[];
   selectedSlide?: PreviewSlide;
   onSelect: (slide: PreviewSlide) => void;
   canvasFormat: string;
   isGenerating: boolean;
+  loading?: boolean;
 }) {
   const { t } = useLocale();
   const safeSlides = Array.isArray(slides) ? slides : [];
@@ -894,7 +922,12 @@ function SlideWorkspace({
       </div>
       <div className="slide-stage">
         <div className="thumbnail-rail">
-          {safeSlides.length > 0 ? safeSlides.map((slide) => (
+          {loading ? Array.from({ length: 4 }).map((_, index) => (
+            <button type="button" className={`rail-slide ${index === 0 ? "rail-slide-active" : ""}`} key={index} disabled>
+              <span>{index + 1}</span>
+              <div className="rail-placeholder motion-skeleton" />
+            </button>
+          )) : safeSlides.length > 0 ? safeSlides.map((slide) => (
             <button
               type="button"
               key={slide.index}
@@ -915,7 +948,9 @@ function SlideWorkspace({
           </button></HoverTooltip>
         </div>
         <div className="slide-canvas-area">
-          {selectedSlide ? (
+          {loading ? (
+            <div className="scholarly-slide-frame slide-loading-frame motion-skeleton" />
+          ) : selectedSlide ? (
             <div className="scholarly-slide-frame" dangerouslySetInnerHTML={{ __html: selectedSlide.content }} />
           ) : (
             <div className="scholarly-slide-frame slide-empty-preview">
@@ -951,20 +986,18 @@ function AgentMonitor({
   activePanel: SecondaryPanel | null;
   onOpenPanel: (panel: SecondaryPanel) => void;
 }) {
-  const { t } = useLocale();
-  const progress = Math.round((job?.progress ?? 0) * 100);
+  const { t, locale } = useLocale();
+  const totalSlides = job?.total_slides || job?.slides_completed || 0;
+  const completedSlides = job?.slides_completed ?? 0;
+  const progress = totalSlides > 0 ? Math.round((completedSlides / totalSlides) * 100) : 0;
   const status = job?.status ?? "idle";
-  const latestText = logs.length > 0
+  const rawLatestText = logs.length > 0
     ? logs[logs.length - 1].replace(/^\[[^\]]+\]\s*/, "")
     : job?.message ?? t("monitor.waiting");
+  const latestText = translateJobMessage(rawLatestText, locale) ?? rawLatestText;
   const isConnected = connectionStatus === "connected";
-  const totalSlides = job?.total_slides || job?.slides_completed || 0;
-  const nextStep =
-    status === "idle"
-      ? t("monitor.nextUpload")
-      : jobId
-        ? t("monitor.trackingJob").replace("{job}", jobId.slice(0, 8))
-        : t("monitor.continuing").replace("{status}", status);
+  const isActiveRun = Boolean(job && !["idle", "complete", "error", "cancelled"].includes(status));
+  const nextStep = formatMonitorNextStep(job, logs, locale, t);
 
   return (
     <section className="agent-monitor-panel">
@@ -993,7 +1026,7 @@ function AgentMonitor({
         </div>
       </div>
       <div className="agent-monitor-body">
-        <div className="agent-avatar"><Bot size={26} /></div>
+        <div className={`agent-avatar ${isActiveRun ? "agent-avatar-active" : ""}`}><Bot size={26} /></div>
         <div className="agent-summary">
           <strong>{status === "idle" ? t("monitor.ready") : latestText}</strong>
           <span>
@@ -1007,7 +1040,7 @@ function AgentMonitor({
         <div className="monitor-progress-block">
           <span><strong>{progress}%</strong> {t("monitor.slideGeneration")}</span>
           <Progress value={progress} className="monitor-progress" />
-          <em>{job?.slides_completed ?? 0} / {totalSlides || "?"} {t("preview.slides")}</em>
+          <em>{completedSlides} / {totalSlides || "?"} {t("preview.slides")}</em>
         </div>
         <div className="monitor-event">
           <strong>{t("monitor.lastEvent")}</strong>
@@ -1024,6 +1057,30 @@ function AgentMonitor({
 
 function CriticPanel({ criticEvents, jobId }: { criticEvents: unknown[]; jobId?: string }) {
   return <AgentLog mode="critic" hideHeader logs={[]} criticEvents={criticEvents as CriticEvent[]} jobId={jobId} />;
+}
+
+function formatMonitorNextStep(
+  job: JobStatus | undefined,
+  logs: string[],
+  locale: "en" | "zh",
+  t: (key: string) => string,
+) {
+  const status = job?.status ?? "idle";
+  if (status === "idle") {
+    return t("monitor.nextUpload");
+  }
+  if (status === "complete") {
+    return t("result.download");
+  }
+  if (status === "error" || status === "cancelled") {
+    return translateStageStatus(status, locale, "progress");
+  }
+  const activeStage = inferActiveStage(job, logs);
+  const activeIndex = PROGRESS_STAGES.findIndex((stage) => stage.id === activeStage);
+  const nextStage = activeIndex >= 0 ? PROGRESS_STAGES[activeIndex + 1] : undefined;
+  return nextStage
+    ? translateStageStatus(nextStage.id, locale, "progress")
+    : translateStageStatus(status, locale, "progress");
 }
 
 function parseOptionalPositiveInt(value: string): number | undefined {
@@ -1049,6 +1106,23 @@ function parseBoundedPositiveInt(
     return fallback;
   }
   return Math.min(max, Math.max(min, parsed));
+}
+
+function parseBoundedInt(
+  value: string,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  const normalized = value.trim();
+  if (!normalized) {
+    return fallback;
+  }
+  const parsed = Number(normalized);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.min(max, Math.max(min, Math.floor(parsed)));
 }
 
 function resolveRequestedLanguage(languageMode: LanguageMode, customLanguage: string): string {

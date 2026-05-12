@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 import { createPortal } from "react-dom";
-import { AlertTriangle, ChevronDown, ChevronRight, Eye, Terminal, X } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronRight, Eye, Loader2, Terminal, X } from "lucide-react";
 import { useLocale } from "../../i18n";
 import { translateLogLine } from "../../lib/i18nStatus";
 import type { CriticEvent } from "../../lib/types";
@@ -40,11 +40,13 @@ export function AgentLog({ logs, criticEvents, jobId, mode = "mixed", hideHeader
   const [expandedPages, setExpandedPages] = useState<Set<number>>(new Set());
   const [expandedPrompts, setExpandedPrompts] = useState<Set<string>>(new Set());
   const [archivePreview, setArchivePreview] = useState<{ url: string; label: string; content: string } | null>(null);
+  const [archiveLoadingKey, setArchiveLoadingKey] = useState<string | null>(null);
 
   const openArchivePreview = useCallback(async (archivePath: string, label: string) => {
     if (!jobId) return;
     const url = buildArchiveUrl(archivePath, jobId);
     if (!url) return;
+    setArchiveLoadingKey(archivePath);
     try {
       const res = await fetch(url);
       if (!res.ok) return;
@@ -52,6 +54,8 @@ export function AgentLog({ logs, criticEvents, jobId, mode = "mixed", hideHeader
       setArchivePreview({ url, label, content });
     } catch {
       // ignore
+    } finally {
+      setArchiveLoadingKey(null);
     }
   }, [jobId]);
 
@@ -205,7 +209,7 @@ export function AgentLog({ logs, criticEvents, jobId, mode = "mixed", hideHeader
                                 className="critic-archive-link"
                                 onClick={() => void openArchivePreview(ev.archive_path!, t("review.archiveLabel").replace("{page}", String(ev.page)).replace("{attempt}", String(ev.attempt)))}
                               >
-                                <Eye size={11} />
+                                {archiveLoadingKey === ev.archive_path ? <Loader2 size={11} className="spin" /> : <Eye size={11} />}
                                 {t("review.preRepairSvg")}
                               </button>
                             ) : null}

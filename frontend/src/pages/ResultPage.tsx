@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { BringToFront, Bot, ChevronDown, CircleCheck, Copy, Database, Download, FileText, Image, Info, Layers, MessageSquareText, MousePointer2, Play, Plus, Redo2, Save, SendToBack, Sparkles, Square, Table2, Trash2, Type, Undo2, Wand2, X } from "lucide-react";
+import { BringToFront, Bot, ChevronDown, CircleCheck, Copy, Database, Download, FileText, Image, Info, Layers, Loader2, MessageSquareText, MousePointer2, Play, Plus, Redo2, Save, SendToBack, Sparkles, Square, Table2, Trash2, Type, Undo2, Wand2, X } from "lucide-react";
 import { Layout } from "../components/layout/Layout";
 import { AgentLog } from "../components/progress/AgentLog";
 import { FloatingInspector } from "../components/progress/FloatingInspector";
-import { ProgressPanel } from "../components/progress/ProgressPanel";
+import { inferActiveStage, PROGRESS_STAGES, ProgressPanel } from "../components/progress/ProgressPanel";
 import { KonvaSlideEditor, type EditorCommand, type EditorCommandType, type EditorState } from "../components/preview/KonvaSlideEditor";
 import { VersionHistory } from "../components/result/VersionHistory";
 import { useGeneration } from "../hooks/useGeneration";
@@ -12,7 +12,8 @@ import { useLocale } from "../i18n";
 import { createPreviewSlide, deletePreviewSlide, fetchCriticHistory, fetchJobStatus, fetchPreview, fetchProjectPreview, getDownloadUrl, getDownloadUrlForOutput, isNotFoundError, reexportPresentation, updatePreviewSlide } from "../lib/api";
 import { FontCustomizer } from "../components/result/FontCustomizer";
 import { HoverTooltip } from "../components/common/HoverTooltip";
-import { translateStageStatus } from "../lib/i18nStatus";
+import { DeleteConfirmTooltip } from "../components/common/DeleteConfirmTooltip";
+import { translateJobMessage, translateStageStatus } from "../lib/i18nStatus";
 import type { CriticEvent, DeepSeekSettings, GenerateRequestPayload, GenerationHistoryItem, JobStatus, OpenAISettings, PreviewResponse, PreviewSlide, SlideDocument } from "../lib/types";
 import { Switch } from "../components/ui/switch";
 import { Progress } from "../components/ui/progress";
@@ -73,6 +74,7 @@ export function ResultPage() {
     criticEvents: globalCriticEvents,
     connectionStatus,
     runs,
+    removeHistory,
   } = useGeneration();
 
   // Read logs, criticEvents, and config from the specific run matching the
@@ -106,6 +108,7 @@ export function ResultPage() {
     : jobId
       ? getDownloadUrl(jobId)
       : undefined;
+  const isResultLoading = Boolean(jobId && !result && !loadError);
 
   // ── refine state ───────────────────────────────────────────────────────────
   type SecondaryPanel = "log" | "critic";
@@ -496,6 +499,11 @@ export function ResultPage() {
             reset();
             navigate("/generate?fresh=1");
           }}
+          loading={isResultLoading}
+          onDeleteRun={jobId ? async () => {
+            await removeHistory(jobId);
+            navigate("/generate?fresh=1");
+          } : undefined}
         />
 
         <aside className="configuration-panel result-configuration-panel">
@@ -555,6 +563,7 @@ export function ResultPage() {
                 </label>
                 <textarea className="refine-textarea" rows={4} placeholder={t("result.refinePlaceholder")} value={feedback} onChange={(e) => setFeedback(e.target.value)} disabled={refineLoading} />
                 <button type="button" className="primary-button full-width" disabled={!feedback.trim() || refineLoading || !jobId} onClick={() => void handleRefine()}>
+                  {refineLoading ? <Loader2 size={16} className="spin" /> : <Wand2 size={16} />}
                   {refineLoading ? t("result.refineLoading") : t("result.refineSubmit")}
                 </button>
               </div>
@@ -641,6 +650,8 @@ function ResultSlideWorkspace({
   onCreateSlide,
   onDeleteSlide,
   onNewRun,
+  loading,
+  onDeleteRun,
 }: {
   slides: PreviewSlide[];
   selectedSlide?: PreviewSlide;
@@ -654,6 +665,8 @@ function ResultSlideWorkspace({
   onCreateSlide: () => void;
   onDeleteSlide: (slide: PreviewSlide) => Promise<void>;
   onNewRun: () => void;
+  loading?: boolean;
+  onDeleteRun?: () => Promise<void>;
 }) {
   const { t } = useLocale();
   const [editorCommand, setEditorCommand] = useState<EditorCommand | undefined>(undefined);
@@ -670,7 +683,10 @@ function ResultSlideWorkspace({
   const [slideshowOpen, setSlideshowOpen] = useState(false);
   const [slideshowIndex, setSlideshowIndex] = useState(0);
   const exportMenuRef = useRef<HTMLDetailsElement | null>(null);
+  const deleteRunRef = useRef<HTMLButtonElement | null>(null);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [deleteRunConfirmOpen, setDeleteRunConfirmOpen] = useState(false);
+  const [deleteRunLoading, setDeleteRunLoading] = useState(false);
   const visibleSlides = slides.filter((slide) => !pendingDeleteIndexes.includes(slide.index));
   const runCommand = (type: EditorCommandType) => {
     if (type === "save" && pendingDeleteIndexes.length) {
@@ -737,6 +753,18 @@ function ResultSlideWorkspace({
           <span>{t("preview.slidePreview")}</span>
           <HoverTooltip content={t("preview.editorWarning")}><span className="preview-info-tip"><Info size={15} /></span></HoverTooltip>
         </p>
+        {onDeleteRun ? (
+          <button
+            ref={deleteRunRef}
+            type="button"
+            className="result-delete-run-button"
+            aria-label={t("versions.delete")}
+            onClick={() => setDeleteRunConfirmOpen((open) => !open)}
+          >
+            <Trash2 size={16} />
+            <span>{t("result.deleteTask")}</span>
+          </button>
+        ) : null}
         <details ref={exportMenuRef} className="result-export-menu" open={exportMenuOpen}>
           <summary
             className="result-export-summary"
@@ -769,7 +797,7 @@ function ResultSlideWorkspace({
               }}
               disabled={reexportLoading || !editable}
             >
-              <Wand2 size={15} />
+              {reexportLoading ? <Loader2 size={15} className="spin" /> : <Wand2 size={15} />}
               <span>{reexportLoading ? t("result.reexportLoading") : t("result.reexport")}</span>
             </button>
             <button
@@ -784,6 +812,25 @@ function ResultSlideWorkspace({
             </button>
           </div>
         </details>
+        {deleteRunConfirmOpen && onDeleteRun ? (
+          <DeleteConfirmTooltip
+            anchorRef={deleteRunRef}
+            message={t("sidebar.confirmDeleteFiles")}
+            confirmLabel={t("versions.delete")}
+            cancelLabel={t("versions.close")}
+            loading={deleteRunLoading}
+            onCancel={() => setDeleteRunConfirmOpen(false)}
+            onConfirm={async () => {
+              setDeleteRunLoading(true);
+              try {
+                await onDeleteRun();
+              } finally {
+                setDeleteRunLoading(false);
+                setDeleteRunConfirmOpen(false);
+              }
+            }}
+          />
+        ) : null}
       </div>
       <div className="slide-toolbar">
         <button type="button" disabled={!editable} onClick={onCreateSlide}><Plus size={15} /> {t("preview.newSlide")}</button>
@@ -829,7 +876,12 @@ function ResultSlideWorkspace({
       </div>
       <div className="slide-stage result-slide-stage">
         <div className="thumbnail-rail">
-          {visibleSlides.length > 0 ? visibleSlides.map((slide) => (
+          {loading ? Array.from({ length: 5 }).map((_, index) => (
+            <button type="button" className={`rail-slide ${index === 0 ? "rail-slide-active" : ""}`} key={index} disabled>
+              <span>{index + 1}</span>
+              <div className="rail-placeholder motion-skeleton" />
+            </button>
+          )) : visibleSlides.length > 0 ? visibleSlides.map((slide) => (
             <button
               type="button"
               key={slide.index}
@@ -876,7 +928,9 @@ function ResultSlideWorkspace({
           ) : null}
         </div>
         <div className="slide-canvas-area">
-          {selectedSlide ? (
+          {loading ? (
+            <div className="scholarly-slide-frame slide-loading-frame motion-skeleton" />
+          ) : selectedSlide ? (
             <KonvaSlideEditor
               slide={selectedSlide}
               editable={editable}
@@ -967,11 +1021,28 @@ function ResultMonitor({
 }) {
   const { t, locale } = useLocale();
   const status = job?.status ?? result?.status ?? historyEntry?.status;
-  const progress = Math.round((job?.progress ?? (status === "complete" ? 1 : 0)) * 100);
-  const latestText = logs.length ? logs[logs.length - 1].replace(/^\[[^\]]+\]\s*/, "") : t("monitor.waiting");
+  const completedSlides = job?.slides_completed ?? historyEntry?.slideCount ?? result?.slides.length ?? 0;
+  const totalSlides = job?.total_slides ?? historyEntry?.slideCount ?? result?.slides.length ?? 0;
+  const progress = totalSlides > 0 ? Math.round((completedSlides / totalSlides) * 100) : 0;
+  const rawLatestText = logs.length ? logs[logs.length - 1].replace(/^\[[^\]]+\]\s*/, "") : job?.message ?? t("monitor.waiting");
+  const latestText = translateJobMessage(rawLatestText, locale) ?? rawLatestText;
   const outputPath = job?.output_path ?? result?.output_path ?? historyEntry?.outputPath;
   const outputName = outputPath ? outputPath.replace(/\\/g, "/").split("/").pop() : t("common.pending");
-  const nextStep = status === "complete" ? t("result.refineTitle") : latestText;
+  const nextStep = formatMonitorNextStep(
+    job ?? (status ? {
+      status,
+      progress: status === "complete" ? 1 : 0,
+      message: "",
+      slides_completed: completedSlides,
+      total_slides: totalSlides,
+      output_path: outputPath ?? null,
+      error: null,
+    } : undefined),
+    logs,
+    locale,
+    t,
+  );
+  const isActiveRun = Boolean(job && status && !["idle", "complete", "error", "cancelled"].includes(status));
   const connectionLabel =
     connectionStatus === "connected"
       ? t("status.connected")
@@ -997,7 +1068,7 @@ function ResultMonitor({
         </div>
       </div>
       <div className="agent-monitor-body result-monitor-body">
-        <div className="agent-avatar"><Bot size={26} /></div>
+        <div className={`agent-avatar ${isActiveRun ? "agent-avatar-active" : ""}`}><Bot size={26} /></div>
         <div className="agent-summary">
           <strong>{formatStatusLabel(status, locale, t("common.unknown"))}</strong>
           <span>{outputName}</span>
@@ -1006,7 +1077,7 @@ function ResultMonitor({
         <div className="monitor-progress-block">
           <span><strong>{progress}%</strong> {t("monitor.slideGeneration")}</span>
           <Progress value={progress} className="monitor-progress" />
-          <em>{job?.slides_completed ?? historyEntry?.slideCount ?? result?.slides.length ?? 0} / {job?.total_slides ?? historyEntry?.slideCount ?? result?.slides.length ?? "?"} {t("preview.slides")}</em>
+          <em>{completedSlides} / {totalSlides || "?"} {t("preview.slides")}</em>
         </div>
         <div className="monitor-event">
           <strong>{t("monitor.lastEvent")}</strong>
@@ -1019,6 +1090,30 @@ function ResultMonitor({
       </div>
     </section>
   );
+}
+
+function formatMonitorNextStep(
+  job: JobStatus | undefined,
+  logs: string[],
+  locale: "en" | "zh",
+  t: (key: string) => string,
+) {
+  const status = job?.status ?? "idle";
+  if (status === "idle") {
+    return t("monitor.nextUpload");
+  }
+  if (status === "complete") {
+    return t("result.refineTitle");
+  }
+  if (status === "error" || status === "cancelled") {
+    return translateStageStatus(status, locale, "progress");
+  }
+  const activeStage = inferActiveStage(job, logs);
+  const activeIndex = PROGRESS_STAGES.findIndex((stage) => stage.id === activeStage);
+  const nextStage = activeIndex >= 0 ? PROGRESS_STAGES[activeIndex + 1] : undefined;
+  return nextStage
+    ? translateStageStatus(nextStage.id, locale, "progress")
+    : translateStageStatus(status, locale, "progress");
 }
 
 function ConfigViewer({

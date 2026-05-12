@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Loader2 } from "lucide-react";
 import { useLocale } from "../../i18n";
 import { updateSvgFonts, reexportPresentation } from "../../lib/api";
 import type { UpdateFontsRequest } from "../../lib/types";
@@ -133,6 +134,7 @@ export function FontCustomizer({ jobId, onReexported }: Props) {
           onClick={handleApply}
           disabled={loading || !anySet}
         >
+          {loading ? <Loader2 size={15} className="spin" /> : null}
           {loading ? t("result.fontsLoading") : t("result.fontsApply")}
         </button>
       </div>

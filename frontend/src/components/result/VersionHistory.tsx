@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { deleteVersion, fetchVersion, listVersions } from "../../lib/api";
 import type { VersionDetailResponse, VersionItem } from "../../lib/types";
 import { useLocale } from "../../i18n";
-import { RefreshCw } from "lucide-react";
+import { Loader2, RefreshCw } from "lucide-react";
 import { Button } from "../ui/button";
 
 interface VersionHistoryProps {
@@ -90,8 +90,13 @@ export function VersionHistory({ jobId, onError }: VersionHistoryProps) {
         </Button>
       </div>
       {error ? <p className="error-text">{error}</p> : null}
-      {versions.length === 0 && !loading ? (
-        <p className="muted-copy">{t("versions.empty")}</p>
+      {loading && versions.length === 0 ? (
+        <div className="versions-list">
+          <div className="versions-loading-row motion-skeleton" />
+          <div className="versions-loading-row motion-skeleton" />
+        </div>
+      ) : versions.length === 0 ? (
+        <p className="versions-empty muted-copy">{t("versions.empty")}</p>
       ) : (
         <ul className="versions-list">
           {versions.map((version) => (
@@ -114,6 +119,7 @@ export function VersionHistory({ jobId, onError }: VersionHistoryProps) {
                   onClick={() => void handleOpen(version)}
                   disabled={detailLoading}
                 >
+                  {detailLoading ? <Loader2 size={13} className="spin" /> : null}
                   {t("versions.view")}
                 </button>
                 <button
@@ -128,7 +134,11 @@ export function VersionHistory({ jobId, onError }: VersionHistoryProps) {
           ))}
         </ul>
       )}
-      {selected ? (
+      {detailLoading && !selected ? (
+        <div className="versions-detail">
+          <div className="versions-loading-frame motion-skeleton" />
+        </div>
+      ) : selected ? (
         <div className="versions-detail">
           <div className="versions-detail-header">
             <strong>{selected.name}</strong>
