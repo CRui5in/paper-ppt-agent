@@ -2,10 +2,17 @@ import type {
   CancelJobResponse,
   GenerateRequestPayload,
   GenerateResponse,
+  ImageApplyRequest,
+  ImageApplyResponse,
+  ImageSearchRequest,
+  ImageSearchResponse,
+  ImageUndoResponse,
   ImportStartResponse,
   ImportStatus,
   JobStatus,
   PreviewResponse,
+  PreviewSlide,
+  SlideDocument,
   ProvidersResponse,
   ReexportResponse,
   RefineRequestPayload,
@@ -76,6 +83,10 @@ export interface UsageSnapshotResponse {
   recent: UsageRecordResponse[];
 }
 
+export interface HealthResponse {
+  status: string;
+}
+
 /**
  * Error thrown for non-2xx HTTP responses.
  *
@@ -119,6 +130,10 @@ export async function uploadPaper(file: File): Promise<UploadResponse> {
 
 export async function fetchProviders(): Promise<ProvidersResponse> {
   return request<ProvidersResponse>("/api/providers");
+}
+
+export async function fetchBackendHealth(init?: RequestInit): Promise<HealthResponse> {
+  return request<HealthResponse>("/healthz", init);
 }
 
 export async function fetchTemplates(): Promise<TemplateInfo[]> {
@@ -189,6 +204,28 @@ export async function fetchProjectPreview(projectDir: string): Promise<PreviewRe
   return request<PreviewResponse>(`/api/preview-project?${params.toString()}`);
 }
 
+export async function updatePreviewSlide(jobId: string, slideIndex: number, content: string, document?: SlideDocument, notes?: string): Promise<PreviewSlide> {
+  return request<PreviewSlide>(`/api/preview/${jobId}/slides/${slideIndex}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content, document, notes }),
+  });
+}
+
+export async function createPreviewSlide(jobId: string, content?: string, document?: SlideDocument, notes?: string): Promise<PreviewSlide> {
+  return request<PreviewSlide>(`/api/preview/${jobId}/slides`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content, document, notes }),
+  });
+}
+
+export async function deletePreviewSlide(jobId: string, slideIndex: number): Promise<PreviewResponse> {
+  return request<PreviewResponse>(`/api/preview/${jobId}/slides/${slideIndex}`, {
+    method: "DELETE",
+  });
+}
+
 export async function refinePresentation(
   payload: RefineRequestPayload,
 ): Promise<RefineResponse> {
@@ -227,6 +264,36 @@ export async function updateSvgFonts(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(config),
+  });
+}
+
+export async function searchImages(
+  jobId: string,
+  payload: ImageSearchRequest,
+  init?: RequestInit,
+): Promise<ImageSearchResponse> {
+  return request<ImageSearchResponse>(`/api/image-search/${jobId}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    signal: init?.signal,
+  });
+}
+
+export async function applySearchImage(
+  jobId: string,
+  payload: ImageApplyRequest,
+): Promise<ImageApplyResponse> {
+  return request<ImageApplyResponse>(`/api/image-search/${jobId}/apply`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function undoSearchImage(jobId: string): Promise<ImageUndoResponse> {
+  return request<ImageUndoResponse>(`/api/image-search/${jobId}/undo`, {
+    method: "POST",
   });
 }
 

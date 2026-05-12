@@ -6,6 +6,9 @@ import { useLocale } from "../i18n";
 import { fetchUsageSnapshot } from "../lib/api";
 import { translateStageStatus } from "../lib/i18nStatus";
 import { openUsageSocket } from "../lib/ws";
+import { Button } from "../components/ui/button";
+import { Input } from "../components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 
 interface DailyRow {
   day: string;
@@ -178,6 +181,10 @@ export function LogsPage() {
     () => [...byStage].sort((left, right) => right.total_tokens - left.total_tokens),
     [byStage],
   );
+  const stageTotalTokens = useMemo(
+    () => stageRows.reduce((sum, row) => sum + row.total_tokens, 0),
+    [stageRows],
+  );
 
   const uniqueStages = useMemo(() => {
     const set = new Set(records.map((r) => r.stage).filter(Boolean));
@@ -216,16 +223,16 @@ export function LogsPage() {
   const chartColors = useMemo(() => {
     const isDark = document.documentElement.dataset.theme === "dark";
     const styles = window.getComputedStyle(document.documentElement);
-    const text = styles.getPropertyValue("--text").trim() || (isDark ? "#f6efe6" : "#211710");
-    const surfaceStrong = styles.getPropertyValue("--surface-strong").trim() || (isDark ? "#1d1613" : "#fffaf5");
+    const text = styles.getPropertyValue("--text").trim() || (isDark ? "#f8fafc" : "#191b23");
+    const surfaceStrong = styles.getPropertyValue("--surface-strong").trim() || (isDark ? "#0f172a" : "#ffffff");
     return {
-      text: isDark ? "#f6efe6" : text,
-      muted: isDark ? "#d7c6b7" : "#5f493a",
-      line: isDark ? "rgba(255, 244, 232, 0.15)" : "rgba(87, 58, 38, 0.18)",
+      text: isDark ? "#f8fafc" : text,
+      muted: isDark ? "#cbd5e1" : "#64748b",
+      line: isDark ? "rgba(148, 163, 184, 0.2)" : "#dfe5f0",
       surfaceStrong,
-      tooltipBg: isDark ? "rgba(21, 16, 14, 0.98)" : "rgba(255, 250, 245, 0.99)",
-      tooltipText: isDark ? "#f6efe6" : "#211710",
-      tooltipBorder: isDark ? "rgba(255, 139, 71, 0.26)" : "rgba(204, 95, 27, 0.28)",
+      tooltipBg: isDark ? "rgba(15, 23, 42, 0.98)" : "rgba(255, 255, 255, 0.99)",
+      tooltipText: isDark ? "#f8fafc" : "#191b23",
+      tooltipBorder: isDark ? "rgba(148, 163, 184, 0.3)" : "#dfe5f0",
     };
   }, [chartRevision]);
 
@@ -252,8 +259,9 @@ export function LogsPage() {
   const dailyOption = useMemo<EChartsOption>(() => ({
     animationDuration: 700,
     animationDurationUpdate: 450,
-    textStyle: { color: chartColors.text, fontFamily: "Aptos, Segoe UI, sans-serif" },
-    grid: { left: 18, right: 18, top: 28, bottom: 18, containLabel: true },
+    color: ["#1A5AD7", "#06B6D4"],
+    textStyle: { color: chartColors.text, fontFamily: "Inter, Manrope, Segoe UI, sans-serif" },
+    grid: { left: 18, right: 20, top: 26, bottom: 18, containLabel: true },
     tooltip: {
       appendToBody: true,
       trigger: "axis",
@@ -294,8 +302,8 @@ export function LogsPage() {
         symbol: "circle",
         symbolSize: 8,
         data: dailyRows.map((row) => row.total_tokens),
-        lineStyle: { width: 3, color: "#ff8b47" },
-        itemStyle: { color: "#ffb37a" },
+        lineStyle: { width: 3, color: "#1A5AD7" },
+        itemStyle: { color: "#06B6D4" },
         areaStyle: {
           color: {
             type: "linear",
@@ -304,8 +312,8 @@ export function LogsPage() {
             x2: 0,
             y2: 1,
             colorStops: [
-              { offset: 0, color: "rgba(255, 139, 71, 0.34)" },
-              { offset: 1, color: "rgba(255, 139, 71, 0.02)" },
+              { offset: 0, color: "rgba(26, 90, 215, 0.2)" },
+              { offset: 1, color: "rgba(6, 182, 212, 0.02)" },
             ],
           },
         },
@@ -316,7 +324,8 @@ export function LogsPage() {
   const modelOption = useMemo<EChartsOption>(() => ({
     animationDuration: 650,
     animationDurationUpdate: 400,
-    textStyle: { color: chartColors.text, fontFamily: "Aptos, Segoe UI, sans-serif" },
+    color: ["#1A5AD7", "#06B6D4"],
+    textStyle: { color: chartColors.text, fontFamily: "Inter, Manrope, Segoe UI, sans-serif" },
     grid: { left: 18, right: 18, top: 18, bottom: 12, containLabel: true },
     tooltip: {
       appendToBody: true,
@@ -370,8 +379,8 @@ export function LogsPage() {
             x2: 1,
             y2: 0,
             colorStops: [
-              { offset: 0, color: "#cc5f1b" },
-              { offset: 1, color: "#ffb37a" },
+              { offset: 0, color: "#06B6D4" },
+              { offset: 1, color: "#1A5AD7" },
             ],
           },
         },
@@ -382,62 +391,85 @@ export function LogsPage() {
   const stageOption = useMemo<EChartsOption>(() => ({
     animationDuration: 700,
     animationDurationUpdate: 450,
-    textStyle: { color: chartColors.text, fontFamily: "Aptos, Segoe UI, sans-serif" },
+    color: STAGE_COLORS,
+    textStyle: { color: chartColors.text, fontFamily: "Inter, Manrope, Segoe UI, sans-serif" },
+    grid: { left: 84, right: 92, top: 16, bottom: 18, containLabel: false },
     tooltip: {
       appendToBody: true,
-      trigger: "item",
+      trigger: "axis",
       position: tooltipPosition,
+      axisPointer: { type: "shadow" },
       backgroundColor: chartColors.tooltipBg,
       borderColor: chartColors.tooltipBorder,
       borderWidth: 1,
       textStyle: { color: chartColors.tooltipText, fontSize: 13, fontWeight: 600 },
       extraCssText: "border-radius:12px;padding:10px 12px;line-height:1.5;box-shadow:0 16px 36px rgba(0,0,0,0.18);",
-      formatter: (params: any) =>
-        `${String(params?.name ?? "")}<br/>${formatNumber(Number(params?.value ?? 0))} · ${Number(params?.percent ?? 0)}%`,
+      formatter: (params: any) => {
+        const item = Array.isArray(params) ? params[0] : params;
+        const data = item?.data as { value?: number; tokens?: number } | undefined;
+        return `${String(item?.name ?? "")}<br/>${(Number(data?.value ?? 0)).toFixed(2)}% · ${formatNumber(Number(data?.tokens ?? 0))} tokens`;
+      },
     },
-    legend: {
-      bottom: 0,
-      icon: "circle",
-      textStyle: { color: chartColors.text, fontSize: 12 },
-      itemWidth: 10,
-      itemHeight: 10,
+    xAxis: {
+      type: "value",
+      min: 0,
+      max: 100,
+      axisLine: { show: false },
+      axisTick: { show: false },
+      axisLabel: {
+        color: chartColors.muted,
+        fontSize: 11,
+        formatter: "{value}%",
+      },
+      splitLine: { lineStyle: { color: chartColors.line } },
+    },
+    yAxis: {
+      type: "category",
+      inverse: true,
+      data: stageRows.map((row) => translateStageStatus(row.stage, locale, "logs")),
+      axisLine: { show: false },
+      axisTick: { show: false },
+      axisLabel: {
+        color: chartColors.text,
+        fontSize: 12,
+        fontWeight: 700,
+        width: 72,
+        overflow: "truncate",
+      },
     },
     series: [
       {
-        type: "pie",
-        radius: ["54%", "76%"],
-        center: ["50%", "42%"],
-        avoidLabelOverlap: true,
-        itemStyle: {
-          borderColor: chartColors.surfaceStrong,
-          borderWidth: 3,
-        },
+        type: "bar",
+        barWidth: 16,
+        barGap: "42%",
+        data: stageRows.map((row, idx) => {
+          const percent = stageTotalTokens > 0 ? (row.total_tokens / stageTotalTokens) * 100 : 0;
+          return {
+            value: Number(percent.toFixed(4)),
+            tokens: row.total_tokens,
+            itemStyle: {
+              color: STAGE_COLORS[idx % STAGE_COLORS.length],
+              borderRadius: [0, 999, 999, 0],
+            },
+          };
+        }),
         label: {
+          show: true,
+          position: "right",
           color: chartColors.text,
           fontSize: 12,
-          fontWeight: 600,
-          formatter: "{b}\n{d}%",
-          lineHeight: 18,
+          fontWeight: 750,
+          formatter: (params: any) => `${Number(params?.value ?? 0).toFixed(2)}%`,
         },
-        labelLine: {
-          lineStyle: { color: chartColors.muted },
-        },
-        data: stageRows.map((row, idx) => ({
-          name: translateStageStatus(row.stage, locale, "logs"),
-          value: row.total_tokens,
-          itemStyle: {
-            color: STAGE_COLORS[idx % STAGE_COLORS.length],
-          },
-        })),
       },
     ],
-  }), [chartColors, locale, stageRows, tooltipPosition]);
+  }), [chartColors, locale, stageRows, stageTotalTokens, tooltipPosition]);
 
   const subtitle = t("logs.subtitle");
 
   return (
-    <Layout>
-      <section className="logs-page">
+    <Layout showSidebar={false} contentClassName="studio-page">
+      <section className="logs-page logs-workspace-page">
         <header className="logs-header">
           <h1>{t("logs.title")}</h1>
           <p className="muted-copy">
@@ -491,44 +523,46 @@ export function LogsPage() {
           <div className="logs-table-header">
             <h2>{t("logs.recent")}</h2>
             <div className="logs-filters">
-              <select
-                className="logs-filter-select"
-                value={filterStage}
-                onChange={(e) => setFilterStage(e.target.value)}
-              >
-                <option value="">Stage</option>
+              <Select value={filterStage || "__all__"} onValueChange={(value) => setFilterStage(value === "__all__" ? "" : value)}>
+                <SelectTrigger className="logs-filter-select">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                <SelectItem value="__all__">{t("logs.filterStage")}</SelectItem>
                 {uniqueStages.map((s) => (
-                  <option key={s} value={s}>{translateStageStatus(s, locale, "logs")}</option>
+                  <SelectItem key={s} value={s}>{translateStageStatus(s, locale, "logs")}</SelectItem>
                 ))}
-              </select>
-              <select
-                className="logs-filter-select"
-                value={filterModel}
-                onChange={(e) => setFilterModel(e.target.value)}
-              >
-                <option value="">Model</option>
+                </SelectContent>
+              </Select>
+              <Select value={filterModel || "__all__"} onValueChange={(value) => setFilterModel(value === "__all__" ? "" : value)}>
+                <SelectTrigger className="logs-filter-select">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                <SelectItem value="__all__">{t("logs.filterModel")}</SelectItem>
                 {uniqueModels.map((m) => (
-                  <option key={m} value={m}>{m}</option>
+                  <SelectItem key={m} value={m}>{m}</SelectItem>
                 ))}
-              </select>
-              <input
+                </SelectContent>
+              </Select>
+              <Input
                 className="logs-filter-input"
                 type="text"
-                placeholder="Page"
+                placeholder={t("logs.filterPage")}
                 value={filterPage}
                 onChange={(e) => setFilterPage(e.target.value.replace(/\D/g, ""))}
               />
-              <input
+              <Input
                 className="logs-filter-input"
                 type="text"
-                placeholder="Job ID"
+                placeholder={t("logs.filterJob")}
                 value={filterJob}
                 onChange={(e) => setFilterJob(e.target.value)}
               />
               {(filterStage || filterModel || filterPage || filterJob) ? (
-                <button type="button" className="logs-filter-clear" onClick={clearFilters}>
-                  Clear
-                </button>
+                <Button type="button" variant="outline" size="sm" className="logs-filter-clear" onClick={clearFilters}>
+                  {t("logs.clearFilters")}
+                </Button>
               ) : null}
             </div>
           </div>
@@ -581,52 +615,52 @@ export function LogsPage() {
           {selectedRecord ? (
             <div className="logs-detail-panel">
               <div className="logs-detail-header">
-                <span className="logs-detail-title">Record Detail</span>
+                <span className="logs-detail-title">{t("logs.recordDetail")}</span>
                 <button type="button" className="logs-detail-close" onClick={() => setSelectedRecord(null)}>×</button>
               </div>
               <div className="logs-detail-grid">
                 <div className="logs-detail-item">
-                  <span className="logs-detail-label">Time</span>
+                  <span className="logs-detail-label">{t("logs.time")}</span>
                   <span className="logs-detail-value">{formatter.format(new Date(selectedRecord.ts))}</span>
                 </div>
                 <div className="logs-detail-item">
-                  <span className="logs-detail-label">Provider</span>
+                  <span className="logs-detail-label">{t("logs.provider")}</span>
                   <span className="logs-detail-value">{selectedRecord.provider}</span>
                 </div>
                 <div className="logs-detail-item">
-                  <span className="logs-detail-label">Model</span>
+                  <span className="logs-detail-label">{t("logs.model")}</span>
                   <span className="logs-detail-value">{selectedRecord.model}</span>
                 </div>
                 <div className="logs-detail-item">
-                  <span className="logs-detail-label">Stage</span>
+                  <span className="logs-detail-label">{t("logs.stage")}</span>
                   <span className="logs-detail-value">{selectedRecord.stage ? translateStageStatus(selectedRecord.stage, locale, "logs") : "-"}</span>
                 </div>
                 <div className="logs-detail-item">
-                  <span className="logs-detail-label">Job ID</span>
+                  <span className="logs-detail-label">{t("logs.job")}</span>
                   <span className="logs-detail-value logs-detail-mono">{selectedRecord.job_id ?? "-"}</span>
                 </div>
                 <div className="logs-detail-item">
-                  <span className="logs-detail-label">Page</span>
+                  <span className="logs-detail-label">{t("logs.page")}</span>
                   <span className="logs-detail-value">{selectedRecord.page ?? "-"}</span>
                 </div>
                 <div className="logs-detail-item">
-                  <span className="logs-detail-label">Attempt</span>
+                  <span className="logs-detail-label">{t("logs.attempt")}</span>
                   <span className="logs-detail-value">{selectedRecord.attempt}</span>
                 </div>
                 <div className="logs-detail-item">
-                  <span className="logs-detail-label">Duration</span>
+                  <span className="logs-detail-label">{t("logs.duration")}</span>
                   <span className="logs-detail-value">{selectedRecord.duration_ms} ms</span>
                 </div>
                 <div className="logs-detail-item">
-                  <span className="logs-detail-label">Prompt Tokens</span>
+                  <span className="logs-detail-label">{t("logs.promptTokens")}</span>
                   <span className="logs-detail-value">{formatNumber(selectedRecord.prompt_tokens)}</span>
                 </div>
                 <div className="logs-detail-item">
-                  <span className="logs-detail-label">Completion Tokens</span>
+                  <span className="logs-detail-label">{t("logs.completionTokens")}</span>
                   <span className="logs-detail-value">{formatNumber(selectedRecord.completion_tokens)}</span>
                 </div>
                 <div className="logs-detail-item">
-                  <span className="logs-detail-label">Total Tokens</span>
+                  <span className="logs-detail-label">{t("logs.totalTokens")}</span>
                   <span className="logs-detail-value">{formatNumber(selectedRecord.total_tokens)}</span>
                 </div>
               </div>
@@ -639,12 +673,14 @@ export function LogsPage() {
 }
 
 const STAGE_COLORS = [
-  "#ff8b47",
-  "#ffb37a",
-  "#ffd2b2",
-  "#93f3bf",
-  "#7ac8ff",
-  "#e0a3ff",
+  "#1a5ad7",
+  "#06b6d4",
+  "#0891b2",
+  "#4f7dd8",
+  "#8aa0bd",
+  "#94a3b8",
+  "#0f766e",
+  "#64748b",
 ];
 
 function ChartPanel({

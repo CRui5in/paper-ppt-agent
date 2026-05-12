@@ -3,6 +3,7 @@ set -eu
 
 ROOT="$(CDPATH= cd "$(dirname "$0")" && pwd)"
 FRONTEND_DIR="$ROOT/frontend"
+FRONTEND_URL="http://127.0.0.1:5173"
 
 if ! command -v uv >/dev/null 2>&1; then
   echo "uv was not found in the current shell environment."
@@ -48,13 +49,13 @@ BACKEND_PID=$!
 
 echo "==> Starting frontend"
 cd "$FRONTEND_DIR"
-npm run dev -- --host 127.0.0.1 --port 5173 --strictPort &
+npm run dev -- --host 127.0.0.1 --port 5173 --strictPort --open &
 FRONTEND_PID=$!
 
 echo
 echo "Paper PPT Agent is starting:"
 echo "  Backend:  http://127.0.0.1:8000"
-echo "  Frontend: http://127.0.0.1:5173"
+echo "  Frontend: $FRONTEND_URL"
 echo
 echo "Press Ctrl+C to stop both services."
 

@@ -79,6 +79,37 @@ def parse_svg_ratio(value: object, default: float = 0.0) -> float:
     return number
 
 
+def parse_style_attribute(style: object) -> dict[str, str]:
+    """Parse an inline SVG/CSS style attribute into a property map."""
+    if style is None:
+        return {}
+    text = str(style).strip()
+    if not text:
+        return {}
+
+    result: dict[str, str] = {}
+    for declaration in text.split(";"):
+        if ":" not in declaration:
+            continue
+        key, value = declaration.split(":", 1)
+        key = key.strip()
+        value = value.strip()
+        if key and value:
+            result[key] = value
+    return result
+
+
+def get_style_attr(elem: object, attr: str, default: str = "") -> str:
+    """Read an SVG attribute, falling back to inline CSS style."""
+    getter = getattr(elem, "get", None)
+    if not callable(getter):
+        return default
+    value = getter(attr)
+    if value is not None:
+        return value
+    return parse_style_attribute(getter("style")).get(attr, default)
+
+
 def font_px_to_half_pts(px: float) -> int:
     """Convert font size in px to hundredths of a point."""
     return round(px * FONT_PX_TO_HUNDREDTHS_PT)

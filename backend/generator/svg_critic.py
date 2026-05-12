@@ -715,6 +715,10 @@ def check_svg(svg_content: str, config: CriticConfig | None = None) -> CriticRep
     #     CJK glyphs are wider than regular ones.
     _check_bold_tspan_in_cjk(root, violations)
 
+    # 4i. Inline emphasis drift: short colored keywords should not be
+    #     separated from their surrounding sentence as distant sibling text.
+    _check_inline_emphasis_drift(text_boxes, violations)
+
     # 5. Palette compliance (optional).
     if cfg.allowed_palette:
         allowed = {_normalize_hex(c) for c in cfg.allowed_palette}
@@ -1363,3 +1367,71 @@ def _check_bold_tspan_in_cjk(
                 element=_element_identifier(el),
             )
         )
+
+
+def _check_inline_emphasis_drift(
+    text_boxes: list[tuple[int, ET.Element, tuple[float, float, float, float]]],
+    violations: list[Violation],
+) -> None:
+    rows: list[list[tuple[int, ET.Element, tuple[float, float, float, float]]]] = []
+    for entry in sorted(text_boxes, key=lambda item: (item[2][1], item[2][0])):
+        _order, el, bbox = entry
+        font_size = _font_size_of(el, 16.0)
+        baseline = bbox[1] + font_size
+        placed = False
+        for row in rows:
+            row_font = _font_size_of(row[0][1], 16.0)
+            row_baseline = row[0][2][1] + row_font
+            if abs(baseline - row_baseline) <= max(4.0, font_size * 0.3):
+                row.append(entry)
+                placed = True
+                break
+        if not placed:
+            rows.append([entry])
+
+    for row in rows:
+        if len(row) < 2:
+            continue
+        row.sort(key=lambda item: item[2][0])
+        for previous, current in zip(row, row[1:]):
+            _prev_order, prev_el, prev_box = previous
+            _cur_order, cur_el, cur_box = current
+            cur_text = _text_of(cur_el)
+            if not _looks_like_inline_emphasis(cur_el, cur_text):
+                continue
+            prev_font = _font_size_of(prev_el, 16.0)
+            cur_font = _font_size_of(cur_el, 16.0)
+            if abs(prev_font - cur_font) > max(3.0, prev_font * 0.25):
+                continue
+            gap = cur_box[0] - (prev_box[0] + prev_box[2])
+            if gap <= max(36.0, prev_font * 2.0):
+                continue
+            if gap > 560.0:
+                continue
+            violations.append(
+                Violation(
+                    rule="inline_emphasis_drift",
+                    severity="error",
+                    detail=(
+                        "A short colored keyword appears far from the preceding text "
+                        f"on the same baseline (estimated gap {gap:.0f}px). This is "
+                        "usually caused by using a separate `<text>` element for inline "
+                        "emphasis. Merge the sentence into one `<text>` and style the "
+                        "keyword with an inline `<tspan fill=\"...\">...</tspan>`."
+                    ),
+                    element=_element_identifier(cur_el),
+                    bbox=cur_box,
+                )
+            )
+
+
+def _looks_like_inline_emphasis(el: ET.Element, text: str) -> bool:
+    value = text.strip()
+    if not value:
+        return False
+    if len(value) > 14:
+        return False
+    if not (_CJK_RE.search(value) or any(ch in value for ch in {'"', "'", "“", "”", "_"})):
+        return False
+    color = _resolve_text_color(el)
+    return color is not None and not _is_neutral(color)

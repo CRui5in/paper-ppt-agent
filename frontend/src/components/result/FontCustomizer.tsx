@@ -1,7 +1,9 @@
 import { useState } from "react";
+import { Loader2 } from "lucide-react";
 import { useLocale } from "../../i18n";
 import { updateSvgFonts, reexportPresentation } from "../../lib/api";
 import type { UpdateFontsRequest } from "../../lib/types";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 
 interface FontOption { label: string; value: string }
 
@@ -91,20 +93,9 @@ export function FontCustomizer({ jobId, onReexported }: Props) {
   };
 
   return (
-    <section style={{
-      display: "flex", flexWrap: "wrap", alignItems: "flex-end",
-      gap: "0.75rem", padding: "0.9rem 1.1rem",
-      borderRadius: 10, border: "1px solid var(--line)",
-      background: "var(--surface-soft)",
-      marginTop: "1.5rem",
-    }}>
-      <div style={{ flex: "1 1 100%", marginBottom: "0.15rem" }}>
-        <h3 style={{ fontSize: "1rem", fontWeight: 600, margin: "0 0 0.15rem" }}>
-          {t("result.fontsTitle")}
-        </h3>
-        <p style={{ fontSize: "0.78rem", color: "var(--muted)", margin: 0 }}>
-          {t("result.fontsBody")}
-        </p>
+    <section className="font-customizer-panel">
+      <div className="font-customizer-heading">
+        <p>{t("result.fontsBody")}</p>
       </div>
 
       {[
@@ -113,32 +104,27 @@ export function FontCustomizer({ jobId, onReexported }: Props) {
         { key: "ch", label: t("result.fontsCJKHeading"), value: ch, setter: setCh, options: CH_OPTIONS },
         { key: "cb", label: t("result.fontsCJKBody"), value: cb, setter: setCb, options: CB_OPTIONS },
       ].map((item) => (
-        <div key={item.key} style={{ display: "flex", flexDirection: "column", gap: "0.35rem", flex: "1 1 120px", minWidth: 0 }}>
-          <label style={{ fontWeight: 500, fontSize: "0.8rem", color: "var(--muted)" }}>{item.label}</label>
-          <select
-            value={item.value}
-            onChange={(e) => item.setter(e.target.value)}
-            disabled={loading}
-            style={{
-              padding: "0.45rem 0.55rem", borderRadius: 10,
-              border: "1px solid var(--line)", background: "var(--surface-strong)",
-              color: "var(--text)", fontSize: "0.82rem", cursor: "pointer",
-              fontFamily: item.value || undefined,
-            }}
-          >
+        <div key={item.key} className="font-customizer-field">
+          <label>{item.label}</label>
+          <Select value={item.value || "__default__"} onValueChange={(value) => item.setter(value === "__default__" ? "" : value)} disabled={loading}>
+            <SelectTrigger style={{ fontFamily: item.value || undefined }}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
             {item.options.map((opt) => (
-              <option key={opt.value} value={opt.value} style={{ fontFamily: opt.value || undefined }}>
+              <SelectItem key={opt.value || "__default__"} value={opt.value || "__default__"} style={{ fontFamily: opt.value || undefined }}>
                 {opt.label}
-              </option>
+              </SelectItem>
             ))}
-          </select>
+            </SelectContent>
+          </Select>
         </div>
       ))}
 
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "0.35rem" }}>
-        {error && <p style={{ color: "#ff938f", fontSize: "0.8rem", margin: 0 }}>{error}</p>}
+      <div className="font-customizer-actions">
+        {error && <p className="error-text">{error}</p>}
         {result && (
-          <p style={{ color: "var(--success)", fontSize: "0.8rem", margin: 0 }}>
+          <p className="font-customizer-success">
             {t("result.fontsApplied").replace("{n}", String(result.replaced))}
           </p>
         )}
@@ -147,8 +133,8 @@ export function FontCustomizer({ jobId, onReexported }: Props) {
           className="primary-button"
           onClick={handleApply}
           disabled={loading || !anySet}
-          style={{ minHeight: 40, padding: "0.5rem 1rem", fontSize: "0.85rem" }}
         >
+          {loading ? <Loader2 size={15} className="spin" /> : null}
           {loading ? t("result.fontsLoading") : t("result.fontsApply")}
         </button>
       </div>

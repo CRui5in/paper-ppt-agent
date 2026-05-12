@@ -7,6 +7,7 @@ converted slide XML and media into the PPTX zip package.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import zipfile
 import json
@@ -84,7 +85,7 @@ def create_pptx(
         for i, svg_path in enumerate(svg_files):
             slide_num = i + 1
             prepared_svg_path = prepare_svg_file_for_render(svg_path)
-            source_metrics = _analyze_svg_source(svg_path)
+            source_metrics = _analyze_svg_source(prepared_svg_path)
             try:
                 try:
                     slide_xml, media_files, rel_entries = convert_svg_to_slide_shapes(
@@ -253,10 +254,50 @@ def _build_svg_fallback_slide(
 
 def _rasterize_svg_to_png(svg_path: Path) -> bytes:
     """Rasterize an SVG to PNG bytes for robust PowerPoint fallback rendering."""
-    drawing = svg2rlg(str(svg_path))
+    try:
+        from resvg_py import svg_to_bytes  # type: ignore[import-not-found]
+
+        png_bytes = svg_to_bytes(svg_string=svg_path.read_text(encoding="utf-8"), width=1920)
+        if isinstance(png_bytes, list):
+            return bytes(png_bytes)
+        return png_bytes
+    except Exception:
+        pass
+
+    return _rasterize_svg_to_png_with_svglib(svg_path)
+
+
+def _rasterize_svg_to_png_with_svglib(svg_path: Path) -> bytes:
+    """Fallback rasterizer for environments where resvg is unavailable."""
+    sanitized_path: Path | None = None
+    try:
+        drawing = svg2rlg(str(svg_path))
+    except TypeError:
+        sanitized_path = _sanitize_svg_for_svglib(svg_path)
+        drawing = svg2rlg(str(sanitized_path))
+    finally:
+        if sanitized_path is not None:
+            sanitized_path.unlink(missing_ok=True)
+
     if drawing is None:
         raise ValueError(f"Failed to load SVG drawing for fallback: {svg_path.name}")
     return renderPM.drawToString(drawing, fmt="PNG")
+
+
+def _sanitize_svg_for_svglib(svg_path: Path) -> Path:
+    """Normalize SVG syntax that browsers/resvg accept but svglib rejects."""
+    content = svg_path.read_text(encoding="utf-8")
+
+    def normalize_radius(match: re.Match[str]) -> str:
+        attr = match.group(1)
+        value = match.group(2)
+        first = re.split(r"[\s,]+", value.strip())[0]
+        return f'{attr}="{first}"'
+
+    content = re.sub(r'\b(rx|ry)="([^"]+)"', normalize_radius, content)
+    sanitized_path = svg_path.with_name(f".__svglib_{uuid.uuid4().hex}_{svg_path.name}")
+    sanitized_path.write_text(content, encoding="utf-8")
+    return sanitized_path
 
 
 def _ensure_unique_media_names(
@@ -372,7 +413,7 @@ def _evaluate_export_audit(
     findings: list[str] = []
 
     if conversion_mode == "fallback_image":
-        findings.append("slide used raster fallback export")
+        return findings
 
     if source_metrics["text_nodes"] > 0 and output_metrics["text_boxes"] == 0:
         findings.append("source SVG contains text but exported slide has no text boxes")

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -77,11 +77,11 @@ class GenerationOptions(BaseModel):
     detail_level: str = "normal"
     icon_library: str = "chunk"  # chunk / tabler-filled / tabler-outline
     timeout_seconds: int | None = Field(default=None, ge=1)
-    max_critic_attempts: int = Field(default=3, ge=1, le=10)
+    max_critic_attempts: int = Field(default=3, ge=0, le=10)
     style_overrides: StyleOverrides | None = None
     enable_deep_research: bool = False
     enable_visual_critic: bool = False
-    visual_qa_max_attempts: int = Field(default=1, ge=1, le=10)
+    visual_qa_max_attempts: int = Field(default=1, ge=0, le=10)
     enable_icon: bool = False
     enable_icon_rag: bool = False
     gemini_api_key: str | None = None
@@ -120,6 +120,8 @@ class ReexportResponse(BaseModel):
     job_id: str
     status: str
     output_path: str
+    fallback_slides: list[int] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
 
 
 class PreviewSlide(BaseModel):
@@ -127,6 +129,8 @@ class PreviewSlide(BaseModel):
     name: str
     source: str  # "output" or "final"
     content: str
+    notes: str = ""
+    document: dict[str, Any] | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class PreviewResponse(BaseModel):
@@ -170,7 +174,7 @@ class ProvidersResponse(BaseModel):
     providers: list[ProviderListItem]
 
 
-# ── Image Search ─────────────────────────────────────────────────────────────
+# -- Image Search -------------------------------------------------------------
 
 
 class ImageSearchRequest(BaseModel):
@@ -179,7 +183,7 @@ class ImageSearchRequest(BaseModel):
     query: str = Field(min_length=1, max_length=200)
     slide_index: int | None = Field(default=None, ge=1)
     max_results: int = Field(default=8, ge=1, le=20)
-    tavily_api_key: str | None = None  # Client-provided key (takes priority)
+    tavily_api_key: str | None = None
     serpapi_key: str | None = None
 
 
@@ -204,8 +208,7 @@ class ImageApplyRequest(BaseModel):
     image_url: str = Field(min_length=1)
     slide_index: int = Field(ge=1)
     target_element: str | None = None
-    image_description: str = ""  # Description for LLM context
-    # LLM config for AI-powered image insertion (when no <image> in SVG)
+    image_description: str = ""
     api_key: str | None = None
     provider: str = "openai"
     model: str = "gpt-4o"
@@ -213,10 +216,10 @@ class ImageApplyRequest(BaseModel):
 
     @field_validator("image_url")
     @classmethod
-    def validate_image_url(cls, v: str) -> str:
-        if not v.startswith(("http://", "https://")):
+    def validate_image_url(cls, value: str) -> str:
+        if not value.startswith(("http://", "https://")):
             raise ValueError("image_url must start with http:// or https://")
-        return v
+        return value
 
 
 class ImageApplyResponse(BaseModel):
@@ -225,7 +228,7 @@ class ImageApplyResponse(BaseModel):
     status: str
     local_path: str | None = None
     svg_updated: bool = False
-    action: str = ""  # "replaced" | "inserted"
+    action: str = ""
 
 
 class ImageUndoResponse(BaseModel):

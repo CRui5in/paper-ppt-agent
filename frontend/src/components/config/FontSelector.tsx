@@ -1,5 +1,6 @@
 import { ChevronDown, Plus, Settings2, X } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { useLocale } from "../../i18n";
 
 interface FontSelectorProps {
@@ -75,10 +76,12 @@ function FontStackPicker({
   value,
   onChange,
   placeholder,
+  trailingAction,
 }: {
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
+  trailingAction?: ReactNode;
 }) {
   const { t } = useLocale();
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -168,7 +171,8 @@ function FontStackPicker({
       </div>
 
       {/* Add font button + dropdown */}
-      <div style={{ position: "relative" }}>
+      <div className="font-picker-action-row">
+      <div style={{ position: "relative", minWidth: 0, flex: "1 1 auto" }}>
         <button
           type="button"
           onClick={() => setDropdownOpen(!dropdownOpen)}
@@ -269,6 +273,8 @@ function FontStackPicker({
           </div>
         )}
       </div>
+      {trailingAction ? <div className="font-picker-trailing-action">{trailingAction}</div> : null}
+      </div>
 
       {/* Preview */}
       {selectedFonts.length > 0 && (
@@ -296,32 +302,39 @@ export function FontSelector({
   const advanced = advancedToggled || hasAdvancedFonts;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
-      {/* Simple mode — always visible when advanced is off */}
-      {!advanced && (
-        <FontStackPicker value={value} onChange={onChange} />
-      )}
-
-      {/* Advanced toggle */}
-      {hasAdvanced && (
-        <>
+    <div className="font-selector-shell">
+      <div className="font-selector-topline">
+        {!advanced && (
+          <FontStackPicker
+            value={value}
+            onChange={onChange}
+            trailingAction={
+              hasAdvanced ? (
+                <button
+                  type="button"
+                  className="font-advanced-toggle"
+                  onClick={() => setAdvancedToggled(true)}
+                >
+                  <Settings2 size={12} />
+                  {t("font.advancedOff")}
+                </button>
+              ) : null
+            }
+          />
+        )}
+      {hasAdvanced && advanced && (
           <button
             type="button"
-            onClick={() => setAdvancedToggled(!advanced)}
-            style={{
-              display: "inline-flex", alignItems: "center", gap: "0.35rem",
-              padding: "0.35rem 0.6rem", borderRadius: 8,
-              border: "1px solid var(--line)", background: advanced ? "rgba(255,139,71,0.08)" : "transparent",
-              color: advanced ? "var(--accent)" : "var(--muted)",
-              fontSize: "0.75rem", cursor: "pointer", alignSelf: "flex-start",
-            }}
+            className="font-advanced-toggle font-advanced-toggle-active"
+            onClick={() => setAdvancedToggled(false)}
           >
             <Settings2 size={12} />
-            {advanced ? t("font.advancedOn") : t("font.advancedOff")}
+            {t("font.advancedOn")}
           </button>
+      )}
+      </div>
 
-          {/* Advanced mode — 4 dimension control */}
-          {advanced && (
+      {hasAdvanced && advanced && (
             <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem" }}>
                 <div>
@@ -373,8 +386,6 @@ export function FontSelector({
                 {t("font.advancedHint")}
               </p>
             </div>
-          )}
-        </>
       )}
     </div>
   );

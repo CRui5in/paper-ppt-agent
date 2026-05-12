@@ -179,6 +179,58 @@ export interface ReexportResponse {
   job_id: string;
   status: string;
   output_path: string;
+  fallback_slides?: number[];
+  warnings?: string[];
+}
+
+export type SlideDocumentElementType = "text" | "rect" | "image" | "table";
+
+export interface SlideDocumentElement {
+  id: string;
+  type: SlideDocumentElementType;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  rotation?: number;
+  sourceTag?: string;
+  sourceIndex?: number;
+  committed?: boolean;
+  [key: string]: unknown;
+}
+
+export interface SlideDocument {
+  version: number;
+  width: number;
+  height: number;
+  backgroundSvg: string;
+  speakerNotes?: string;
+  elements: SlideDocumentElement[];
+}
+
+export type SlideDocumentElementType = "text" | "rect" | "image" | "table";
+
+export interface SlideDocumentElement {
+  id: string;
+  type: SlideDocumentElementType;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  rotation?: number;
+  sourceTag?: string;
+  sourceIndex?: number;
+  committed?: boolean;
+  [key: string]: unknown;
+}
+
+export interface SlideDocument {
+  version: number;
+  width: number;
+  height: number;
+  backgroundSvg: string;
+  speakerNotes?: string;
+  elements: SlideDocumentElement[];
 }
 
 export interface PreviewSlide {
@@ -186,6 +238,8 @@ export interface PreviewSlide {
   name: string;
   source: string;
   content: string;
+  notes?: string;
+  document?: SlideDocument | null;
 }
 
 export interface PreviewResponse {
@@ -334,8 +388,6 @@ export interface UpdateFontsResponse {
   status: string;
 }
 
-// ── Image Search ─────────────────────────────────────────────────────────
-
 export interface ImageSearchResultItem {
   url: string;
   thumbnail: string;
@@ -347,6 +399,8 @@ export interface ImageSearchRequest {
   query: string;
   slide_index?: number;
   max_results?: number;
+  tavily_api_key?: string;
+  serpapi_key?: string;
 }
 
 export interface ImageSearchResponse {
@@ -357,10 +411,21 @@ export interface ImageApplyRequest {
   image_url: string;
   slide_index: number;
   target_element?: string;
+  image_description?: string;
+  api_key?: string;
+  provider?: string;
+  model?: string;
+  base_url?: string;
 }
 
 export interface ImageApplyResponse {
   status: string;
   local_path?: string;
   svg_updated: boolean;
+  action: string;
+}
+
+export interface ImageUndoResponse {
+  status: string;
+  svg_restored: boolean;
 }

@@ -7,6 +7,7 @@ preview/export do not depend on previous finalize state being perfect.
 from __future__ import annotations
 
 import uuid
+import re
 from pathlib import Path
 
 from backend.config import settings
@@ -21,7 +22,15 @@ from .repair_svg import repair_svg_file
 
 def prepare_svg_file_for_render(svg_path: Path) -> Path:
     """Return a temporary sibling SVG with assets and text normalized."""
-    temp_path = svg_path.with_name(f".__render_{uuid.uuid4().hex}_{svg_path.name}")
+    if not svg_path.exists():
+        raise FileNotFoundError(f"SVG file does not exist: {svg_path}")
+    base_name = svg_path.name
+    while True:
+        match = re.match(r"^\.__render_[0-9a-f]+_(.+)$", base_name)
+        if not match:
+            break
+        base_name = match.group(1)
+    temp_path = svg_path.with_name(f".__render_{uuid.uuid4().hex}_{base_name}")
     temp_path.write_text(svg_path.read_text(encoding="utf-8"), encoding="utf-8")
 
     _prepare_in_place(temp_path)
