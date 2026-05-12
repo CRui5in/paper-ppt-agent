@@ -360,3 +360,45 @@ export interface UpdateFontsResponse {
   svg_fonts_replaced: number;
   status: string;
 }
+
+export interface ImageSearchResultItem {
+  url: string;
+  thumbnail: string;
+  description: string;
+  source: string;
+}
+
+export interface ImageSearchRequest {
+  query: string;
+  slide_index?: number;
+  max_results?: number;
+  tavily_api_key?: string;
+  serpapi_key?: string;
+}
+
+export interface ImageSearchResponse {
+  results: ImageSearchResultItem[];
+}
+
+export interface ImageApplyRequest {
+  image_url: string;
+  slide_index: number;
+  target_element?: string;
+  image_description?: string;
+  api_key?: string;
+  provider?: string;
+  model?: string;
+  base_url?: string;
+}
+
+export interface ImageApplyResponse {
+  status: string;
+  local_path?: string;
+  svg_updated: boolean;
+  action: string;
+}
+
+export interface ImageUndoResponse {
+  status: string;
+  svg_restored: boolean;
+}

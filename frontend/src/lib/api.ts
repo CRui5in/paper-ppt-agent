@@ -2,6 +2,11 @@ import type {
   CancelJobResponse,
   GenerateRequestPayload,
   GenerateResponse,
+  ImageApplyRequest,
+  ImageApplyResponse,
+  ImageSearchRequest,
+  ImageSearchResponse,
+  ImageUndoResponse,
   ImportStartResponse,
   ImportStatus,
   JobStatus,
@@ -259,6 +264,36 @@ export async function updateSvgFonts(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(config),
+  });
+}
+
+export async function searchImages(
+  jobId: string,
+  payload: ImageSearchRequest,
+  init?: RequestInit,
+): Promise<ImageSearchResponse> {
+  return request<ImageSearchResponse>(`/api/image-search/${jobId}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    signal: init?.signal,
+  });
+}
+
+export async function applySearchImage(
+  jobId: string,
+  payload: ImageApplyRequest,
+): Promise<ImageApplyResponse> {
+  return request<ImageApplyResponse>(`/api/image-search/${jobId}/apply`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function undoSearchImage(jobId: string): Promise<ImageUndoResponse> {
+  return request<ImageUndoResponse>(`/api/image-search/${jobId}/undo`, {
+    method: "POST",
   });
 }
 
