@@ -177,7 +177,7 @@ export function AgentLog({ logs, criticEvents, jobId, mode = "mixed", hideHeader
                             ) : (
                               ev.report.violations.map((v, vi) => (
                                 <div key={vi} className={`critic-violation critic-violation-${v.severity}`}>
-                                  <span className="critic-violation-severity">{v.severity}</span>
+                                  <span className="critic-violation-severity">{v.severity.toUpperCase()}</span>
                                   <span className="critic-violation-rule">{v.rule}</span>
                                   {v.element ? <span className="critic-violation-element">{v.element}</span> : null}
                                   <p className="critic-violation-detail">{v.detail}</p>

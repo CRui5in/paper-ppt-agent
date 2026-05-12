@@ -904,7 +904,7 @@ function SlideWorkspace({
               <span>{slide.index}</span>
               <div dangerouslySetInnerHTML={{ __html: slide.content }} />
             </button>
-          )) : Array.from({ length: 7 }).map((_, index) => (
+          )) : Array.from({ length: 1 }).map((_, index) => (
             <button type="button" className={`rail-slide ${index === 0 ? "rail-slide-active" : ""}`} key={index}>
               <span>{index + 1}</span>
               <div className="rail-placeholder" />
@@ -959,12 +959,6 @@ function AgentMonitor({
     : job?.message ?? t("monitor.waiting");
   const isConnected = connectionStatus === "connected";
   const totalSlides = job?.total_slides || job?.slides_completed || 0;
-  const connectionLabel =
-    connectionStatus === "connected"
-      ? t("status.connected")
-      : connectionStatus === "connecting"
-        ? t("status.connecting")
-        : t("status.disconnected");
   const nextStep =
     status === "idle"
       ? t("monitor.nextUpload")
@@ -1009,7 +1003,6 @@ function AgentMonitor({
                   .replace("{logs}", String(logs.length))
                   .replace("{reviews}", String(criticEvents.length))}
           </span>
-          <em>{connectionLabel}</em>
         </div>
         <div className="monitor-progress-block">
           <span><strong>{progress}%</strong> {t("monitor.slideGeneration")}</span>
