@@ -178,13 +178,20 @@ function translateEnrichmentToken(value: string): string {
     return `找到 ${value}`;
   }
   const map: Record<string, string> = {
-    no_extractable_terms: "无可提取术语",
-    package_missing: "依赖未安装",
-    no_api_key: "未配置 API Key",
-    no_title: "缺少标题",
-    httpx_missing: "httpx 未安装",
+    no_extractable_terms: "标题关键词不足，已跳过",
+    package_missing: "当前环境未启用，已跳过",
+    no_api_key: "未配置 API Key，已跳过",
+    no_title: "缺少论文标题，已跳过",
+    httpx_missing: "网页请求组件未启用，已跳过",
+    query_failed: "查询失败，已跳过",
+    timeout: "查询超时，已跳过",
+    rate_limited: "请求受限，已跳过",
   };
-  return map[value] ?? value;
+  if (map[value]) return map[value];
+  if (/future at|exception|traceback|error|timeout|timed out|429/i.test(value)) {
+    return "查询失败，已跳过";
+  }
+  return value;
 }
 
 export function translateLogLine(log: string, locale: Locale): string {

@@ -179,6 +179,8 @@ export interface ReexportResponse {
   job_id: string;
   status: string;
   output_path: string;
+  fallback_slides?: number[];
+  warnings?: string[];
 }
 
 export type SlideDocumentElementType = "text" | "rect" | "image" | "table";

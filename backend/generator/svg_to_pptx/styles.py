@@ -11,6 +11,7 @@ from typing import Any
 
 from .utils import (
     parse_hex_color,
+    get_style_attr,
     parse_svg_length,
     parse_svg_ratio,
     px_to_emu,
@@ -64,8 +65,8 @@ def build_gradient_fill(grad_elem: Any, opacity: float = 1.0) -> str:
         else:
             pos = int(parse_svg_ratio(offset, 0) * 100000)
 
-        color = child.get("stop-color", "#000000")
-        stop_opacity = _parse_opacity(child.get("stop-opacity", "1")) * opacity
+        color = get_style_attr(child, "stop-color", "#000000")
+        stop_opacity = _parse_opacity(get_style_attr(child, "stop-opacity", "1")) * opacity
         hex_color = parse_hex_color(color) or "000000"
 
         alpha = ""

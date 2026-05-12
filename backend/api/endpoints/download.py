@@ -1,5 +1,6 @@
 """Download endpoint for completed presentations."""
 
+import json
 from pathlib import Path
 from datetime import datetime
 
@@ -79,7 +80,8 @@ async def reexport_presentation(job_id: str) -> ReexportResponse:
 
     from backend.runtime import aoffload
 
-    # PPTX assembly is python-pptx + zipfile + cairosvg — all synchronous and
+    # PPTX assembly is python-pptx + zipfile + optional SVG raster fallback —
+    # all synchronous and
     # CPU-heavy (5–20s for a long deck). Offload so re-export from the result
     # page doesn't freeze the API while it runs.
     await aoffload(
@@ -88,6 +90,12 @@ async def reexport_presentation(job_id: str) -> ReexportResponse:
         output_path,
         canvas_format=canvas_format,
         notes=notes,
+    )
+    fallback_slides = _read_fallback_slides(output_path)
+    warnings = (
+        [f"Slides {', '.join(map(str, fallback_slides))} used raster fallback export."]
+        if fallback_slides
+        else []
     )
 
     session_manager.update_job(
@@ -102,7 +110,31 @@ async def reexport_presentation(job_id: str) -> ReexportResponse:
         job_id=job_id,
         status="complete",
         output_path=str(output_path),
+        fallback_slides=fallback_slides,
+        warnings=warnings,
     )
+
+
+def _read_fallback_slides(output_path: Path) -> list[int]:
+    report_path = output_path.with_suffix(".conversion_report.json")
+    if not report_path.exists():
+        return []
+    try:
+        rows = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(rows, list):
+        return []
+    slides: list[int] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if row.get("mode") != "fallback_image":
+            continue
+        slide = row.get("slide")
+        if isinstance(slide, int):
+            slides.append(slide)
+    return slides
 
 
 def _resolve_workspace_file(raw_path: str) -> Path | None:

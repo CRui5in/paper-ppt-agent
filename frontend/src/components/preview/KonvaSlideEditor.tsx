@@ -54,6 +54,8 @@ interface BaseNode {
   sourceTag?: string;
   sourceIndex?: number;
   committed?: boolean;
+  modified?: boolean;
+  deleted?: boolean;
 }
 
 interface TextNode extends BaseNode {
@@ -159,7 +161,7 @@ export function KonvaSlideEditor({ slide, editable, command, onStateChange, onSa
   const scale = Math.min(containerWidth / parsed.width, 1.15);
   const stageWidth = parsed.width * scale;
   const stageHeight = parsed.height * scale;
-  const selectedNodes = nodes.filter((node) => selectedIds.includes(node.id));
+  const selectedNodes = nodes.filter((node) => selectedIds.includes(node.id) && !node.deleted);
   const selectedNode = selectedIds.length === 1 ? selectedNodes[0] : undefined;
   const selectedType = selectedNodes[0]?.type;
   const selectedSourceKey = selectedNodes.map((node) => `${node.sourceTag ?? ""}:${node.sourceIndex ?? ""}`).join("|");
@@ -275,7 +277,11 @@ export function KonvaSlideEditor({ slide, editable, command, onStateChange, onSa
   };
 
   const updateNode = (id: string, patch: Partial<EditorNode>) => {
-    setNodesWithHistory((current) => current.map((node) => (node.id === id ? ({ ...node, ...patch } as EditorNode) : node)));
+    setNodesWithHistory((current) => current.map((node) => (
+      node.id === id
+        ? ({ ...node, ...patch, modified: true } as EditorNode)
+        : node
+    )));
   };
 
   const selectNode = (id: string, additive = false) => {
@@ -369,7 +375,13 @@ export function KonvaSlideEditor({ slide, editable, command, onStateChange, onSa
   const deleteSelected = () => {
     if (!selectedIds.length) return;
     const selected = new Set(selectedIds);
-    setNodesWithHistory((current) => current.filter((node) => !selected.has(node.id)));
+    setNodesWithHistory((current) => current.flatMap((node) => {
+      if (!selected.has(node.id)) return [node];
+      if (node.sourceTag && typeof node.sourceIndex === "number") {
+        return [{ ...node, deleted: true, modified: true } as EditorNode];
+      }
+      return [];
+    }));
     setSelectedIds([]);
   };
 
@@ -522,7 +534,7 @@ export function KonvaSlideEditor({ slide, editable, command, onStateChange, onSa
     if (selected.size <= 1) return;
     const dx = target.x() - dragState.startX;
     const dy = target.y() - dragState.startY;
-    const next = dragState.snapshot.map((node) => (selected.has(node.id) ? ({ ...node, x: node.x + dx, y: node.y + dy } as EditorNode) : node));
+    const next = dragState.snapshot.map((node) => (selected.has(node.id) ? ({ ...node, x: node.x + dx, y: node.y + dy, modified: true } as EditorNode) : node));
     setNodes(next);
   };
 
@@ -533,7 +545,7 @@ export function KonvaSlideEditor({ slide, editable, command, onStateChange, onSa
     if (dragState && dragState.id === id && selected.size > 1) {
       const dx = target.x() - dragState.startX;
       const dy = target.y() - dragState.startY;
-      const next = dragState.snapshot.map((node) => (selected.has(node.id) ? ({ ...node, x: node.x + dx, y: node.y + dy } as EditorNode) : node));
+      const next = dragState.snapshot.map((node) => (selected.has(node.id) ? ({ ...node, x: node.x + dx, y: node.y + dy, modified: true } as EditorNode) : node));
       pushHistory(dragState.snapshot);
       setNodes(next);
       markDirty();
@@ -583,7 +595,7 @@ export function KonvaSlideEditor({ slide, editable, command, onStateChange, onSa
 
   const selectNodesInRect = (rect: SelectionRectState, additive: boolean) => {
     const normalized = normalizeRect(rect);
-    const hits = nodes.filter((node) => rectsIntersect(normalized, nodeBounds(node))).map((node) => node.id);
+    const hits = nodes.filter((node) => !node.deleted && rectsIntersect(normalized, nodeBounds(node))).map((node) => node.id);
     setSelectedIds((current) => {
       if (!additive) return hits;
       const next = new Set(current);
@@ -658,6 +670,7 @@ export function KonvaSlideEditor({ slide, editable, command, onStateChange, onSa
           </Layer>
           <Layer>
             {nodes.map((node) => {
+              if (node.deleted) return null;
               if (node.type === "text") return (
                 <Text
                   key={node.id}
@@ -1076,7 +1089,7 @@ function parseSlide(content: string): ParsedSlide {
 function documentToParsedSlide(document: SlideDocument, fallbackSvg: string): ParsedSlide {
   const width = positiveNumber(document.width, DEFAULT_WIDTH);
   const height = positiveNumber(document.height, DEFAULT_HEIGHT);
-  const backgroundSvg = document.backgroundSvg?.trim() || fallbackSvg || blankSvg();
+  const backgroundSvg = fallbackSvg?.trim() || document.backgroundSvg?.trim() || blankSvg();
   const documentNodes = document.elements.map(normalizeDocumentNode).filter((node): node is EditorNode => Boolean(node));
   const imageSourceIndexes = new Set(documentNodes.filter((node) => node.type === "image" && node.sourceTag === "image").map((node) => node.sourceIndex));
   const missingSourceImages = parseSlide(backgroundSvg).nodes.filter((node): node is ImageNode => (
@@ -1116,6 +1129,8 @@ function normalizeDocumentNode(raw: unknown): EditorNode | null {
     sourceTag: typeof node.sourceTag === "string" ? node.sourceTag : undefined,
     sourceIndex: typeof node.sourceIndex === "number" ? node.sourceIndex : undefined,
     committed: Boolean(node.committed),
+    modified: Boolean(node.modified),
+    deleted: Boolean(node.deleted),
   };
   if (node.type === "text") {
     return {
@@ -1201,6 +1216,11 @@ function composeSvgFromNodes(backgroundSvg: string, nodes: EditorNode[], appendC
   nodes.forEach((node) => {
     if (node.sourceTag === "text" && typeof node.sourceIndex === "number") {
       const source = root.querySelectorAll("text")[node.sourceIndex];
+      if (node.deleted) {
+        source?.remove();
+        return;
+      }
+      if (!node.modified) return;
       if (source && node.type === "text") {
         source.setAttribute("x", String(round(textAnchorX(node))));
         source.setAttribute("y", String(round(node.y + node.fontSize)));
@@ -1220,6 +1240,11 @@ function composeSvgFromNodes(backgroundSvg: string, nodes: EditorNode[], appendC
     }
     if (node.sourceTag === "rect" && typeof node.sourceIndex === "number") {
       const source = root.querySelectorAll("rect")[node.sourceIndex];
+      if (node.deleted) {
+        source?.remove();
+        return;
+      }
+      if (!node.modified) return;
       if (source && node.type === "rect") {
         source.setAttribute("x", String(round(node.x)));
         source.setAttribute("y", String(round(node.y)));
@@ -1236,6 +1261,11 @@ function composeSvgFromNodes(backgroundSvg: string, nodes: EditorNode[], appendC
     }
     if (node.sourceTag === "image" && typeof node.sourceIndex === "number") {
       const source = root.querySelectorAll("image")[node.sourceIndex];
+      if (node.deleted) {
+        source?.remove();
+        return;
+      }
+      if (!node.modified) return;
       if (source && node.type === "image") {
         source.setAttribute("href", node.src);
         source.setAttribute("x", String(round(node.x)));
@@ -1249,6 +1279,7 @@ function composeSvgFromNodes(backgroundSvg: string, nodes: EditorNode[], appendC
       }
       return;
     }
+    if (node.deleted) return;
     if (!appendCommitted) return;
     if (node.type === "text") {
       const text = document.createElementNS(SVG_NS, "text");
