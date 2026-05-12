@@ -225,6 +225,7 @@ async def test_create_design_spec_inserts_missing_outline_page_type() -> None:
     assert len(llm.calls) == 1
 
 
+
 def test_design_spec_validation_rejects_missing_icon_asset() -> None:
     bad = _valid_design_spec().replace(
         "## IX. Content Outline\n- Page 1: content — title cover",
