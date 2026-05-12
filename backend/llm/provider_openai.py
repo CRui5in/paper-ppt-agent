@@ -344,6 +344,7 @@ class OpenAIProvider(LLMProvider):
             stream=True,
         )
 
+        stream = None
         try:
             stream = await self._client.chat.completions.create(**kwargs)
         except BaseException as exc:
@@ -360,6 +361,7 @@ class OpenAIProvider(LLMProvider):
                         or not self._is_parameter_compat_error(fallback_exc)
                     ):
                         raise
+        assert stream is not None
         async for chunk in stream:
             delta = chunk.choices[0].delta
             if delta.content:

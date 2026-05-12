@@ -11,6 +11,7 @@ import { useGeneration } from "../hooks/useGeneration";
 import { useLocale } from "../i18n";
 import { fetchCriticHistory, fetchJobStatus, fetchPreview, fetchProjectPreview, getDownloadUrl, getDownloadUrlForOutput, isNotFoundError, reexportPresentation } from "../lib/api";
 import { FontCustomizer } from "../components/result/FontCustomizer";
+import { ImageSearchPanel } from "../components/result/ImageSearchPanel";
 import { translateStageStatus } from "../lib/i18nStatus";
 import type { CriticEvent, DeepSeekSettings, GenerateRequestPayload, GenerationHistoryItem, JobStatus, OpenAISettings, PreviewResponse, PreviewSlide } from "../lib/types";
 
@@ -462,6 +463,27 @@ export function ResultPage() {
 
       {loadError ? <p className="error-text">{loadError}</p> : null}
       {reexportError ? <p className="error-text">{reexportError}</p> : null}
+
+      {/* ── Image search / replacement ── */}
+      {jobId && selectedSlide && (job?.status === "complete" || job?.status === "error") ? (
+        <ImageSearchPanel
+          jobId={jobId}
+          slideIndex={selectedSlide.index}
+          slideTitle={selectedSlide.name}
+          onImageApplied={() => {
+            // Refresh preview after image replacement
+            const projectDir = result?.project_dir ?? historyEntry?.projectDir;
+            if (projectDir) {
+              fetchProjectPreview(projectDir)
+                .then((p) => {
+                  setSlides(p.slides);
+                  setResult((c) => (c ? { ...c, slides: p.slides } : c));
+                })
+                .catch(() => undefined);
+            }
+          }}
+        />
+      ) : null}
 
       {/* ── Font customization ── */}
       {jobId && (job?.status === "complete" || job?.status === "error") ? (

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from pathlib import Path
 
@@ -18,6 +19,9 @@ from backend.generator.template_importer import (
     remove_user_template,
 )
 from backend.generator.template_manager import load_template
+from backend.runtime import aensure_dir, aoffload, awrite_bytes
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/templates")
 
@@ -89,18 +93,20 @@ async def upload_template_pptx(file: UploadFile) -> ImportStartResponse:
 
     import_id = uuid.uuid4().hex[:12]
     upload_dir = settings.workspaces_dir / "template_uploads" / import_id
-    upload_dir.mkdir(parents=True, exist_ok=True)
+    await aensure_dir(upload_dir)
     pptx_path = upload_dir / file.filename
-    pptx_path.write_bytes(content)
+    await awrite_bytes(pptx_path, content)
 
-    # Run import in background thread
-    loop = asyncio.get_event_loop()
+    # Run the long-running import on the shared offload pool. We don't
+    # await it — the caller polls /import/{id} for completion.
+    async def _run_import() -> None:
+        try:
+            result = await aoffload(import_pptx_template, pptx_path, task_id=import_id)
+            _import_results[import_id] = result
+        except Exception:  # pragma: no cover — caught for surface visibility
+            logger.exception("template import failed for %s", import_id)
 
-    def _run_import() -> None:
-        result = import_pptx_template(pptx_path, task_id=import_id)
-        _import_results[import_id] = result
-
-    loop.run_in_executor(None, _run_import)
+    asyncio.create_task(_run_import(), name=f"template-import-{import_id}")
 
     return ImportStartResponse(import_id=import_id, status="processing")
 
@@ -172,7 +178,9 @@ async def get_template_preview(template_id: str) -> TemplatePreviewResponse:
     if manifest_path.exists():
         import json
         try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            from backend.runtime import aread_text as _aread_text
+            text = await _aread_text(manifest_path, encoding="utf-8")
+            manifest = json.loads(text)
             colors = manifest.get("theme", {}).get("colors", {})
             for key in ("dk1", "lt1", "accent1", "accent2"):
                 val = colors.get(key)

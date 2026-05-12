@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
-import { cancelJob, fetchJobStatus, fetchPreview, fetchProjectPreview, fetchProviders, generatePresentation, isNotFoundError, refinePresentation, uploadPaper } from "../lib/api";
+import { cancelJob, deleteJob, fetchJobStatus, fetchPreview, fetchProjectPreview, fetchProviders, generatePresentation, isNotFoundError, refinePresentation, uploadPaper } from "../lib/api";
 import type {
   CriticEvent,
   GenerateRequestPayload,
@@ -20,11 +20,13 @@ import { openJobSocket } from "../lib/ws";
 
 type ConnectionStatus = "disconnected" | "connecting" | "connected";
 const FINAL_JOB_STATUSES = new Set(["complete", "error", "cancelled"]);
-const HISTORY_LIMIT = 8;
+const HISTORY_STORAGE_LIMIT = 50;
+const HISTORY_STATUS_SYNC_LIMIT = 8;
 const LEGACY_GENERATION_STORAGE_KEY = "paper-ppt-agent-generation-v1";
 const GENERATION_STORAGE_KEY = "paper-ppt-agent-generation-v2";
 const PERSISTED_LOG_LIMIT = 200;
 const LIVE_JOB_STORAGE_PREFIX = "paper-ppt-live-job:";
+const HISTORY_STATUS_SYNC_TIMEOUT_MS = 4000;
 
 /** Per-job seq deduper. Replays after reconnect can re-deliver events
  *  the client already processed; we drop anything with seq <= the last
@@ -113,6 +115,7 @@ interface GenerationState {
   cancelCurrentRun: () => Promise<void>;
   connect: (jobId: string) => void;
   hydrateResult: (jobId: string) => Promise<void>;
+  refreshHistoryStatuses: () => Promise<void>;
   resumeCurrentRun: (targetJobId?: string) => Promise<boolean>;
   selectSlide: (slide?: PreviewSlide) => void;
   syncHistory: (jobId?: string) => void;
@@ -167,7 +170,7 @@ function upsertHistoryItem(history: GenerationHistoryItem[], item: GenerationHis
     .sort((left, right) =>
       (right.createdAt ?? right.updatedAt).localeCompare(left.createdAt ?? left.updatedAt),
     )
-    .slice(0, HISTORY_LIMIT);
+    .slice(0, HISTORY_STORAGE_LIMIT);
 }
 
 function buildHistoryItemFromRun(history: GenerationHistoryItem[], run?: RunSnapshot) {
@@ -176,6 +179,7 @@ function buildHistoryItemFromRun(history: GenerationHistoryItem[], run?: RunSnap
   }
 
   const existing = history.find((entry) => entry.jobId === run.jobId);
+  const status = deriveRunStatus(run, existing);
   const slideCount = Math.max(
     run.slides.length,
     run.result?.slides.length ?? 0,
@@ -189,7 +193,7 @@ function buildHistoryItemFromRun(history: GenerationHistoryItem[], run?: RunSnap
     jobId: run.jobId,
     fileName: run.uploadSession?.file_info.name ?? existing?.fileName ?? run.jobId,
     sourceType: run.uploadSession?.file_info.source_type ?? existing?.sourceType,
-    status: run.result?.status ?? run.job?.status ?? existing?.status ?? "pending",
+    status,
     slideCount,
     createdAt: existing?.createdAt ?? existing?.updatedAt ?? now,
     updatedAt: now,
@@ -209,6 +213,26 @@ function buildHistoryItemFromRun(history: GenerationHistoryItem[], run?: RunSnap
     // previously in history. ``null`` clears the slot on success.
     error: run.error ?? existing?.error ?? null,
   } satisfies GenerationHistoryItem;
+}
+
+function deriveRunStatus(run: RunSnapshot, existing?: GenerationHistoryItem): string {
+  // JobStatus is the authoritative lifecycle state. PreviewResponse.status is
+  // only a rendering/result hint and may lag behind after cancellation or
+  // failure, so it must never overwrite a terminal job state in history.
+  const jobStatus = normalizeLifecycleStatus(run.job?.status);
+  if (jobStatus) {
+    return jobStatus;
+  }
+  const resultStatus = normalizeLifecycleStatus(run.result?.status);
+  if (resultStatus) {
+    return resultStatus;
+  }
+  return normalizeLifecycleStatus(existing?.status) ?? "pending";
+}
+
+function normalizeLifecycleStatus(status?: string | null): string | undefined {
+  const value = status?.toLowerCase().trim();
+  return value || undefined;
 }
 
 function pickSelectedSlide(slides: PreviewSlide[], selectedSlide?: PreviewSlide) {
@@ -404,6 +428,16 @@ function normalizeStoredRuns(runs?: Record<string, StoredRunSnapshot>) {
   return Object.fromEntries(
     Object.entries(runs).map(([jobId, run]) => [jobId, normalizeStoredRun(jobId, run)]),
   );
+}
+
+async function fetchJobStatusWithTimeout(jobId: string, timeoutMs = HISTORY_STATUS_SYNC_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetchJobStatus(jobId, { signal: controller.signal });
+  } finally {
+    window.clearTimeout(timer);
+  }
 }
 
 export const useGeneration = create<GenerationState>()(
@@ -813,6 +847,62 @@ export const useGeneration = create<GenerationState>()(
         });
         get().syncHistory(jobId);
       },
+      async refreshHistoryStatuses() {
+        const candidates = get()
+          .history.filter((entry) => !FINAL_JOB_STATUSES.has(entry.status.toLowerCase()))
+          .slice(0, HISTORY_STATUS_SYNC_LIMIT);
+        if (!candidates.length) {
+          return;
+        }
+
+        await Promise.all(
+          candidates.map(async (entry) => {
+            try {
+              const job = await fetchJobStatusWithTimeout(entry.jobId);
+              set((state) => {
+                const currentRun =
+                  state.runs[entry.jobId] ??
+                  createRunSnapshot(entry.jobId, {
+                    job: buildStoredJob(entry),
+                    error: entry.error ?? undefined,
+                  });
+                const updatedRun: RunSnapshot = {
+                  ...currentRun,
+                  job,
+                  error: job.error ?? undefined,
+                  connectionStatus: FINAL_JOB_STATUSES.has(job.status)
+                    ? "disconnected"
+                    : currentRun.connectionStatus,
+                };
+                const nextItem = buildHistoryItemFromRun(state.history, updatedRun);
+                return {
+                  ...(state.jobId === entry.jobId ? applyRunToCurrent(updatedRun) : {}),
+                  runs: {
+                    ...state.runs,
+                    [entry.jobId]: updatedRun,
+                  },
+                  history: nextItem ? upsertHistoryItem(state.history, nextItem) : state.history,
+                  activeJobId:
+                    state.activeJobId === entry.jobId && FINAL_JOB_STATUSES.has(job.status)
+                      ? undefined
+                      : state.activeJobId,
+                };
+              });
+              if (job.status === "complete") {
+                void get().hydrateResult(entry.jobId).catch(() => undefined);
+              }
+            } catch (error) {
+              if (isNotFoundError(error)) {
+                try {
+                  sessionStorage.removeItem(`${LIVE_JOB_STORAGE_PREFIX}${entry.jobId}`);
+                } catch {
+                  /* noop */
+                }
+              }
+            }
+          }),
+        );
+      },
       async resumeCurrentRun(targetJobId) {
         const currentJobId = targetJobId ?? get().activeJobId ?? get().jobId;
         if (!currentJobId) {
@@ -949,6 +1039,7 @@ export const useGeneration = create<GenerationState>()(
         if (status && !FINAL_JOB_STATUSES.has(status)) {
           await cancelJob(jobId).catch(() => undefined);
         }
+        await deleteJob(jobId).catch(() => undefined);
         const socket = get().socketsByJob[jobId];
         socket?.close();
         set((state) => {

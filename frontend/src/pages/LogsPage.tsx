@@ -64,6 +64,21 @@ function formatNumber(n: number): string {
   return new Intl.NumberFormat().format(n);
 }
 
+function usageRecordKey(record: UsageRecord): string {
+  return [
+    record.ts,
+    record.provider,
+    record.model,
+    record.job_id ?? "",
+    record.stage ?? "",
+    record.page ?? "",
+    record.attempt,
+    record.prompt_tokens,
+    record.completion_tokens,
+    record.duration_ms,
+  ].join("|");
+}
+
 export function LogsPage() {
   const { t, locale } = useLocale();
   const [summary, setSummary] = useState<Summary>(EMPTY_SUMMARY);
@@ -181,6 +196,7 @@ export function LogsPage() {
     if (filterJob) items = items.filter((r) => r.job_id?.startsWith(filterJob));
     return items;
   }, [records, filterStage, filterModel, filterPage, filterJob]);
+  const selectedRecordKey = selectedRecord ? usageRecordKey(selectedRecord) : "";
 
   const clearFilters = useCallback(() => {
     setFilterStage("");
@@ -534,11 +550,14 @@ export function LogsPage() {
                 </tr>
               </thead>
               <tbody>
-                {filteredRecords.map((r, idx) => (
+                {filteredRecords.map((r) => {
+                  const recordKey = usageRecordKey(r);
+                  const isSelected = selectedRecordKey === recordKey;
+                  return (
                   <tr
-                    key={`${r.ts}-${idx}`}
-                    className={selectedRecord === r ? "logs-row-selected" : ""}
-                    onClick={() => setSelectedRecord(selectedRecord === r ? null : r)}
+                    key={recordKey}
+                    className={isSelected ? "logs-row-selected" : ""}
+                    onClick={() => setSelectedRecord(isSelected ? null : r)}
                   >
                     <td>{formatter.format(new Date(r.ts))}</td>
                     <td>{r.provider}</td>
@@ -554,7 +573,8 @@ export function LogsPage() {
                     <td>{formatNumber(r.total_tokens)}</td>
                     <td>{r.duration_ms}</td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

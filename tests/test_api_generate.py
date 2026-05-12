@@ -174,10 +174,17 @@ def test_preview_and_websocket_receive_slide_events(client, pdf_bytes: bytes, mo
         assert first["type"] == "progress"
         assert first["job_id"] == job_id
 
-    time.sleep(0.01)
-    preview_response = client.get(f"/api/preview/{job_id}")
-    assert preview_response.status_code == 200
-    slides = preview_response.json()["slides"]
+    deadline = time.time() + 1.0
+    slides = []
+    preview_response = None
+    while time.time() < deadline:
+        preview_response = client.get(f"/api/preview/{job_id}")
+        assert preview_response.status_code == 200
+        slides = preview_response.json()["slides"]
+        if slides:
+            break
+        time.sleep(0.01)
+    assert preview_response is not None
     assert len(slides) == 1
 
 

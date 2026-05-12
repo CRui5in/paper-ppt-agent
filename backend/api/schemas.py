@@ -165,3 +165,61 @@ class ProviderListItem(BaseModel):
 
 class ProvidersResponse(BaseModel):
     providers: list[ProviderListItem]
+
+
+# ── Image Search ─────────────────────────────────────────────────────────────
+
+
+class ImageSearchRequest(BaseModel):
+    """Request to search for images online."""
+
+    query: str
+    slide_index: int | None = None
+    max_results: int = 8
+    tavily_api_key: str | None = None  # Client-provided key (takes priority)
+    serpapi_key: str | None = None
+
+
+class ImageSearchResultItem(BaseModel):
+    """A single image search result."""
+
+    url: str
+    thumbnail: str = ""
+    description: str = ""
+    source: str = ""
+
+
+class ImageSearchResponse(BaseModel):
+    """Response containing image search results."""
+
+    results: list[ImageSearchResultItem] = Field(default_factory=list)
+
+
+class ImageApplyRequest(BaseModel):
+    """Request to apply a selected image to a slide."""
+
+    image_url: str
+    slide_index: int
+    target_element: str | None = None
+    image_description: str = ""  # Description for LLM context
+    # LLM config for AI-powered image insertion (when no <image> in SVG)
+    api_key: str | None = None
+    provider: str = "openai"
+    model: str = "gpt-4o"
+    base_url: str | None = None
+
+
+class ImageApplyResponse(BaseModel):
+    """Response after applying an image."""
+
+    status: str
+    local_path: str | None = None
+    svg_updated: bool = False
+    action: str = ""  # "replaced" | "inserted"
+
+
+class ImageUndoResponse(BaseModel):
+    """Response after undoing an image change."""
+
+    status: str
+    svg_restored: bool = False

@@ -160,14 +160,18 @@ export async function generatePresentation(
   });
 }
 
-export async function fetchJobStatus(jobId: string): Promise<JobStatus> {
-  return request<JobStatus>(`/api/status/${jobId}`);
+export async function fetchJobStatus(jobId: string, init?: RequestInit): Promise<JobStatus> {
+  return request<JobStatus>(`/api/status/${jobId}`, init);
 }
 
 export async function cancelJob(jobId: string): Promise<CancelJobResponse> {
   return request<CancelJobResponse>(`/api/status/${jobId}/cancel`, {
     method: "POST",
   });
+}
+
+export async function deleteJob(jobId: string): Promise<void> {
+  await request<void>(`/api/status/${jobId}`, { method: "DELETE" });
 }
 
 export async function reexportPresentation(jobId: string): Promise<ReexportResponse> {

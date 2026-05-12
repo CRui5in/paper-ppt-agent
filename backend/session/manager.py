@@ -1,9 +1,31 @@
-"""Session and job lifecycle management."""
+"""Session and job lifecycle management.
+
+Persistence strategy:
+
+    The in-memory dict is the source of truth. ``session_state.json`` is
+    just a snapshot used to recover Job/Session metadata across server
+    restarts. Writing the full snapshot on every event update is wasteful
+    (an active job emits hundreds of progress events; each one used to
+    rewrite a multi-MB JSON), so the snapshot is *debounced*:
+
+      * ``record_event`` / ``update_job`` / ``create_*`` mark the state
+        dirty in-memory, then schedule a flush via ``_request_flush``;
+      * a single background task drains the dirty flag every
+        ``settings.persist_debounce_ms``, writing one consolidated JSON;
+      * if asyncio is not running yet (e.g. unit-test imports), we fall
+        back to an immediate synchronous write so behaviour stays correct.
+
+    Worst case on a hard crash we lose the last 200ms of *metadata*
+    snapshots. Events themselves are still in memory; they would also be
+    lost on a crash, which is acceptable: a fresh-restarted server marks
+    in-flight jobs as errored anyway via ``_mark_orphaned_running_jobs``.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import shutil
 import time
 import uuid
@@ -12,6 +34,8 @@ from pathlib import Path
 from typing import Any
 
 from backend.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 # Maximum number of recent events kept on disk per job, used for replay
@@ -72,6 +96,10 @@ class SessionManager:
         self._jobs: dict[str, Job] = {}
         self._ws_queues: dict[str, list[asyncio.Queue]] = {}
         self._tasks: dict[str, asyncio.Task[Any]] = {}
+        # Debounced persistence — see module docstring.
+        self._dirty: bool = False
+        self._flush_task: asyncio.Task[None] | None = None
+        self._flush_event: asyncio.Event | None = None
         self._load_state()
         self._mark_orphaned_running_jobs()
 
@@ -157,6 +185,18 @@ class SessionManager:
         task.add_done_callback(_cleanup)
 
     def cancel_job(self, job_id: str) -> bool:
+        # Prefer the scheduler when it's been wired in: it knows about both
+        # running tasks *and* still-queued ones (which we can't reach via
+        # ``self._tasks``). Falls through to legacy task cancellation when
+        # the scheduler module isn't loaded (early startup, tests).
+        try:
+            from backend.runtime.scheduler import get_scheduler
+
+            if get_scheduler().cancel(job_id):
+                return True
+        except Exception:
+            pass
+
         task = self._tasks.get(job_id)
         if task is None or task.done():
             return False
@@ -254,9 +294,13 @@ class SessionManager:
             job.events = job.events[-EVENT_RING_SIZE:]
         self._persist_state()
 
+        # Fan out to live subscribers with drop-oldest backpressure. A slow
+        # client must not back-pressure the producer (the pipeline) — we'd
+        # rather show the user a *current* progress frame than a stale one,
+        # and the client can request a replay over the seq range it missed.
         if job_id in self._ws_queues:
             for queue in self._ws_queues[job_id]:
-                queue.put_nowait(event)
+                _offer_to_queue(queue, event)
 
     def get_events_after(self, job_id: str, since_seq: int) -> list[dict]:
         """Return all retained events with seq > *since_seq*, in order."""
@@ -268,8 +312,14 @@ class SessionManager:
         return [ev for ev in job.events if int(ev.get("seq", 0)) > since_seq]
 
     def subscribe_ws(self, job_id: str) -> asyncio.Queue:
-        """Subscribe to WebSocket events for a job."""
-        queue: asyncio.Queue = asyncio.Queue()
+        """Subscribe to WebSocket events for a job.
+
+        The queue is bounded by ``settings.ws_subscriber_queue_size``; when
+        full, the oldest pending frame is dropped to make room for the new
+        one. This protects the producer from a single slow socket without
+        introducing any cross-subscriber blocking.
+        """
+        queue: asyncio.Queue = asyncio.Queue(maxsize=settings.ws_subscriber_queue_size)
         if job_id not in self._ws_queues:
             self._ws_queues[job_id] = []
         self._ws_queues[job_id].append(queue)
@@ -290,6 +340,30 @@ class SessionManager:
             if upload_dir.exists():
                 shutil.rmtree(upload_dir, ignore_errors=True)
         self._persist_state()
+
+    def delete_job(self, job_id: str, *, delete_files: bool = True) -> bool:
+        """Remove a job and, by default, its generated local workspace.
+
+        If this was the last job for the upload session, also remove the
+        uploaded source file directory.
+        """
+        job = self._jobs.get(job_id)
+        if job is None:
+            return False
+
+        self.cancel_job(job_id)
+        self._jobs.pop(job_id, None)
+        self._tasks.pop(job_id, None)
+        self._ws_queues.pop(job_id, None)
+
+        if delete_files and job.project_dir:
+            self._remove_workspace_dir(Path(job.project_dir))
+
+        if not any(other.session_id == job.session_id for other in self._jobs.values()):
+            self.delete_session(job.session_id)
+        else:
+            self._persist_state()
+        return True
 
     def clear(self) -> None:
         self._sessions.clear()
@@ -320,11 +394,86 @@ class SessionManager:
             self._persist_state()
 
     def _persist_state(self) -> None:
-        self._state_file.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "sessions": [self._serialize_session(session) for session in self._sessions.values()],
-            "jobs": [self._serialize_job(job) for job in self._jobs.values()],
+        """Debounced persistence entry point.
+
+        From an event-loop context this only marks the state dirty and asks
+        the background flusher to wake up. From a non-loop context (early
+        import, tests) it falls back to the synchronous write so existing
+        callers keep working.
+        """
+        self._dirty = True
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            # No loop yet — write synchronously so module-import-time
+            # mutations still hit disk.
+            self._write_state_blocking()
+            self._dirty = False
+            return
+
+        if self._flush_task is None or self._flush_task.done():
+            self._flush_event = asyncio.Event()
+            self._flush_task = asyncio.create_task(
+                self._flush_loop(), name="session-state-flusher"
+            )
+        if self._flush_event is not None:
+            self._flush_event.set()
+
+    async def _flush_loop(self) -> None:
+        """Coalesce rapid-fire dirty flags into one disk write per window."""
+        debounce = max(0.05, settings.persist_debounce_ms / 1000.0)
+        try:
+            while True:
+                ev = self._flush_event
+                if ev is None:
+                    return
+                await ev.wait()
+                ev.clear()
+                if not self._dirty:
+                    continue
+                # Sleep to absorb any further updates within the window.
+                await asyncio.sleep(debounce)
+                if not self._dirty:
+                    continue
+                self._dirty = False
+                try:
+                    # Build the snapshot on the event-loop thread so the
+                    # offload worker never iterates mutable SessionManager
+                    # dicts while other requests are updating them.
+                    payload = self._build_state_payload()
+                    from backend.runtime.offload import aoffload
+
+                    await aoffload(self._write_payload_blocking, payload)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.exception("session state flush failed")
+                    self._dirty = True
+        except asyncio.CancelledError:
+            # On shutdown, write one last time so we don't lose the most
+            # recent metadata if the loop is cancelled before debounce.
+            if self._dirty:
+                try:
+                    self._write_payload_blocking(self._build_state_payload())
+                except Exception:
+                    logger.exception("final session state flush failed")
+            raise
+
+    def _write_state_blocking(self) -> None:
+        self._write_payload_blocking(self._build_state_payload())
+
+    def _build_state_payload(self) -> dict[str, Any]:
+        return {
+            "sessions": [
+                self._serialize_session(session) for session in list(self._sessions.values())
+            ],
+            "jobs": [
+                self._serialize_job(job) for job in list(self._jobs.values())
+            ],
         }
+
+    def _write_payload_blocking(self, payload: dict[str, Any]) -> None:
+        self._state_file.parent.mkdir(parents=True, exist_ok=True)
         temp_path = self._state_file.with_suffix(".tmp")
         temp_path.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2),
@@ -406,6 +555,40 @@ class SessionManager:
         payload["events"] = list(job.events[-EVENT_RING_SIZE:])
         payload["last_seq"] = job.last_seq
         return payload
+
+    @staticmethod
+    def _remove_workspace_dir(path: Path) -> None:
+        try:
+            target = path.resolve()
+            workspace_root = settings.workspaces_dir.resolve()
+            target.relative_to(workspace_root)
+        except (OSError, ValueError):
+            logger.warning("refusing to delete workspace outside root: %s", path)
+            return
+        if target == workspace_root:
+            logger.warning("refusing to delete workspace root: %s", target)
+            return
+        if target.exists():
+            shutil.rmtree(target, ignore_errors=True)
+
+
+def _offer_to_queue(queue: asyncio.Queue, event: dict) -> None:
+    """Drop-oldest publish onto a bounded subscriber queue."""
+    try:
+        queue.put_nowait(event)
+        return
+    except asyncio.QueueFull:
+        pass
+    # Drop the oldest pending frame and retry. Best effort: if the queue
+    # is concurrently drained by the consumer between checks, just bail.
+    try:
+        queue.get_nowait()
+    except asyncio.QueueEmpty:
+        return
+    try:
+        queue.put_nowait(event)
+    except asyncio.QueueFull:  # pragma: no cover — extremely unlikely race
+        pass
 
 
 # Global singleton

@@ -330,3 +330,34 @@ export interface UpdateFontsResponse {
   svg_fonts_replaced: number;
   status: string;
 }
+
+// ── Image Search ─────────────────────────────────────────────────────────
+
+export interface ImageSearchResultItem {
+  url: string;
+  thumbnail: string;
+  description: string;
+  source: string;
+}
+
+export interface ImageSearchRequest {
+  query: string;
+  slide_index?: number;
+  max_results?: number;
+}
+
+export interface ImageSearchResponse {
+  results: ImageSearchResultItem[];
+}
+
+export interface ImageApplyRequest {
+  image_url: string;
+  slide_index: number;
+  target_element?: string;
+}
+
+export interface ImageApplyResponse {
+  status: string;
+  local_path?: string;
+  svg_updated: boolean;
+}

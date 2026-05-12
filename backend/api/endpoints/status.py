@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Response, status
 
 from backend.api.schemas import CancelJobResponse, JobStatus
 from backend.session.manager import session_manager
@@ -52,3 +52,14 @@ async def cancel_job(job_id: str) -> CancelJobResponse:
         )
 
     return CancelJobResponse(job_id=job_id, status="cancelling")
+
+
+@router.delete("/status/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_job(job_id: str) -> Response:
+    deleted = session_manager.delete_job(job_id, delete_files=True)
+    if not deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Job not found.",
+        )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

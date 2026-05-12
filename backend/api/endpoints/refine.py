@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, status
 
 from backend.api.schemas import RefineRequest, RefineResponse
+from backend.runtime.scheduler import QueueFull, SchedulerDraining, get_scheduler
 from backend.session.manager import session_manager
 from backend.session.progress import payloads_from_progress_event
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -171,6 +175,7 @@ async def refine_presentation(request: RefineRequest) -> RefineResponse:
         language=options.language or parent_job.language or "zh",
         detail_level=options.detail_level or parent_job.detail_level or "normal",
         timeout_seconds=options.timeout_seconds,
+        max_critic_attempts=options.max_critic_attempts,
         target_pages=request.target_pages,
         allow_structure_changes=request.allow_structure_changes,
         style_overrides=(
@@ -192,12 +197,45 @@ async def refine_presentation(request: RefineRequest) -> RefineResponse:
             else None
         ),
         enable_visual_critic=options.enable_visual_critic,
+        visual_qa_max_attempts=options.visual_qa_max_attempts,
         enable_icon=options.enable_icon,
         enable_icon_rag=options.enable_icon_rag,
         gemini_api_key=options.gemini_api_key,
         template_id=options.template_id,
     )
 
-    task = asyncio.create_task(_run_refine_job(job.id, pipeline_request))
-    session_manager.register_task(job.id, task)
-    return RefineResponse(job_id=job.id, status="started")
+    scheduler = get_scheduler()
+
+    async def _runner() -> None:
+        await _run_refine_job(job.id, pipeline_request)
+
+    try:
+        # Refines run *after* a successful generate of the same session, so
+        # they get a slight priority boost (lower numeric value) — users
+        # iterating on a result feel snappier than a fresh paper queued at
+        # the same moment.
+        await scheduler.submit(job.id, _runner, priority=5)
+    except QueueFull as exc:
+        session_manager.update_job(
+            job.id,
+            status="error",
+            error="Server is busy: too many jobs queued.",
+            message="Server is busy: too many jobs queued.",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=str(exc),
+        ) from exc
+    except SchedulerDraining as exc:
+        session_manager.update_job(
+            job.id,
+            status="error",
+            error="Server is shutting down.",
+            message="Server is shutting down.",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+
+    return RefineResponse(job_id=job.id, status="queued")

@@ -100,9 +100,9 @@ Logically related elements **MUST** be wrapped in `<g>` tags for PowerPoint grou
 
 | Group | Contains |
 |-------|----------|
-| Card / panel | Background rect + shadow + icon + title + body |
-| Process step | Number circle + icon + label + description |
-| List item | Bullet + icon + title + description |
+| Card / panel | Background rect + shadow + title + body; add icons only when the current slide has an explicit Icon assignment |
+| Process step | Number circle + label + description; use a real icon only when explicitly assigned |
+| List item | Bullet or number + title + description; do not use icons as routine bullet prefixes |
 | Page header | Title + subtitle + accent decoration |
 | Page footer | Page number + branding |
 

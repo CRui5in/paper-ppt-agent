@@ -13,7 +13,7 @@ Connection lifecycle:
 2. Server immediately sends a ``snapshot`` event reflecting current job
    state, then replays any retained events with ``seq > since_seq``.
 3. Server then streams new events as they arrive.
-4. Server emits ``{"type": "ping", "ts": ...}`` every ``HEARTBEAT_SECONDS``
+4. Server emits ``{"type": "ping", "ts": ...}`` every ``settings.ws_heartbeat_seconds``
    so reverse proxies and browsers don't tear the socket down during long
    silent stages. Clients can ignore pings (or echo them as ``pong``).
 
@@ -27,14 +27,17 @@ import asyncio
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from backend.config import settings
 from backend.session.manager import session_manager
 from backend.session.progress import build_snapshot_event
 
 router = APIRouter()
 
-# Send a heartbeat at most this often. 20s comfortably beats nginx's
-# 60s default proxy_read_timeout and keeps Cloudflare-style proxies happy.
-HEARTBEAT_SECONDS = 20.0
+# Heartbeat interval is configurable so reverse-proxy timeouts can be tuned
+# from the environment. Default 15s comfortably beats nginx's 60s default
+# ``proxy_read_timeout`` and keeps Cloudflare-style proxies happy.
+def _heartbeat_seconds() -> float:
+    return float(max(1, settings.ws_heartbeat_seconds))
 
 TERMINAL_STATUSES = {"complete", "error", "cancelled"}
 
@@ -134,7 +137,7 @@ async def _next_event_or_heartbeat(
     caller should keep waiting.
     """
     try:
-        return await asyncio.wait_for(queue.get(), timeout=HEARTBEAT_SECONDS)
+        return await asyncio.wait_for(queue.get(), timeout=_heartbeat_seconds())
     except asyncio.TimeoutError:
         await websocket.send_json({
             "type": "ping",

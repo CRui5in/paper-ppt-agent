@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from backend.app import create_app
 from backend.config import settings
+import backend.runtime.scheduler as scheduler_module
 from backend.session.manager import session_manager
 
 
@@ -25,6 +26,7 @@ def workspace_tmp() -> Path:
 
 @pytest.fixture(autouse=True)
 def isolate_state(workspace_tmp: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(scheduler_module, "_scheduler", None)
     monkeypatch.setattr(settings, "runtime_dir", workspace_tmp / ".runtime")
     settings.runtime_dir.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(session_manager, "_state_file", settings.runtime_dir / "session_state.json")
@@ -33,6 +35,7 @@ def isolate_state(workspace_tmp: Path, monkeypatch: pytest.MonkeyPatch):
     session_manager.clear()
     yield
     session_manager.clear()
+    monkeypatch.setattr(scheduler_module, "_scheduler", None)
 
 
 @pytest.fixture
