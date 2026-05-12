@@ -1,17 +1,19 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Bot, ChevronDown, CircleCheck, Database, Download, FileText, MessageSquareText, Plus, Sparkles, Type, Wand2 } from "lucide-react";
+import { BringToFront, Bot, ChevronDown, CircleCheck, Copy, Database, Download, FileText, Image, Info, Layers, MessageSquareText, MousePointer2, Play, Plus, Redo2, Save, SendToBack, Sparkles, Square, Table2, Trash2, Type, Undo2, Wand2, X } from "lucide-react";
 import { Layout } from "../components/layout/Layout";
 import { AgentLog } from "../components/progress/AgentLog";
 import { FloatingInspector } from "../components/progress/FloatingInspector";
 import { ProgressPanel } from "../components/progress/ProgressPanel";
+import { KonvaSlideEditor, type EditorCommand, type EditorCommandType, type EditorState } from "../components/preview/KonvaSlideEditor";
 import { VersionHistory } from "../components/result/VersionHistory";
 import { useGeneration } from "../hooks/useGeneration";
 import { useLocale } from "../i18n";
-import { fetchCriticHistory, fetchJobStatus, fetchPreview, fetchProjectPreview, getDownloadUrl, getDownloadUrlForOutput, isNotFoundError, reexportPresentation } from "../lib/api";
+import { createPreviewSlide, deletePreviewSlide, fetchCriticHistory, fetchJobStatus, fetchPreview, fetchProjectPreview, getDownloadUrl, getDownloadUrlForOutput, isNotFoundError, reexportPresentation, updatePreviewSlide } from "../lib/api";
 import { FontCustomizer } from "../components/result/FontCustomizer";
+import { HoverTooltip } from "../components/common/HoverTooltip";
 import { translateStageStatus } from "../lib/i18nStatus";
-import type { CriticEvent, DeepSeekSettings, GenerateRequestPayload, GenerationHistoryItem, JobStatus, OpenAISettings, PreviewResponse, PreviewSlide } from "../lib/types";
+import type { CriticEvent, DeepSeekSettings, GenerateRequestPayload, GenerationHistoryItem, JobStatus, OpenAISettings, PreviewResponse, PreviewSlide, SlideDocument } from "../lib/types";
 import { Switch } from "../components/ui/switch";
 import { Progress } from "../components/ui/progress";
 import { RecentTasksPanel } from "../components/history/RecentTasksPanel";
@@ -97,6 +99,8 @@ export function ResultPage() {
 
   const historyEntry = history.find((entry) => entry.jobId === jobId);
   const outputPath = job?.output_path ?? result?.output_path ?? historyEntry?.outputPath;
+  const resultStatus = job?.status ?? result?.status ?? historyEntry?.status;
+  const canEditPreview = resultStatus === "complete" && !loadError && Boolean(jobId);
   const downloadHref = outputPath
     ? getDownloadUrlForOutput(outputPath)
     : jobId
@@ -382,6 +386,55 @@ export function ResultPage() {
     }
   };
 
+  const handleSaveSlideContent = async (slide: PreviewSlide, content: string, document: SlideDocument) => {
+    if (!jobId || !canEditPreview) return;
+    const updated = await updatePreviewSlide(jobId, slide.index, content, document, slide.notes ?? document.speakerNotes ?? "");
+    setSlides((current) => current.map((item) => item.index === updated.index ? updated : item));
+    setSelectedSlide(updated);
+    setResult((current) =>
+      current
+        ? {
+            ...current,
+            slides: current.slides.map((item) => item.index === updated.index ? updated : item),
+          }
+        : current,
+    );
+  };
+
+  const handleCreateSlide = async () => {
+    if (!jobId || !canEditPreview) return;
+    setReexportError(null);
+    try {
+      const created = await createPreviewSlide(jobId);
+      setSlides((current) => [...current, created]);
+      setSelectedSlide(created);
+      setResult((current) => current ? { ...current, slides: [...current.slides, created] } : current);
+    } catch (err) {
+      setReexportError(err instanceof Error ? err.message : "Failed to create slide.");
+    }
+  };
+
+  const handleDeleteSlide = async (slide: PreviewSlide) => {
+    if (!jobId || !canEditPreview) return;
+    setReexportError(null);
+    try {
+      const preview = await deletePreviewSlide(jobId, slide.index);
+      setResult(preview);
+      setSlides(preview.slides);
+      setSelectedSlide(preview.slides[Math.min(slide.index - 1, preview.slides.length - 1)]);
+    } catch (err) {
+      setReexportError(err instanceof Error ? err.message : "Failed to delete slide.");
+    }
+  };
+
+  const handleSaveSlideNotes = async (slide: PreviewSlide, notes: string) => {
+    if (!jobId || !canEditPreview) return;
+    const updated = await updatePreviewSlide(jobId, slide.index, slide.content, slide.document ?? undefined, notes);
+    setSlides((current) => current.map((item) => item.index === updated.index ? updated : item));
+    setSelectedSlide(updated);
+    setResult((current) => current ? { ...current, slides: current.slides.map((item) => item.index === updated.index ? updated : item) } : current);
+  };
+
   return (
     <Layout showSidebar={false} contentClassName="studio-page result-page result-workspace-page">
       <section className="scholarly-workspace result-studio-workspace">
@@ -434,6 +487,11 @@ export function ResultPage() {
           downloadHref={downloadHref}
           onReexport={() => void handleReexport()}
           reexportLoading={reexportLoading}
+          editable={canEditPreview}
+          onSaveSlide={handleSaveSlideContent}
+          onSaveNotes={handleSaveSlideNotes}
+          onCreateSlide={() => void handleCreateSlide()}
+          onDeleteSlide={handleDeleteSlide}
           onNewRun={() => {
             reset();
             navigate("/generate?fresh=1");
@@ -578,6 +636,11 @@ function ResultSlideWorkspace({
   downloadHref,
   onReexport,
   reexportLoading,
+  editable,
+  onSaveSlide,
+  onSaveNotes,
+  onCreateSlide,
+  onDeleteSlide,
   onNewRun,
 }: {
   slides: PreviewSlide[];
@@ -586,13 +649,83 @@ function ResultSlideWorkspace({
   downloadHref?: string;
   onReexport: () => void;
   reexportLoading: boolean;
+  editable: boolean;
+  onSaveSlide: (slide: PreviewSlide, content: string, document: SlideDocument) => Promise<void>;
+  onSaveNotes: (slide: PreviewSlide, notes: string) => Promise<void>;
+  onCreateSlide: () => void;
+  onDeleteSlide: (slide: PreviewSlide) => Promise<void>;
   onNewRun: () => void;
 }) {
   const { t } = useLocale();
+  const [editorCommand, setEditorCommand] = useState<EditorCommand | undefined>(undefined);
+  const [editorState, setEditorState] = useState<EditorState>({
+    autoSave: true,
+    saveState: "idle",
+    canEdit: editable,
+    canUndo: false,
+    canRedo: false,
+  });
+  const [thumbnailMenu, setThumbnailMenu] = useState<{ left: number; top: number; slide: PreviewSlide } | null>(null);
+  const [pendingDeleteIndexes, setPendingDeleteIndexes] = useState<number[]>([]);
+  const [notesDraft, setNotesDraft] = useState(selectedSlide?.notes ?? "");
+  const [slideshowOpen, setSlideshowOpen] = useState(false);
+  const [slideshowIndex, setSlideshowIndex] = useState(0);
+  const visibleSlides = slides.filter((slide) => !pendingDeleteIndexes.includes(slide.index));
+  const runCommand = (type: EditorCommandType) => {
+    if (type === "save" && pendingDeleteIndexes.length) {
+      void flushPendingSlideDeletes();
+    }
+    setEditorCommand({ type, id: Date.now() });
+  };
+  const markSlideForDelete = (slide: PreviewSlide) => {
+    if (slides.length - pendingDeleteIndexes.length <= 1) return;
+    setPendingDeleteIndexes((current) => current.includes(slide.index) ? current : [...current, slide.index]);
+    if (selectedSlide?.index === slide.index) {
+      const fallback = slides.find((item) => item.index !== slide.index && !pendingDeleteIndexes.includes(item.index));
+      if (fallback) onSelect(fallback);
+    }
+  };
+  const flushPendingSlideDeletes = async () => {
+    const targets = [...pendingDeleteIndexes].sort((a, b) => b - a);
+    for (const index of targets) {
+      const slide = slides.find((item) => item.index === index);
+      if (slide) await onDeleteSlide(slide);
+    }
+    setPendingDeleteIndexes([]);
+  };
+  useEffect(() => {
+    setNotesDraft(selectedSlide?.notes ?? "");
+  }, [selectedSlide?.index, selectedSlide?.notes]);
+  useEffect(() => {
+    if (!slideshowOpen) return undefined;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSlideshowOpen(false);
+      if (event.key === "ArrowRight" || event.key === " ") setSlideshowIndex((index) => Math.min(visibleSlides.length - 1, index + 1));
+      if (event.key === "ArrowLeft") setSlideshowIndex((index) => Math.max(0, index - 1));
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [slideshowOpen, visibleSlides.length]);
+  useEffect(() => {
+    if (!thumbnailMenu) return undefined;
+    const close = () => setThumbnailMenu(null);
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") close();
+    };
+    window.addEventListener("click", close);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [thumbnailMenu]);
   return (
     <main className="slide-workspace-panel">
       <div className="slide-workspace-header">
-        <p>{t("preview.slidePreview")}</p>
+        <p>
+          <span>{t("preview.slidePreview")}</span>
+          <HoverTooltip content={t("preview.editorWarning")}><span className="preview-info-tip"><Info size={15} /></span></HoverTooltip>
+        </p>
         <details className="result-export-menu">
           <summary className="primary-button result-export-summary">
             <Download size={16} />
@@ -611,7 +744,7 @@ function ResultSlideWorkspace({
                 <span>{t("common.pending")}</span>
               </button>
             )}
-            <button type="button" onClick={onReexport} disabled={reexportLoading}>
+            <button type="button" onClick={onReexport} disabled={reexportLoading || !editable}>
               <Wand2 size={15} />
               <span>{reexportLoading ? t("result.reexportLoading") : t("result.reexport")}</span>
             </button>
@@ -623,19 +756,60 @@ function ResultSlideWorkspace({
         </details>
       </div>
       <div className="slide-toolbar">
-        <button type="button" disabled><Plus size={15} /> {t("preview.newSlide")}</button>
+        <button type="button" disabled={!editable} onClick={onCreateSlide}><Plus size={15} /> {t("preview.newSlide")}</button>
         <span className="toolbar-divider" />
-        <button type="button" disabled>Fit</button>
+        <HoverTooltip content={t("editor.textTool")}><button type="button" disabled={!editable} onClick={() => runCommand("addText")}><Type size={15} /></button></HoverTooltip>
+        <HoverTooltip content={t("editor.shapeTool")}><button type="button" disabled={!editable} onClick={() => runCommand("addRect")}><Square size={15} /></button></HoverTooltip>
+        <HoverTooltip content={t("editor.pictureTool")}><button type="button" disabled={!editable} onClick={() => runCommand("addImage")}><Image size={15} /></button></HoverTooltip>
+        <HoverTooltip content={t("editor.tableTool")}><button type="button" disabled={!editable} onClick={() => runCommand("addTable")}><Table2 size={15} /></button></HoverTooltip>
+        <span className="toolbar-divider" />
+        <HoverTooltip content={t("editor.undo")}><button type="button" disabled={!editable || !editorState.canUndo} onClick={() => runCommand("undo")}><Undo2 size={15} /></button></HoverTooltip>
+        <HoverTooltip content={t("editor.redo")}><button type="button" disabled={!editable || !editorState.canRedo} onClick={() => runCommand("redo")}><Redo2 size={15} /></button></HoverTooltip>
+        <HoverTooltip content={t("editor.duplicate")}><button type="button" disabled={!editable || !editorState.selectedType} onClick={() => runCommand("duplicate")}><Copy size={15} /></button></HoverTooltip>
+        <HoverTooltip content={t("editor.delete")}><button type="button" disabled={!editable || !editorState.selectedType} onClick={() => runCommand("delete")}><Trash2 size={15} /></button></HoverTooltip>
+        <span className="toolbar-divider" />
+        <HoverTooltip content={t("editor.sendBackward")}><button type="button" disabled={!editable || !editorState.selectedType} onClick={() => runCommand("backward")}><SendToBack size={15} /></button></HoverTooltip>
+        <HoverTooltip content={t("editor.bringForward")}><button type="button" disabled={!editable || !editorState.selectedType} onClick={() => runCommand("forward")}><BringToFront size={15} /></button></HoverTooltip>
+        <span className="toolbar-divider" />
+        <HoverTooltip content={t("editor.autosave")}>
+          <button type="button" disabled={!editable} onClick={() => runCommand("toggleAutosave")}>
+            <Layers size={15} /> {editorState.autoSave ? t("editor.autosave") : t("editor.manual")}
+          </button>
+        </HoverTooltip>
+        <HoverTooltip content={t("editor.saveEdits")}>
+          <button type="button" disabled={!editable || editorState.saveState === "saving"} onClick={() => runCommand("save")}>
+            <Save size={15} /> {editorState.saveState === "saving" ? t("editor.saving") : editorState.saveState === "saved" ? t("editor.saved") : t("editor.save")}
+          </button>
+        </HoverTooltip>
+        <span className="toolbar-spacer" />
+        <HoverTooltip content={t("preview.startSlideshow")}>
+          <button
+            type="button"
+            disabled={!visibleSlides.length}
+            onClick={() => {
+              setSlideshowIndex(Math.max(0, visibleSlides.findIndex((slide) => slide.index === selectedSlide?.index)));
+              setSlideshowOpen(true);
+            }}
+          >
+            <Play size={15} /> {t("preview.slideshow")}
+          </button>
+        </HoverTooltip>
+        <button type="button" disabled><MousePointer2 size={15} /> {t("editor.fit")}</button>
         <button type="button" disabled>16:9</button>
       </div>
       <div className="slide-stage result-slide-stage">
         <div className="thumbnail-rail">
-          {slides.length > 0 ? slides.map((slide) => (
+          {visibleSlides.length > 0 ? visibleSlides.map((slide) => (
             <button
               type="button"
               key={slide.index}
               className={`rail-slide ${selectedSlide?.index === slide.index ? "rail-slide-active" : ""}`}
               onClick={() => onSelect(slide)}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                onSelect(slide);
+                setThumbnailMenu({ left: event.clientX, top: event.clientY, slide });
+              }}
             >
               <span>{slide.index}</span>
               <div dangerouslySetInnerHTML={{ __html: slide.content }} />
@@ -646,19 +820,67 @@ function ResultSlideWorkspace({
               <div className="rail-placeholder" />
             </button>
           ))}
+          {thumbnailMenu ? (
+            <div
+              className="konva-context-menu thumbnail-context-menu"
+              style={{ left: thumbnailMenu.left, top: thumbnailMenu.top }}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <strong>{t("preview.slidePreview")}</strong>
+              <button
+                type="button"
+                disabled={!editable || slides.length - pendingDeleteIndexes.length <= 1}
+                onClick={() => {
+                markSlideForDelete(thumbnailMenu.slide);
+                setThumbnailMenu(null);
+              }}
+              >
+                {t("editor.delete")}
+              </button>
+            </div>
+          ) : null}
         </div>
         <div className="slide-canvas-area">
           {selectedSlide ? (
-            <div className="scholarly-slide-frame" dangerouslySetInnerHTML={{ __html: selectedSlide.content }} />
+            <KonvaSlideEditor
+              slide={selectedSlide}
+              editable={editable}
+              command={editorCommand}
+              onStateChange={setEditorState}
+              onSave={onSaveSlide}
+            />
           ) : (
             <div className="scholarly-slide-frame viewer-empty" />
           )}
-          <div className="speaker-notes">
-            <span>{t("preview.notesPlaceholder")}</span>
-            <em>0 / 1000</em>
-          </div>
+          <label className="speaker-notes speaker-notes-editable">
+            <textarea
+              value={notesDraft}
+              maxLength={1000}
+              disabled={!editable || !selectedSlide}
+              placeholder={t("preview.notesPlaceholder")}
+              onChange={(event) => setNotesDraft(event.target.value)}
+              onBlur={() => {
+                if (selectedSlide && notesDraft !== (selectedSlide.notes ?? "")) void onSaveNotes(selectedSlide, notesDraft);
+              }}
+            />
+            <em>{notesDraft.length} / 1000</em>
+          </label>
         </div>
       </div>
+      {slideshowOpen && visibleSlides[slideshowIndex] ? (
+        <div className="slideshow-overlay" role="dialog" aria-modal="true" onClick={() => setSlideshowIndex((index) => Math.min(visibleSlides.length - 1, index + 1))}>
+          <HoverTooltip content={t("preview.exitSlideshow")}>
+            <button type="button" className="slideshow-close" onClick={(event) => { event.stopPropagation(); setSlideshowOpen(false); }}>
+              <X size={18} />
+            </button>
+          </HoverTooltip>
+          <div className="slideshow-slide" dangerouslySetInnerHTML={{ __html: visibleSlides[slideshowIndex].content }} />
+          <div className="slideshow-footer">
+            <span>{slideshowIndex + 1} / {visibleSlides.length}</span>
+            <span>{t("preview.slideshowHint")}</span>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }
@@ -753,11 +975,11 @@ function ResultMonitor({
         </div>
         <div className="monitor-event">
           <strong>{t("monitor.lastEvent")}</strong>
-          <span title={latestText}><i className={connectionStatus === "connected" ? "event-dot-on" : ""} />{latestText}</span>
+          <HoverTooltip content={latestText}><span><i className={connectionStatus === "connected" ? "event-dot-on" : ""} />{latestText}</span></HoverTooltip>
         </div>
         <div className="monitor-event">
           <strong>{t("monitor.nextStep")}</strong>
-          <span title={nextStep}>{nextStep}</span>
+          <HoverTooltip content={nextStep}><span>{nextStep}</span></HoverTooltip>
         </div>
       </div>
     </section>

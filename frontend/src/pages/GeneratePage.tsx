@@ -1,31 +1,37 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
-  AlignCenter,
-  AlignLeft,
-  AlignRight,
-  BarChart3,
-  Bold,
   Bot,
+  BarChart3,
+  BringToFront,
   ChevronDown,
   CircleCheck,
+  Copy,
   Database,
   FileText,
-  Grid3X3,
   Image,
-  Italic,
+  Info,
   Layers,
+  LoaderCircle,
   Link as LinkIcon,
-  List,
   MessageSquareText,
+  MousePointer2,
+  Play,
   Plus,
+  Redo2,
+  Save,
+  SendToBack,
   Settings2,
   Sparkles,
+  Square,
   Table2,
+  Trash2,
   Type,
+  Undo2,
   Wand2,
 } from "lucide-react";
 import { Layout } from "../components/layout/Layout";
+import { HoverTooltip } from "../components/common/HoverTooltip";
 import { ModelSelector } from "../components/config/ModelSelector";
 import { OptionsPanel } from "../components/config/OptionsPanel";
 import { AgentLog } from "../components/progress/AgentLog";
@@ -580,6 +586,7 @@ export function GeneratePage() {
           selectedSlide={selectedSlide}
           onSelect={selectSlide}
           canvasFormat={canvasFormat}
+          isGenerating={canCancelCurrentRun}
         />
 
         <aside className="configuration-panel">
@@ -780,14 +787,14 @@ function SourcesPanel({
           <Tabs value="papers" className="w-full">
             <TabsList className="source-tabs grid w-full grid-cols-3">
               <TabsTrigger value="papers">{t("source.papers")} <span>{sourceItems.length}</span></TabsTrigger>
-              <TabsTrigger value="links" disabled title={t("common.pending")}>{t("source.links")} <span>0</span></TabsTrigger>
-              <TabsTrigger value="datasets" disabled title={t("common.pending")}>{t("source.datasets")} <span>0</span></TabsTrigger>
+              <HoverTooltip content={t("common.pending")}><TabsTrigger value="links" disabled>{t("source.links")} <span>0</span></TabsTrigger></HoverTooltip>
+              <HoverTooltip content={t("common.pending")}><TabsTrigger value="datasets" disabled>{t("source.datasets")} <span>0</span></TabsTrigger></HoverTooltip>
             </TabsList>
           </Tabs>
           <SourceList sourceItems={sourceItems} />
           <div className="source-footer">
             <span>{sourceItems.length} / 1 source</span>
-            <Button variant="secondary" size="sm" type="button" disabled title="Multiple links are planned for a later version"><LinkIcon size={13} /> Add Link</Button>
+            <HoverTooltip content="Multiple links are planned for a later version"><Button variant="secondary" size="sm" type="button" disabled><LinkIcon size={13} /> Add Link</Button></HoverTooltip>
           </div>
         </>
       ) : (
@@ -844,36 +851,45 @@ function SlideWorkspace({
   selectedSlide,
   onSelect,
   canvasFormat,
+  isGenerating,
 }: {
   slides?: PreviewSlide[];
   selectedSlide?: PreviewSlide;
   onSelect: (slide: PreviewSlide) => void;
   canvasFormat: string;
+  isGenerating: boolean;
 }) {
   const { t } = useLocale();
   const safeSlides = Array.isArray(slides) ? slides : [];
   return (
     <main className="slide-workspace-panel">
       <div className="slide-workspace-header">
-        <p>{t("preview.slidePreview")}</p>
+        <p>
+          <span>{t("preview.slidePreview")}</span>
+          <HoverTooltip content={t("preview.editorWarning")}><span className="preview-info-tip"><Info size={15} /></span></HoverTooltip>
+        </p>
       </div>
       <div className="slide-toolbar">
-        <button type="button" disabled title={t("common.pending")}><Plus size={15} /> {t("preview.newSlide")}</button>
+        <HoverTooltip content={t("common.pending")}><button type="button" disabled><Plus size={15} /> {t("preview.newSlide")}</button></HoverTooltip>
         <span className="toolbar-divider" />
-        <button type="button" disabled title="Undo is not available yet">↶</button>
-        <button type="button" disabled title="Redo is not available yet">↷</button>
-        <button type="button" disabled title="Layout editing is not available yet">Layout <ChevronDown size={13} /></button>
+        <HoverTooltip content={t("editor.textTool")}><button type="button" disabled><Type size={15} /></button></HoverTooltip>
+        <HoverTooltip content={t("editor.shapeTool")}><button type="button" disabled><Square size={15} /></button></HoverTooltip>
+        <HoverTooltip content={t("editor.pictureTool")}><button type="button" disabled><Image size={15} /></button></HoverTooltip>
+        <HoverTooltip content={t("editor.tableTool")}><button type="button" disabled><Table2 size={15} /></button></HoverTooltip>
         <span className="toolbar-divider" />
-        {[Bold, Italic, AlignLeft, AlignCenter, AlignRight, List, Sparkles].map((Icon, index) => (
-          <button type="button" key={index} disabled title="Slide editing is not available yet"><Icon size={15} /></button>
-        ))}
+        <HoverTooltip content={t("editor.undo")}><button type="button" disabled><Undo2 size={15} /></button></HoverTooltip>
+        <HoverTooltip content={t("editor.redo")}><button type="button" disabled><Redo2 size={15} /></button></HoverTooltip>
+        <HoverTooltip content={t("editor.duplicate")}><button type="button" disabled><Copy size={15} /></button></HoverTooltip>
+        <HoverTooltip content={t("editor.delete")}><button type="button" disabled><Trash2 size={15} /></button></HoverTooltip>
         <span className="toolbar-divider" />
-        <button type="button" disabled title="Insert tools are not available yet">Insert <ChevronDown size={13} /></button>
-        {[Type, BarChart3, Image, Grid3X3, Table2].map((Icon, index) => (
-          <button type="button" key={index} disabled title="Slide editing is not available yet"><Icon size={15} /></button>
-        ))}
+        <HoverTooltip content={t("editor.sendBackward")}><button type="button" disabled><SendToBack size={15} /></button></HoverTooltip>
+        <HoverTooltip content={t("editor.bringForward")}><button type="button" disabled><BringToFront size={15} /></button></HoverTooltip>
+        <span className="toolbar-divider" />
+        <HoverTooltip content={t("editor.autosave")}><button type="button" disabled><Layers size={15} /> {t("editor.manual")}</button></HoverTooltip>
+        <HoverTooltip content={t("editor.saveEdits")}><button type="button" disabled><Save size={15} /> {t("editor.save")}</button></HoverTooltip>
         <span className="toolbar-spacer" />
-        <button type="button" disabled>Fit</button>
+        <HoverTooltip content={t("preview.startSlideshow")}><button type="button" disabled><Play size={15} /> {t("preview.slideshow")}</button></HoverTooltip>
+        <button type="button" disabled><MousePointer2 size={15} /> {t("editor.fit")}</button>
         <button type="button" disabled>{canvasFormat === "ppt43" ? "4:3" : "16:9"} <ChevronDown size={13} /></button>
       </div>
       <div className="slide-stage">
@@ -894,34 +910,26 @@ function SlideWorkspace({
               <div className="rail-placeholder" />
             </button>
           ))}
-          <button className="rail-add" type="button" disabled title="Manual slide creation is not available yet"><Plus size={18} /></button>
+          <HoverTooltip content={isGenerating ? t("common.pending") : "Manual slide creation is not available yet"}><button className={`rail-add ${isGenerating ? "rail-add-busy" : ""}`} type="button" disabled>
+            {isGenerating ? <LoaderCircle size={18} /> : <Plus size={18} />}
+          </button></HoverTooltip>
         </div>
         <div className="slide-canvas-area">
           {selectedSlide ? (
             <div className="scholarly-slide-frame" dangerouslySetInnerHTML={{ __html: selectedSlide.content }} />
           ) : (
-            <div className="scholarly-slide-frame demo-title-slide">
-              <div>
-                <p className="demo-brand"><BookOpenCheckIcon /> Paper PPT Agent</p>
-                <h1>{t("preview.demoTitle").split("\n").map((line) => <span key={line}>{line}<br /></span>)}</h1>
-                <h2>{t("preview.demoSubtitle")}</h2>
-                <p className="demo-meta">{t("preview.demoMeta")}</p>
-              </div>
-              <div className="network-art" aria-hidden="true" />
+            <div className="scholarly-slide-frame slide-empty-preview">
+              <span>{isGenerating ? t("monitor.waiting") : t("preview.emptyState")}</span>
             </div>
           )}
-          <div className="speaker-notes">
-            <span>{t("preview.notesPlaceholder")}</span>
+          <label className="speaker-notes speaker-notes-editable">
+            <textarea value="" disabled placeholder={t("preview.notesPlaceholder")} readOnly />
             <em>0 / 1000</em>
-          </div>
+          </label>
         </div>
       </div>
     </main>
   );
-}
-
-function BookOpenCheckIcon() {
-  return <Layers size={20} />;
 }
 
 function AgentMonitor({
@@ -1010,11 +1018,11 @@ function AgentMonitor({
         </div>
         <div className="monitor-event">
           <strong>{t("monitor.lastEvent")}</strong>
-          <span title={latestText}><i className={isConnected ? "event-dot-on" : ""} />{latestText}</span>
+          <HoverTooltip content={latestText}><span><i className={isConnected ? "event-dot-on" : ""} />{latestText}</span></HoverTooltip>
         </div>
         <div className="monitor-event">
           <strong>{t("monitor.nextStep")}</strong>
-          <span title={nextStep}>{nextStep}</span>
+          <HoverTooltip content={nextStep}><span>{nextStep}</span></HoverTooltip>
         </div>
       </div>
     </section>
