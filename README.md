@@ -112,6 +112,7 @@ cd frontend && npm run dev -- --host 127.0.0.1 --port 5173 --strictPort
 - 🎨 **模板系统与自定义字体** — 预设行业风格模板，支持自定义标题/正文字体配置
 - 🔬 **Deep Research 工作流** — 外部研究增强（arXiv / Semantic Scholar / Web）+ 相关性过滤
 - 🖼️ **在线搜图** — 利用 Tavily / SerpAPI Key 在线搜索配图，支持 AI 智能布局分析与插入、一键撤消、图片下载
+- 🎨 **UI 重构** — 基于 Konva 画布编辑器重写 UI，升级 SVG-to-PPTX 转换器
 
 ### 2026 年 4 月
 
@@ -125,7 +126,6 @@ cd frontend && npm run dev -- --host 127.0.0.1 --port 5173 --strictPort
 
 ## 🗺️ 开发计划
 
-- [ ] 🎨 UI 重构
 - [ ] 📐 模板管理进一步实现和优化
 - [ ] 🧠 本地大模型支持
 

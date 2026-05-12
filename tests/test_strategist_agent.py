@@ -192,6 +192,39 @@ async def test_create_design_spec_repairs_outline_page_type_drift() -> None:
     assert len(llm.calls) == 1
 
 
+def test_design_spec_validation_accepts_localized_page_type_labels() -> None:
+    localized = _valid_design_spec().replace(
+        "- Page 1: content — title cover",
+        "- Page 1: 内容页 — 模型机制",
+    )
+
+    error = strategist_agent._design_spec_validation_error(
+        localized,
+        expected_page_count=1,
+        expected_inventory=[{"page": 1, "type": "content", "title": "模型机制"}],
+    )
+
+    assert error is None
+
+
+@pytest.mark.asyncio
+async def test_create_design_spec_inserts_missing_outline_page_type() -> None:
+    missing_type = _valid_design_spec().replace(
+        "- Page 1: content — title cover",
+        "#### Slide 1 - Evidence ladder",
+    )
+    llm = _FakeLLM([missing_type])
+
+    spec = await strategist_agent.create_design_spec(
+        "<!-- page_type: content -->\n# Evidence ladder\n\nBody",
+        llm,
+        "fake-model",
+    )
+
+    assert "#### Slide 1 - Evidence ladder\n- **Type**: content" in spec
+    assert len(llm.calls) == 1
+
+
 def test_design_spec_validation_rejects_missing_icon_asset() -> None:
     bad = _valid_design_spec().replace(
         "## IX. Content Outline\n- Page 1: content — title cover",

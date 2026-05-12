@@ -238,6 +238,58 @@ def _extract_design_spec_section(content: str, roman: str) -> str:
     return match.group(0) if match else ""
 
 
+_PAGE_TYPE_ALIASES: dict[str, tuple[str, ...]] = {
+    "cover": ("cover", "封面", "封面页", "标题页"),
+    "chapter": ("chapter", "transition", "section", "章节", "章节页", "章标题", "过渡", "过渡页", "转场"),
+    "toc": ("toc", "agenda", "outline", "目录", "大纲"),
+    "content": ("content", "body", "main", "内容", "内容页", "正文", "主体", "普通页"),
+    "ending": ("ending", "closing", "thanks", "q&a", "结束", "结束页", "致谢", "感谢", "问答"),
+}
+_PAGE_TYPE_WORD_PATTERN = "|".join(
+    re.escape(alias)
+    for aliases in _PAGE_TYPE_ALIASES.values()
+    for alias in sorted(aliases, key=len, reverse=True)
+)
+_PAGE_TYPE_LABEL_PATTERN = (
+    r"(?:page\s*)?type|page\s*category|slide\s*type|类型|页型|页面类型|幻灯片类型"
+)
+
+
+def _outline_block_mentions_page_type(block: str, page_type: str) -> bool:
+    aliases = _PAGE_TYPE_ALIASES.get(page_type, (page_type,))
+    for alias in aliases:
+        escaped = re.escape(alias)
+        if alias.isascii():
+            if re.search(rf"(?i)(?<![a-z0-9_]){escaped}(?![a-z0-9_])", block):
+                return True
+        elif alias in block:
+            return True
+    return False
+
+
+def _insert_outline_page_type(block: str, page_num: int | str, page_type: str) -> str:
+    first_line_end = block.find("\n")
+    if first_line_end < 0:
+        first_line = block
+        rest = ""
+    else:
+        first_line = block[:first_line_end]
+        rest = block[first_line_end:]
+
+    if first_line.lstrip().startswith("|"):
+        page_ref_pattern = rf"(?i)\b((?:page|slide)\s*0*{page_num})\b"
+        table_line = re.sub(
+            page_ref_pattern,
+            rf"\1 (type: {page_type})",
+            first_line,
+            count=1,
+        )
+        if table_line != first_line:
+            return table_line + rest
+
+    return f"{first_line}\n- **Type**: {page_type}{rest}"
+
+
 def _design_spec_validation_error(
     content: str,
     *,
@@ -294,7 +346,10 @@ def _design_spec_validation_error(
             page_type = str(item["type"])
             page_pattern = rf"(?is)\b(?:page|slide)\s*0*{page_num}\b(.+?)(?=\b(?:page|slide)\s*0*\d+\b|\Z)"
             page_match = re.search(page_pattern, outline)
-            if page_match and page_type not in page_match.group(0).lower():
+            if page_match and not _outline_block_mentions_page_type(
+                page_match.group(0),
+                page_type,
+            ):
                 missing_types.append(f"{page_num}:{page_type}")
         if missing_types:
             return "Content Outline page types do not match manuscript: " + ", ".join(missing_types[:5])
@@ -331,12 +386,11 @@ def _align_content_outline_page_types(
     if not outline:
         return content
 
-    page_type_words = r"(cover|chapter|transition|toc|content|ending)"
     repaired = outline
     for item in expected_inventory:
         page_num = item["page"]
         expected_type = str(item["type"])
-        line_pattern = rf"(?im)^(\s*[-*]?\s*(?:page|slide)\s*0*{page_num}\s*[:：\-–—]\s*)(?:\*\*)?{page_type_words}(?:\*\*)?"
+        line_pattern = rf"(?im)^(\s*[-*]?\s*(?:page|slide)\s*0*{page_num}\s*[:：\-–—]\s*)(?:\*\*)?(?:{_PAGE_TYPE_WORD_PATTERN})(?:\*\*)?"
         repaired = re.sub(line_pattern, rf"\g<1>{expected_type}", repaired, count=1)
 
         block_pattern = rf"(?is)(\b(?:page|slide)\s*0*{page_num}\b.+?)(?=\b(?:page|slide)\s*0*\d+\b|\Z)"
@@ -344,15 +398,17 @@ def _align_content_outline_page_types(
         if not block_match:
             continue
         block = block_match.group(1)
-        if expected_type in block.lower():
+        if _outline_block_mentions_page_type(block, expected_type):
             continue
 
         typed_block = re.sub(
-            rf"(?im)^(\s*(?:[-*]\s*)?(?:page\s*)?type\s*[:：]\s*){page_type_words}\b",
+            rf"(?im)^(\s*(?:[-*]\s*)?(?:\*\*)?(?:{_PAGE_TYPE_LABEL_PATTERN})(?:\*\*)?\s*[:：]\s*)(?:{_PAGE_TYPE_WORD_PATTERN})",
             rf"\g<1>{expected_type}",
             block,
             count=1,
         )
+        if typed_block == block:
+            typed_block = _insert_outline_page_type(block, page_num, expected_type)
         if typed_block != block:
             start, end = block_match.span(1)
             repaired = repaired[:start] + typed_block + repaired[end:]

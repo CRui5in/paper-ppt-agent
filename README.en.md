@@ -112,6 +112,7 @@ cd frontend && npm run dev -- --host 127.0.0.1 --port 5173 --strictPort
 - 🎨 **Template System & Custom Fonts** — Pre-built industry-style templates with custom heading/body font configuration
 - 🔬 **Deep Research Workflow** — External research enrichment (arXiv / Semantic Scholar / Web) with relevance filtering
 - 🖼️ **Online Image Search** — Search for images online using Tavily / SerpAPI, with AI layout analysis, one-click undo, and download
+- 🎨 **UI Refactor** — Rewrote UI with Konva canvas editor and upgraded SVG-to-PPTX converter
 
 ### April 2026
 
@@ -125,7 +126,6 @@ cd frontend && npm run dev -- --host 127.0.0.1 --port 5173 --strictPort
 
 ## 🗺️ Roadmap
 
-- [ ] 🎨 UI Refactor
 - [ ] 📐 Template management further implementation and optimization
 - [ ] 🧠 Local model support
 
