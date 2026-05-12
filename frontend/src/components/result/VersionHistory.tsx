@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { deleteVersion, fetchVersion, listVersions } from "../../lib/api";
 import type { VersionDetailResponse, VersionItem } from "../../lib/types";
 import { useLocale } from "../../i18n";
-import { Loader2, RefreshCw } from "lucide-react";
+import { Loader2, RefreshCw, X } from "lucide-react";
 import { Button } from "../ui/button";
 
 interface VersionHistoryProps {
@@ -16,6 +16,7 @@ export function VersionHistory({ jobId, onError }: VersionHistoryProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<VersionDetailResponse | null>(null);
+  const [openedSlideIndex, setOpenedSlideIndex] = useState<number | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
 
   const loadVersions = useCallback(async () => {
@@ -62,6 +63,7 @@ export function VersionHistory({ jobId, onError }: VersionHistoryProps) {
       await deleteVersion(jobId, version.name);
       if (selected?.name === version.name) {
         setSelected(null);
+        setOpenedSlideIndex(null);
       }
       await loadVersions();
     } catch (err) {
@@ -152,7 +154,12 @@ export function VersionHistory({ jobId, onError }: VersionHistoryProps) {
           </div>
           <div className="versions-slide-grid">
             {selected.slides.map((slide) => (
-              <div key={slide.index} className="versions-slide">
+              <button
+                type="button"
+                key={slide.index}
+                className="versions-slide versions-slide-button"
+                onClick={() => setOpenedSlideIndex(slide.index)}
+              >
                 <div
                   className="versions-slide-frame"
                   dangerouslySetInnerHTML={{ __html: slide.content }}
@@ -160,9 +167,31 @@ export function VersionHistory({ jobId, onError }: VersionHistoryProps) {
                 <div className="versions-slide-caption">
                   #{slide.index} {slide.name}
                 </div>
-              </div>
+              </button>
             ))}
           </div>
+        </div>
+      ) : null}
+      {selected && openedSlideIndex !== null ? (
+        <div className="versions-slide-overlay" role="dialog" aria-modal="true" onClick={() => setOpenedSlideIndex(null)}>
+          <button
+            type="button"
+            className="versions-slide-overlay-close"
+            aria-label={t("versions.close")}
+            onClick={(event) => {
+              event.stopPropagation();
+              setOpenedSlideIndex(null);
+            }}
+          >
+            <X size={18} />
+          </button>
+          <div
+            className="versions-slide-overlay-frame"
+            onClick={(event) => event.stopPropagation()}
+            dangerouslySetInnerHTML={{
+              __html: selected.slides.find((slide) => slide.index === openedSlideIndex)?.content ?? "",
+            }}
+          />
         </div>
       ) : null}
     </section>

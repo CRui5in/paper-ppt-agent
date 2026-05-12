@@ -185,8 +185,8 @@ async def _enrich_arxiv(
         stats.arxiv_error = "package_missing"
         logger.info("arxiv package not installed; skipping arxiv enrichment")
     except Exception as e:  # noqa: BLE001
-        stats.arxiv_error = f"{type(e).__name__}: {e}"
-        logger.warning("arxiv enrichment failed: %s", e)
+        stats.arxiv_error = _classify_external_error(e)
+        logger.warning("arxiv enrichment failed: %s: %s", type(e).__name__, e)
 
 
 # ── Semantic Scholar ──────────────────────────────────────────────────────────
@@ -238,8 +238,8 @@ async def _enrich_semantic_scholar(
         stats.scholar_error = "package_missing"
         logger.info("semanticscholar package not installed; skipping")
     except Exception as e:  # noqa: BLE001
-        stats.scholar_error = f"{type(e).__name__}: {e}"
-        logger.warning("Semantic Scholar enrichment failed: %s", e)
+        stats.scholar_error = _classify_external_error(e)
+        logger.warning("Semantic Scholar enrichment failed: %s: %s", type(e).__name__, e)
 
 
 # ── Web search ────────────────────────────────────────────────────────────────
@@ -298,8 +298,8 @@ async def _enrich_web_search(
     except ImportError:
         stats.web_error = "httpx_missing"
     except Exception as e:  # noqa: BLE001
-        stats.web_error = f"{type(e).__name__}: {e}"
-        logger.warning("Web search enrichment failed: %s", e)
+        stats.web_error = _classify_external_error(e)
+        logger.warning("Web search enrichment failed: %s: %s", type(e).__name__, e)
 
 
 async def _tavily_search(httpx_mod: Any, query: str, api_key: str, max_results: int) -> list[dict[str, str]]:
@@ -425,6 +425,15 @@ def _filter_relevant_findings(
         finding.relevance_note = "Matched: " + ", ".join(matched[:5])
         out.append(finding)
     return out
+
+
+def _classify_external_error(exc: Exception) -> str:
+    text = f"{type(exc).__name__}: {exc}".lower()
+    if "timeout" in text or "timed out" in text:
+        return "timeout"
+    if "rate" in text or "429" in text:
+        return "rate_limited"
+    return "query_failed"
 
 
 def _relevance_terms(title: str, abstract: str) -> list[str]:

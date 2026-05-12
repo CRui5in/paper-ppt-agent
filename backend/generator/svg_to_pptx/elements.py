@@ -19,6 +19,7 @@ from .utils import (
     ANGLE_UNIT,
     estimate_text_width,
     font_px_to_half_pts,
+    get_style_attr,
     parse_hex_color,
     parse_svg_length,
     parse_svg_ratio,
@@ -260,7 +261,7 @@ def convert_text(elem: Any, ctx: ConvertContext) -> str:
 
             text = (child.text or "").strip()
             if text:
-                child_size = child.get("font-size")
+                child_size = get_style_attr(child, "font-size")
                 if child_size:
                     fs = parse_svg_length(child_size, font_size)
                 else:
@@ -386,6 +387,7 @@ def _make_run(text: str, elem: Any, ctx: ConvertContext, font_size: float) -> di
 
     fill = ctx.get_attr(elem, "fill", "#000000")
     color = _resolve_text_color(fill, ctx)
+    opacity = _get_opacity(elem, ctx) * parse_svg_ratio(ctx.get_attr(elem, "fill-opacity", "1"), 1.0)
     weight = ctx.get_attr(elem, "font-weight", "normal")
     style = ctx.get_attr(elem, "font-style", "normal")
     family = ctx.get_attr(elem, "font-family", "Arial")
@@ -396,6 +398,7 @@ def _make_run(text: str, elem: Any, ctx: ConvertContext, font_size: float) -> di
         "text": text,
         "font_size": font_size,
         "color": color,
+        "opacity": max(0.0, min(1.0, opacity)),
         "bold": weight in ("bold", "700", "800", "900"),
         "italic": style == "italic",
         "underline": "underline" in decoration,
@@ -425,7 +428,7 @@ def _resolve_text_color(fill: str, ctx: ConvertContext) -> str:
                 tag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
                 if tag != "stop":
                     continue
-                stop_color = parse_hex_color(child.get("stop-color", "#000000"))
+                stop_color = parse_hex_color(get_style_attr(child, "stop-color", "#000000"))
                 if stop_color:
                     return stop_color
 
@@ -440,8 +443,11 @@ def _build_run_xml(run: dict) -> str:
     underline = ' u="sng"' if run["underline"] else ""
     latin = xml_escape(run["font_family"])
     ea = xml_escape(run.get("ea_font_family", run["font_family"]))
+    alpha = ""
+    if run.get("opacity", 1.0) < 0.999:
+        alpha = f'<a:alpha val="{round(run["opacity"] * 100000)}"/>'
 
-    fill = f'<a:solidFill><a:srgbClr val="{run["color"]}"/></a:solidFill>'
+    fill = f'<a:solidFill><a:srgbClr val="{run["color"]}">{alpha}</a:srgbClr></a:solidFill>'
 
     return (
         f'<a:r>'

@@ -22,7 +22,7 @@ from .elements import (
     convert_rect,
     convert_text,
 )
-from .utils import parse_transform
+from .utils import parse_style_attribute, parse_transform
 
 # SVG elements that should be skipped
 SKIP_TAGS = {"defs", "title", "desc", "metadata", "style", "clipPath", "mask", "filter"}
@@ -98,6 +98,13 @@ def _convert_element(elem: Any, ctx: ConvertContext) -> str:
 
     converter = CONVERTERS.get(tag)
     if converter:
+        transform_str = elem.get("transform", "")
+        if transform_str:
+            dx, dy, sx, sy, _angle = parse_transform(transform_str)
+            child_ctx = ctx.child(dx, dy, sx, sy)
+            xml = converter(elem, child_ctx)
+            ctx.sync_from_child(child_ctx)
+            return xml
         return converter(elem, ctx)
 
     return ""
@@ -109,7 +116,7 @@ def _convert_g(elem: Any, ctx: ConvertContext) -> str:
     dx, dy, sx, sy, angle = parse_transform(transform_str)
 
     # Extract inheritable styles
-    style_overrides = {}
+    style_overrides = parse_style_attribute(elem.get("style"))
     for attr in [
         "fill",
         "stroke",

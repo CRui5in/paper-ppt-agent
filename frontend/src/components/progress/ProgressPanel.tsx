@@ -79,6 +79,9 @@ export function ProgressPanel({ job, connectionStatus, enrichmentStats, hideHead
             );
           })}
         </ol>
+        {showEnrichment ? (
+          <EnrichmentSummary stats={enrichmentStats!} />
+        ) : null}
       </section>
     );
   }
@@ -209,9 +212,11 @@ interface EnrichmentSummaryProps {
 
 function EnrichmentSummary({ stats }: EnrichmentSummaryProps) {
   const { t, locale } = useLocale();
-  const [expanded, setExpanded] = useState(false);
+  const [expandedSources, setExpandedSources] = useState<Set<string>>(() => new Set());
+  const isQuerying = stats.phase === "querying";
 
   const rows: Array<{
+    id: string;
     icon: ComponentType<{ size?: number; style?: CSSProperties }>;
     name: string;
     found?: number;
@@ -222,6 +227,7 @@ function EnrichmentSummary({ stats }: EnrichmentSummaryProps) {
 
   if (stats.arxiv) {
     rows.push({
+      id: "arxiv",
       icon: GraduationCap,
       name: t("progress.enrichment.arxiv"),
       found: stats.arxiv.found,
@@ -231,6 +237,7 @@ function EnrichmentSummary({ stats }: EnrichmentSummaryProps) {
   }
   if (stats.semantic_scholar) {
     rows.push({
+      id: "semantic_scholar",
       icon: Sparkles,
       name: t("progress.enrichment.scholar"),
       found: stats.semantic_scholar.found,
@@ -240,6 +247,7 @@ function EnrichmentSummary({ stats }: EnrichmentSummaryProps) {
   }
   if (stats.web) {
     rows.push({
+      id: "web",
       icon: Globe,
       name: t("progress.enrichment.web"),
       found: stats.web.found,
@@ -249,48 +257,108 @@ function EnrichmentSummary({ stats }: EnrichmentSummaryProps) {
     });
   }
 
-  // Collect all findings for the expandable section
-  const allFindings: ResearchFinding[] = rows.flatMap((r) => r.findings ?? []);
-  const hasFindings = allFindings.length > 0;
+  const toggleSource = (sourceId: string) => {
+    setExpandedSources((current) => {
+      const next = new Set(current);
+      if (next.has(sourceId)) {
+        next.delete(sourceId);
+      } else {
+        next.add(sourceId);
+      }
+      return next;
+    });
+  };
 
   return (
     <div className="enrichment-summary">
       <p className="enrichment-summary-title">
-        <Sparkles size={12} style={{ marginRight: 4, verticalAlign: "middle" }} />
-        {t("progress.enrichment.title")}
+        {isQuerying ? (
+          <Loader2 size={12} className="spin" style={{ marginRight: 4, verticalAlign: "middle" }} />
+        ) : (
+          <Sparkles size={12} style={{ marginRight: 4, verticalAlign: "middle" }} />
+        )}
+        {isQuerying
+          ? locale === "zh"
+            ? "正在查询外部信息源"
+            : "Querying external sources"
+          : t("progress.enrichment.title")}
+      </p>
+      <p className="enrichment-summary-subtitle">
+        {locale === "zh"
+          ? "用于辅助论文分析；失败或跳过不会中断 PPT 生成。"
+          : "Used to support paper analysis. Failures or skips do not stop generation."}
       </p>
       {rows.length === 0 ? (
         <p className="enrichment-summary-empty">{t("progress.enrichment.empty")}</p>
       ) : (
         <ul className="enrichment-summary-list">
-          {rows.map((row, idx) => {
+          {rows.map((row) => {
             const Icon = row.icon;
-            const hasError = !!row.error;
             const nameFull = row.name + (row.extra ? ` · ${row.extra}` : "");
-            const statusText = stats.phase === "querying"
-              ? (locale === "zh" ? "查询中..." : "querying...")
-              : hasError
-              ? translateEnrichmentError(row.error!, locale)
-              : `${row.found ?? 0} ${t("progress.enrichment.found")}`;
+            const findings = row.findings ?? [];
+            const canExpand = !isQuerying && !row.error && findings.length > 0;
+            const isExpanded = expandedSources.has(row.id);
+            const rowState = getEnrichmentRowState({
+              error: row.error,
+              found: row.found,
+              isQuerying,
+              locale,
+              sourceName: row.name,
+              hasExpandableFindings: canExpand,
+            });
             return (
-              <li key={idx} className={`enrichment-summary-row ${hasError ? "enrichment-row-warn" : ""}`}>
-                <HoverTooltip content={nameFull} className="enrichment-row-name-wrap">
-                  <span className="enrichment-row-name">
-                    <Icon size={12} style={{ marginRight: 4, verticalAlign: "middle" }} />
-                    {row.name}
-                    {row.extra ? <em className="enrichment-row-extra"> · {row.extra}</em> : null}
-                  </span>
-                </HoverTooltip>
-                <HoverTooltip content={statusText} className="enrichment-row-status-wrap">
-                  {hasError ? (
-                    <span className="enrichment-row-status enrichment-row-status-warn">
-                      <AlertCircle size={11} style={{ marginRight: 4, verticalAlign: "middle" }} />
-                      {statusText}
-                    </span>
-                  ) : (
-                    <span className="enrichment-row-status">{statusText}</span>
-                  )}
-                </HoverTooltip>
+              <li key={row.id} className={`enrichment-source-block ${isExpanded ? "enrichment-source-expanded" : ""}`}>
+                <div className={`enrichment-summary-row enrichment-row-${rowState.kind}`}>
+                  <div className="enrichment-row-main">
+                    <div className="enrichment-row-head">
+                      <HoverTooltip content={nameFull} className="enrichment-row-name-wrap">
+                        <span className="enrichment-row-name">
+                          <Icon size={12} style={{ marginRight: 4, verticalAlign: "middle" }} />
+                          {row.name}
+                          {row.extra ? <em className="enrichment-row-extra"> · {row.extra}</em> : null}
+                        </span>
+                      </HoverTooltip>
+                      <span className={`enrichment-row-badge enrichment-row-badge-${rowState.kind}`}>
+                        {rowState.kind === "querying" ? <Loader2 size={11} className="spin" /> : null}
+                        {rowState.kind === "success" ? <CheckCircle2 size={11} /> : null}
+                        {rowState.kind === "empty" ? <Circle size={11} /> : null}
+                        {rowState.kind === "skipped" || rowState.kind === "error" ? <AlertCircle size={11} /> : null}
+                        {rowState.label}
+                      </span>
+                    </div>
+                    <HoverTooltip content={rowState.tooltip ?? rowState.detail} className="enrichment-row-detail-wrap">
+                      <span className="enrichment-row-detail">{rowState.detail}</span>
+                    </HoverTooltip>
+                  </div>
+                  <div className="enrichment-row-actions">
+                    {canExpand ? (
+                      <button
+                        type="button"
+                        className="enrichment-toggle-btn"
+                        onClick={() => toggleSource(row.id)}
+                        aria-label={isExpanded ? "collapse" : "expand"}
+                        aria-expanded={isExpanded}
+                      >
+                        {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+                {isExpanded ? (
+                  <ul className="enrichment-findings-list">
+                    {findings.map((finding, i) => (
+                      <li key={`${row.id}-${i}`} className="enrichment-finding-item">
+                        <span className="enrichment-finding-source">{formatFindingSource(finding.source)}</span>
+                        <span className="enrichment-finding-title">
+                          {finding.url ? <a href={finding.url} target="_blank" rel="noopener noreferrer">{finding.title}</a> : finding.title}
+                        </span>
+                        <span className="enrichment-finding-meta">
+                          {finding.year ?? ""}{finding.citation_count != null ? ` · ${finding.citation_count} cit` : ""}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
               </li>
             );
           })}
@@ -301,50 +369,162 @@ function EnrichmentSummary({ stats }: EnrichmentSummaryProps) {
           <span className="enrichment-total-icon-text">
             <CheckCircle2 size={11} style={{ color: "var(--success)" }} />
             {locale === "zh"
-              ? `共 ${stats.total_findings} 条相关信息已注入 Pass 1`
-              : `${stats.total_findings} findings injected into Pass 1`}
+              ? `共 ${stats.total_findings} 条相关信息已用于内容分析`
+              : `${stats.total_findings} findings used for content analysis`}
           </span>
-          {hasFindings ? (
-            <button
-              className="enrichment-toggle-btn"
-              onClick={() => setExpanded((v) => !v)}
-              aria-label={expanded ? "collapse" : "expand"}
-            >
-              {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-            </button>
-          ) : null}
         </p>
-      ) : null}
-      {expanded && hasFindings ? (
-        <ul className="enrichment-findings-list">
-          {allFindings.map((f, i) => (
-            <li key={i} className="enrichment-finding-item">
-              <span className="enrichment-finding-source">{f.source === "semantic_scholar" ? "S2" : f.source === "arxiv" ? "ArX" : "Web"}</span>
-              <span className="enrichment-finding-title">
-                {f.url ? <a href={f.url} target="_blank" rel="noopener noreferrer">{f.title}</a> : f.title}
-              </span>
-              <span className="enrichment-finding-meta">
-                {f.year ?? ""}{f.citation_count != null ? ` · ${f.citation_count} cit` : ""}
-              </span>
-            </li>
-          ))}
-        </ul>
       ) : null}
     </div>
   );
 }
 
-function translateEnrichmentError(err: string, locale: "zh" | "en"): string {
-  const map: Record<string, { zh: string; en: string }> = {
-    no_extractable_terms: { zh: "标题无可提取术语，已跳过", en: "no extractable terms — skipped" },
-    package_missing: { zh: "依赖未安装", en: "package missing" },
-    no_api_key: { zh: "未配置 API Key", en: "no API key" },
-    no_title: { zh: "缺少论文标题", en: "no paper title" },
-    httpx_missing: { zh: "依赖 httpx 未安装", en: "httpx missing" },
+function formatFindingSource(source: string): string {
+  if (source === "semantic_scholar") return "S2";
+  if (source === "arxiv") return "ArX";
+  return "Web";
+}
+
+type EnrichmentRowKind = "querying" | "success" | "empty" | "skipped" | "error";
+
+interface EnrichmentRowStateInput {
+  error?: string;
+  found?: number;
+  isQuerying: boolean;
+  locale: "zh" | "en";
+  sourceName: string;
+  hasExpandableFindings: boolean;
+}
+
+interface EnrichmentRowState {
+  kind: EnrichmentRowKind;
+  label: string;
+  detail: string;
+  tooltip?: string;
+}
+
+function getEnrichmentRowState(input: EnrichmentRowStateInput): EnrichmentRowState {
+  const { error, found = 0, isQuerying, locale, sourceName, hasExpandableFindings } = input;
+  if (isQuerying) {
+    return {
+      kind: "querying",
+      label: locale === "zh" ? "查询中" : "Querying",
+      detail: locale === "zh" ? `正在检索 ${sourceName}...` : `Searching ${sourceName}...`,
+    };
+  }
+  if (error) {
+    return translateEnrichmentError(error, locale, sourceName);
+  }
+  if (found > 0) {
+    return {
+      kind: "success",
+      label: locale === "zh" ? `${found} 条` : `${found}`,
+      detail: hasExpandableFindings
+        ? locale === "zh"
+          ? "已找到相关信息，可展开查看"
+          : "Findings available. Expand to inspect."
+        : locale === "zh"
+        ? "已找到相关信息，已用于内容分析"
+        : "Findings were used for content analysis.",
+    };
+  }
+  return {
+    kind: "empty",
+    label: locale === "zh" ? "0 条" : "0",
+    detail: locale === "zh" ? "没有找到可用的相关信息" : "No usable findings returned.",
+  };
+}
+
+function translateEnrichmentError(err: string, locale: "zh" | "en", sourceName: string): EnrichmentRowState {
+  const map: Record<string, { kind: "skipped" | "error"; zhLabel: string; enLabel: string; zhDetail: string; enDetail: string }> = {
+    no_extractable_terms: {
+      kind: "skipped",
+      zhLabel: "已跳过",
+      enLabel: "Skipped",
+      zhDetail: "标题里没有足够检索关键词，未查询此来源",
+      enDetail: "Not enough searchable terms in the title.",
+    },
+    package_missing: {
+      kind: "skipped",
+      zhLabel: "已跳过",
+      enLabel: "Skipped",
+      zhDetail: "当前环境未启用这个信息源，已跳过",
+      enDetail: "This source is not available in the current environment.",
+    },
+    no_api_key: {
+      kind: "skipped",
+      zhLabel: "缺少密钥",
+      enLabel: "No key",
+      zhDetail: "未配置 API Key，已跳过这个信息源",
+      enDetail: "No API key was configured for this source.",
+    },
+    no_title: {
+      kind: "skipped",
+      zhLabel: "已跳过",
+      enLabel: "Skipped",
+      zhDetail: "缺少论文标题，未查询这个信息源",
+      enDetail: "Paper title is missing.",
+    },
+    httpx_missing: {
+      kind: "skipped",
+      zhLabel: "已跳过",
+      enLabel: "Skipped",
+      zhDetail: "当前环境未启用网页请求组件，已跳过",
+      enDetail: "The web request dependency is unavailable.",
+    },
+    timeout: {
+      kind: "error",
+      zhLabel: "超时",
+      enLabel: "Timeout",
+      zhDetail: `${sourceName} 响应超时，已跳过，不影响生成`,
+      enDetail: `${sourceName} timed out and was skipped.`,
+    },
+    rate_limited: {
+      kind: "error",
+      zhLabel: "请求受限",
+      enLabel: "Limited",
+      zhDetail: `${sourceName} 请求受限，已跳过，不影响生成`,
+      enDetail: `${sourceName} was rate limited and skipped.`,
+    },
+    query_failed: {
+      kind: "error",
+      zhLabel: "查询失败",
+      enLabel: "Failed",
+      zhDetail: `${sourceName} 查询失败，已跳过，不影响生成`,
+      enDetail: `${sourceName} failed and was skipped.`,
+    },
   };
   if (map[err]) {
-    return locale === "zh" ? map[err].zh : map[err].en;
+    const item = map[err];
+    return {
+      kind: item.kind,
+      label: locale === "zh" ? item.zhLabel : item.enLabel,
+      detail: locale === "zh" ? item.zhDetail : item.enDetail,
+    };
   }
-  // Truncate long stack-style errors so they don't blow out the panel.
-  return err.length > 60 ? `${err.slice(0, 60)}…` : err;
+
+  const lower = err.toLowerCase();
+  const looksLikeTimeout = lower.includes("timeout") || lower.includes("timed out");
+  const looksLikeRateLimit = lower.includes("rate") || lower.includes("429");
+  const detail = looksLikeTimeout
+    ? locale === "zh"
+      ? `${sourceName} 响应超时，已跳过，不影响生成`
+      : `${sourceName} timed out and was skipped.`
+    : looksLikeRateLimit
+    ? locale === "zh"
+      ? `${sourceName} 请求受限，已跳过，不影响生成`
+      : `${sourceName} was rate limited and skipped.`
+    : locale === "zh"
+    ? `${sourceName} 查询失败，已跳过，不影响生成`
+    : `${sourceName} failed and was skipped.`;
+
+  return {
+    kind: "error",
+    label: locale === "zh" ? "查询失败" : "Failed",
+    detail,
+    tooltip: `${detail}${locale === "zh" ? "。技术详情：" : " Technical detail: "}${truncateEnrichmentError(err)}`,
+  };
+}
+
+function truncateEnrichmentError(err: string): string {
+  return err.length > 120 ? `${err.slice(0, 120)}...` : err;
 }
