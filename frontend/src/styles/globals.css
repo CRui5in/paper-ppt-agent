@@ -1637,6 +1637,28 @@ html[lang="zh-CN"] .panel-title {
   gap: 0.5rem;
 }
 
+.research-provider-select {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 0.25rem;
+}
+
+.research-provider-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.78rem;
+  cursor: pointer;
+  color: var(--text-secondary);
+}
+
+.research-provider-option input[type="radio"] {
+  accent-color: var(--accent);
+  margin: 0;
+  width: 14px;
+  height: 14px;
+}
+
 /* ── External-research enrichment summary ─────────────────────────── */
 .enrichment-summary {
   margin-top: 0.85rem;

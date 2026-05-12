@@ -106,10 +106,12 @@ const translations: Record<Locale, Dictionary> = {
     "options.detailVeryHigh": "Highest",
     "options.timeout": "Job timeout (seconds)",
     "options.timeoutPlaceholder": "No limit",
+    "options.maxCriticAttempts": "Max review passes",
     "options.deepResearch": "Deep Research",
     "options.deepResearchTooltip":
       "Use the 4-pass research workflow: deep reading, narrative planning, manuscript drafting, and quality review. Turn off for a faster single-pass manuscript closer to the previous workflow.",
     "options.visualCritic": "Visual QA",
+    "options.visualQaMaxAttempts": "Max visual QA passes",
     "options.visualCriticTooltip":
       "Render each slide as an image and have a multimodal LLM inspect it for layout, contrast, and decorative-line issues. Adds one extra LLM call per slide. Requires a vision-capable model. Text-only models will silently skip this step.",
     "options.enableIcon": "Enable Icon Decoration",
@@ -289,6 +291,8 @@ const translations: Record<Locale, Dictionary> = {
     "config.canvasFormat": "Canvas format",
     "config.numPages": "Pages",
     "config.visualCritic": "Visual critic",
+    "config.maxCriticAttempts": "Max review passes",
+    "config.visualQaMaxAttempts": "Max visual QA passes",
     "config.enableIcon": "Icon Decoration",
     "config.iconRag": "RAG Search",
     "config.researchEnrichment": "External Research",
@@ -429,13 +433,15 @@ const translations: Record<Locale, Dictionary> = {
     "options.detailVeryHigh": "极高",
     "options.timeout": "任务超时（秒）",
     "options.timeoutPlaceholder": "不限制",
+    "options.maxCriticAttempts": "最大审查次数",
     "options.deepResearch": "深度研究",
     "options.deepResearchTooltip":
       "启用 4 轮研究流程：深度研读、叙事规划、文稿生成和质量复核。关闭后使用更快的单轮文稿生成，更接近旧流程。",
     "options.visualCritic": "视觉 QA",
+    "options.visualQaMaxAttempts": "最大视觉 QA 次数",
     "options.visualCriticTooltip":
       "把每页渲染成图像，再调用多模态 LLM 检查布局、对比度和装饰线等视觉问题。每页会多一次 LLM 调用。需要支持视觉的模型，纯文本模型会自动跳过此步骤。",
-    "options.enableIcon": "启用图标装饰",
+    "options.enableIcon": "图标装饰",
     "options.enableIconTooltip":
       "在生成的幻灯片中插入图标。关闭后所有视觉元素仅使用纯 SVG 形状。",
     "options.iconRag": "RAG 语义搜索",
@@ -611,6 +617,8 @@ const translations: Record<Locale, Dictionary> = {
     "config.canvasFormat": "画布格式",
     "config.numPages": "页数",
     "config.visualCritic": "视觉审查",
+    "config.maxCriticAttempts": "最大审查次数",
+    "config.visualQaMaxAttempts": "最大视觉 QA 次数",
     "config.enableIcon": "图标装饰",
     "config.iconRag": "RAG 搜索",
     "config.researchEnrichment": "外部研究",

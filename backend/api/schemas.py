@@ -60,6 +60,7 @@ class ResearchConfig(BaseModel):
     semantic_scholar_enabled: bool = False
     web_search_enabled: bool = False
     semantic_scholar_api_key: str | None = None
+    web_search_provider: Literal["tavily", "serpapi"] = "tavily"
     tavily_api_key: str | None = None
     serpapi_key: str | None = None
     # Maximum candidates to fetch per source before relevance filtering.
@@ -76,9 +77,11 @@ class GenerationOptions(BaseModel):
     detail_level: str = "normal"
     icon_library: str = "chunk"  # chunk / tabler-filled / tabler-outline
     timeout_seconds: int | None = Field(default=None, ge=1)
+    max_critic_attempts: int = Field(default=3, ge=1, le=10)
     style_overrides: StyleOverrides | None = None
     enable_deep_research: bool = False
     enable_visual_critic: bool = False
+    visual_qa_max_attempts: int = Field(default=1, ge=1, le=10)
     enable_icon: bool = False
     enable_icon_rag: bool = False
     gemini_api_key: str | None = None

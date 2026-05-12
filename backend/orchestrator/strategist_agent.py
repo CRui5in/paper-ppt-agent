@@ -30,6 +30,20 @@ MAX_DESIGN_SPEC_ATTEMPTS = 2
 ICON_CANDIDATE_COUNT = 30
 # Number of search queries to extract from manuscript
 ICON_QUERY_COUNT = 8
+OFFLINE_ICON_CANDIDATE_COUNT = 28
+
+OFFLINE_ICON_PALETTE: list[tuple[str, str, list[str]]] = [
+    ("warning / failure mode", "occlusion risk, noisy feature, error propagation, invalid assumption", ["alert-triangle", "circle-exclamation", "alert-circle", "ban", "bug"]),
+    ("insight / key idea", "turning point, core thesis, design intuition, important takeaway", ["lightbulb", "sparkles", "bulb", "brain"]),
+    ("framework / architecture", "model block, stacked decoder, module composition, hierarchy", ["puzzle", "component", "cube", "layers", "stack", "binary-tree"]),
+    ("method / process", "pipeline, stage transition, iterative update, tuning or regulation", ["route", "git-branch", "arrow-right", "settings", "cog", "sliders"]),
+    ("result / metric", "quantitative result, AP gain, trade-off, target objective", ["chart-bar", "chart-line", "chart-pie", "activity", "target"]),
+    ("evidence / experiment", "ablation, table result, experimental support, dataset evidence", ["flask", "microscope", "clipboard", "database"]),
+    ("visibility / perception", "visible/occluded evidence, observation, localization, attention", ["eye", "search", "crosshairs"]),
+    ("robustness / safety", "reliability, protection from bad updates, gated trust", ["shield", "lock", "key"]),
+    ("people / pose", "person, crowd, keypoint, human pose, accessibility", ["users", "user", "accessibility"]),
+    ("future / contribution", "implication, next step, contribution summary, closing message", ["rocket", "flag", "trophy", "book", "file-text"]),
+]
 
 
 def _extract_icon_queries(manuscript: str) -> list[str]:
@@ -99,9 +113,14 @@ async def _retrieve_icon_candidates(
             logger.warning("Icon search timed out or was cancelled for query: %s", query)
             break
         for r in results:
-            if r["path"] not in seen_paths:
-                seen_paths.add(r["path"])
-                candidates.append(r)
+            path = str(r.get("path") or "")
+            if path in seen_paths:
+                continue
+            if not _icon_asset_exists(path):
+                logger.warning("Skipping stale icon RAG candidate with missing local asset: %s", path)
+                continue
+            seen_paths.add(path)
+            candidates.append(r)
 
     # Sort by score descending, take top N
     candidates.sort(key=lambda x: x["score"], reverse=True)
@@ -140,6 +159,77 @@ async def _retrieve_icon_candidates(
     lines.append("")
 
     return "\n".join(lines)
+
+
+def _icon_asset_exists(icon_path: str) -> bool:
+    if "/" not in icon_path:
+        return False
+    lib, name = icon_path.split("/", 1)
+    return (settings.icons_dir / lib / f"{name}.svg").exists()
+
+
+def _offline_icon_candidates_block(lib: str) -> str:
+    """Provide a compact verified palette when semantic icon RAG is disabled."""
+    rows: list[tuple[str, str, str]] = []
+    seen: set[str] = set()
+    for semantic_role, use_when, names in OFFLINE_ICON_PALETTE:
+        for name in names:
+            path = f"{lib}/{name}"
+            if path in seen or not _icon_asset_exists(path):
+                continue
+            seen.add(path)
+            rows.append((path, semantic_role, use_when))
+            if len(rows) >= OFFLINE_ICON_CANDIDATE_COUNT:
+                break
+        if len(rows) >= OFFLINE_ICON_CANDIDATE_COUNT:
+            break
+
+    if not rows:
+        return (
+            f"\n## Available Icon Candidates ({lib} library, offline fallback)\n\n"
+            "No verified local icons were found for this library. Prefer `Icon: None` "
+            "unless a specific local icon path is known to exist.\n"
+        )
+
+    lines = [
+        f"\n## Available Icon Candidates ({lib} library, offline fallback, {len(rows)} verified icons)",
+        "",
+        "Semantic RAG is disabled, so use this small verified palette instead of inventing icon names.",
+        "Choose icons sparingly; most slides should still use `Icon: None`.",
+        "",
+        "| # | Icon Path | Role | Use when |",
+        "|---|-----------|------|----------|",
+    ]
+    for i, (path, semantic_role, use_when) in enumerate(rows, 1):
+        lines.append(f"| {i} | `{path}` | {semantic_role} | {use_when} |")
+    lines.append("")
+    lines.append(
+        "Use icon paths exactly as shown, with the library prefix, in Section VI and Section IX."
+    )
+    return "\n".join(lines)
+
+
+def _icon_usage_policy_block(icon_library: str) -> str:
+    return (
+        "\n## Icon Usage: ENABLED — restrained semantic mode\n"
+        "Icons are enabled, but they must remain sparse and purposeful. "
+        "Use icons only when they clarify the slide's structure or meaning; do not add icons merely because the switch is on.\n\n"
+        "Rules:\n"
+        "- Target only high-value placements: chapter dividers, process steps, KPI/result highlights, warnings/failure modes, limitation cards, or future-direction cards.\n"
+        "- Avoid icon use on dense technical/data slides unless the icon labels a clear process step or callout.\n"
+        "- Never use icons as ordinary bullet prefixes, repeated decoration, filler, or background texture.\n"
+        "- Keep to one icon library for the whole deck and use explicit `<use data-icon=\"...\"/>` placeholders.\n"
+        "- In Section VI, list only icons with a concrete justification; leave slides unlisted when no icon is needed.\n"
+        "- In Section IX Content Outline, add an `Icon: ` line only for slides that should actually render an icon.\n"
+        f"- Selected icon library: `{icon_library}`. Icon paths should include this library prefix, e.g. `{icon_library}/name`.\n"
+        "- Choose only icon paths that appear in the candidate table below, unless a local asset with that exact path is explicitly known to exist.\n"
+        "\nVisual role separation:\n"
+        "- `Icon` means a real library icon only. Use `Icon: None` on ordinary content pages unless the icon has a clear semantic job.\n"
+        "- `Card Marker` means structural labeling only: prefer `numbered` or `none`. Do not use single-letter/symbol badges such as `P`, `Δ`, `!`, or `G` as fake icons.\n"
+        "- `Micro Visual` means a tiny mechanism diagram, not an icon. Prefer forms such as `distribution-bins`, `residual-arrow`, `error-growth`, `gate-slider`, `stage-flow`, `mini-chart`, or `none`.\n"
+        "- For dense technical explanation cards, choose numbered markers or micro visuals over decorative icons.\n"
+        "- In Section IX, add `Card Marker:` and/or `Micro Visual:` only when they materially guide the Executor; otherwise omit them or use `none`.\n"
+    )
 
 
 def _extract_design_spec_section(content: str, roman: str) -> str:
@@ -208,6 +298,24 @@ def _design_spec_validation_error(
                 missing_types.append(f"{page_num}:{page_type}")
         if missing_types:
             return "Content Outline page types do not match manuscript: " + ", ".join(missing_types[:5])
+
+    missing_icons = sorted(
+        {
+            match.group(1).strip()
+            for match in re.finditer(
+                r"`((?:chunk|tabler-filled|tabler-outline)/[^`]+)`",
+                text,
+            )
+            if not match.group(1).strip().endswith("/name")
+            and not _icon_asset_exists(match.group(1).strip())
+        }
+    )
+    if missing_icons:
+        return (
+            "Design spec references missing local icon assets: "
+            + ", ".join(missing_icons[:8])
+            + ". Choose exact paths from the provided icon candidate table, or use Icon: None."
+        )
     return None
 
 
@@ -325,18 +433,22 @@ async def create_design_spec(
     if is_deepseek_provider(llm, model):
         user_parts.append("\n" + deepseek_strategy_guidance(detail_level))
 
-    # RAG icon retrieval: pre-select candidates from the full icon index
-    icon_candidates_block = ""
+    # Icon policy: when enabled, Phase 1 skips icon detail — Phase 2 (icon_round) decides
     if not enable_icon:
-        icon_candidates_block = (
+        user_parts.append(
             "\n## Icon Usage: DISABLED\n"
             "Do NOT use any `<use data-icon=\"...\"/>` elements in any slide. "
             "Use plain SVG shapes (circles, rects, paths) for all visual elements instead."
         )
-    elif enable_icon_rag:
-        icon_candidates_block = await _retrieve_icon_candidates(manuscript, icon_library, gemini_api_key)
-    if icon_candidates_block:
-        user_parts.append(icon_candidates_block)
+    else:
+        # Phase 1: just tell strategist that icons will be planned separately
+        user_parts.append(
+            f"\n## Icon Usage: ENABLED (Phase 2)\n"
+            f"Icons are enabled but will be planned in a separate phase.\n"
+            f"In Section VI, write: `Icon library: {icon_library} — inventory TBD.`\n"
+            f"In Section IX, do NOT add `Icon:` lines yet — they will be added later.\n"
+            f"Do not use `<use data-icon/>` placeholders in the content outline."
+        )
 
     # Inject actual image dimensions so the design spec has correct ratios
     if figure_inventory:
@@ -464,6 +576,21 @@ async def create_design_spec(
             expected_inventory=inventory if enforce_page_types else None,
         )
         if error is None:
+            # Phase 2: Icon Decoration Round (if enabled)
+            if enable_icon:
+                from backend.orchestrator.icon_round import run_icon_round
+
+                logger.info("Running Icon Decoration Round (Phase 2)")
+                content = await run_icon_round(
+                    content,
+                    manuscript,
+                    icon_library,
+                    llm,
+                    model,
+                    enable_icon_rag=enable_icon_rag,
+                    gemini_api_key=gemini_api_key,
+                    debug_dir=debug_dir,
+                )
             return content
         last_error = error
 
