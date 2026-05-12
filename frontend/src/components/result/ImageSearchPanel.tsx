@@ -201,15 +201,26 @@ export function ImageSearchPanel({
     }
   }, [jobId, onImageApplied]);
 
-  const handleDownload = useCallback((item: ImageSearchResultItem) => {
+  const handleDownload = useCallback(async (item: ImageSearchResultItem) => {
     const url = item.url;
     if (!url) return;
-    const a = document.createElement("a");
-    a.href = url;
-    a.target = "_blank";
-    a.rel = "noopener noreferrer";
-    a.download = "";
-    a.click();
+    try {
+      const resp = await fetch(url);
+      const blob = await resp.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      // Guess extension from content-type
+      const ext = blob.type.split("/")[1] || "png";
+      a.download = `image.${ext}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      // Fallback: open in new tab
+      window.open(url, "_blank", "noopener");
+    }
   }, []);
 
   const handleKeyDown = useCallback(
