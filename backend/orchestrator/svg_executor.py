@@ -162,6 +162,44 @@ def _icon_from_inventory_table(design_spec: str, page_num: int) -> dict | None:
     if not vi_match:
         return None
     vi_text = vi_match.group(0)
+
+    for raw_line in vi_text.splitlines():
+        line = raw_line.strip()
+        if not line.startswith("|") or "---" in line:
+            continue
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        if len(cells) < 2 or not re.fullmatch(r"0*\d+", cells[0]):
+            continue
+        if int(cells[0]) != page_num:
+            continue
+        icon_name = cells[1].strip().strip("`")
+        if not icon_name or icon_name.lower() in {"none", "null", "n/a"}:
+            return None
+        role = cells[2] if len(cells) > 2 else ""
+        anchor = cells[3] if len(cells) > 3 else ""
+        placement = cells[4] if len(cells) > 4 else ""
+        size_text = cells[5] if len(cells) > 5 else ""
+        note = "; ".join(
+            part
+            for part in (
+                f"role: {role}" if role else "",
+                f"anchor: {anchor}" if anchor else "",
+                f"placement: {placement}" if placement else "",
+                f"size: {size_text}" if size_text else "",
+            )
+            if part
+        )
+        return {
+            "name": icon_name,
+            "size": _icon_size_from_text(size_text, default=40),
+            "color": _icon_color_from_text(size_text, default="#2563EB"),
+            "note": note,
+            "role": role,
+            "anchor": anchor,
+            "placement": placement,
+            "reason": "",
+        }
+
     # Match table rows like | 03 | `chunk/target` | ... |
     row_pattern = rf"\|\s*0*{page_num}\s*\|\s*`([^`]+)`\s*\|"
     row_match = re.search(row_pattern, vi_text)
@@ -171,6 +209,34 @@ def _icon_from_inventory_table(design_spec: str, page_num: int) -> dict | None:
     if not icon_name or icon_name.lower() in {"none", "null", "n/a"}:
         return None
     return {"name": icon_name, "size": 40, "color": "#2563EB", "note": ""}
+
+
+def _icon_note_fields(note: str) -> dict[str, str]:
+    fields: dict[str, str] = {}
+    for match in re.finditer(
+        r"(?is)\b(role|anchor|placement|size|reason|color)\s*:\s*"
+        r"(.*?)(?=;\s*\b(?:role|anchor|placement|size|reason|color)\s*:|$)",
+        note,
+    ):
+        fields[match.group(1).lower()] = match.group(2).strip(" ;.-")
+    return fields
+
+
+def _icon_size_from_text(text: str, *, default: int = 40) -> int:
+    size_match = re.search(r"(\d{1,3})\s*[x×]\s*(\d{1,3})\s*px?", text, re.IGNORECASE)
+    if size_match:
+        return max(int(size_match.group(1)), int(size_match.group(2)))
+    single_match = re.search(r"\b(\d{2,3})\s*px\b", text, re.IGNORECASE)
+    if single_match:
+        return int(single_match.group(1))
+    return default
+
+
+def _icon_color_from_text(text: str, *, default: str = "#2563EB") -> str:
+    color_match = re.search(r"`(#[0-9A-Fa-f]{3,8})`|(#[0-9A-Fa-f]{3,8})", text)
+    if color_match:
+        return color_match.group(1) or color_match.group(2)
+    return default
 
 
 def _icon_from_design_spec_for_page(design_spec: str, page_num: int) -> dict | None:
@@ -196,17 +262,20 @@ def _icon_from_design_spec_for_page(design_spec: str, page_num: int) -> dict | N
                 return None
 
             note = icon_match.group(2).strip()
-            size = 40
-            size_match = re.search(r"(\d{1,3})\s*[x×]\s*(\d{1,3})\s*px?", note, re.IGNORECASE)
-            if size_match:
-                size = max(int(size_match.group(1)), int(size_match.group(2)))
+            fields = _icon_note_fields(note)
+            size_text = fields.get("size", note)
+            color_text = fields.get("color", note)
 
-            color = "#2563EB"
-            color_match = re.search(r"`(#[0-9A-Fa-f]{3,8})`|(#[0-9A-Fa-f]{3,8})", note)
-            if color_match:
-                color = color_match.group(1) or color_match.group(2)
-
-            return {"name": icon_name, "size": size, "color": color, "note": note}
+            return {
+                "name": icon_name,
+                "size": _icon_size_from_text(size_text, default=40),
+                "color": _icon_color_from_text(color_text, default="#2563EB"),
+                "note": note,
+                "role": fields.get("role", ""),
+                "anchor": fields.get("anchor", ""),
+                "placement": fields.get("placement", ""),
+                "reason": fields.get("reason", ""),
+            }
 
     # Secondary: Section VI inventory table
     return _icon_from_inventory_table(design_spec, page_num)
@@ -232,15 +301,28 @@ def _icon_guidance_block(icon_assignment: dict | None) -> str:
     name = str(icon_assignment["name"])
     size = int(icon_assignment.get("size") or 40)
     color = str(icon_assignment.get("color") or "#2563EB")
+    role = str(icon_assignment.get("role") or "semantic layout anchor")
+    anchor = str(icon_assignment.get("anchor") or "the nearest related content block")
+    placement = str(
+        icon_assignment.get("placement")
+        or "reserve a small slot before laying out text and charts"
+    )
+    reason = str(icon_assignment.get("reason") or "").strip()
     return (
         "## Icon Guidance\n"
         f"- The design spec assigns this slide exactly one semantic icon: `{name}`.\n"
+        f"- Icon role: {role}.\n"
+        f"- Anchor it to: {anchor}.\n"
+        f"- Natural placement: {placement}.\n"
+        + (f"- Why it belongs: {reason}.\n" if reason else "")
+        + "- Reserve the icon slot before placing body text, charts, or cards; then fit surrounding content around that slot.\n"
         "- Render it with a real icon placeholder so the finalizer can embed the "
         "icon library asset. Do not redraw it with inline `<path>`, `<polygon>`, "
         "or decorative geometry.\n"
         f"- Use this form with double quotes: "
         f"`<use data-icon=\"{name}\" x=\"...\" y=\"...\" width=\"{size}\" "
         f"height=\"{size}\" fill=\"{color}\"/>`.\n"
+        "- Keep it visually integrated with that anchor. Do not float it in an unrelated corner, use it as wallpaper, or overlay it on charts/figures.\n"
         "- Keep it sparse and purposeful; use no other icon placeholders on this slide.\n"
         "- Do not add extra standalone letter/symbol badges as fake icons in cards."
     )
