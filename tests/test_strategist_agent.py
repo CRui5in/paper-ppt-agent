@@ -4,7 +4,7 @@ import pytest
 
 from backend.llm import LLMResponse
 from backend.llm.types import ProviderInfo
-from backend.orchestrator import strategist_agent
+from backend.orchestrator import icon_round, strategist_agent
 
 
 class _FakeLLM:
@@ -103,7 +103,20 @@ async def test_create_design_spec_adds_deepseek_strategy_guidance() -> None:
 
 
 @pytest.mark.asyncio
-async def test_create_design_spec_adds_restrained_icon_policy_when_enabled() -> None:
+async def test_create_design_spec_adds_phase_two_icon_policy_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _fake_icon_round(
+        design_spec,
+        manuscript,
+        icon_library,
+        llm,
+        model,
+        **kwargs,
+    ):
+        return design_spec
+
+    monkeypatch.setattr(icon_round, "run_icon_round", _fake_icon_round)
     llm = _FakeLLM([_valid_design_spec()])
 
     await strategist_agent.create_design_spec(
@@ -116,15 +129,12 @@ async def test_create_design_spec_adds_restrained_icon_policy_when_enabled() -> 
     )
 
     user_prompt = llm.calls[0]["messages"][-1].content
-    assert "Icon Usage: ENABLED — restrained semantic mode" in user_prompt
-    assert "Use icons only when they clarify" in user_prompt
-    assert "Never use icons as ordinary bullet prefixes" in user_prompt
-    assert "Selected icon library: `tabler-outline`" in user_prompt
-    assert "offline fallback" in user_prompt
-    assert "`tabler-outline/alert-triangle`" in user_prompt
-    assert "Visual role separation" in user_prompt
-    assert "Card Marker" in user_prompt
-    assert "Micro Visual" in user_prompt
+    assert "Icon Usage: ENABLED (Phase 2)" in user_prompt
+    assert "Icons are enabled but will be planned in a separate phase" in user_prompt
+    assert "Icon library: tabler-outline" in user_prompt
+    assert "inventory TBD" in user_prompt
+    assert "do NOT add `Icon:` lines yet" in user_prompt
+    assert "Do not use `<use data-icon/>` placeholders" in user_prompt
 
 
 @pytest.mark.asyncio

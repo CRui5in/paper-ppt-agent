@@ -259,8 +259,32 @@ def test_icon_from_design_spec_for_page_recovers_assignment() -> None:
         "size": 40,
         "color": "#60A5FA",
         "note": "— positioned left of title, 40×40px, color `#60A5FA`",
+        "role": "",
+        "anchor": "",
+        "placement": "",
+        "reason": "",
     }
     assert svg_executor._icon_from_design_spec_for_page(design_spec, 4) is None
+
+
+def test_icon_from_design_spec_for_page_recovers_layout_metadata() -> None:
+    design_spec = """
+## IX. Content Outline
+
+#### Slide 02 — Result
+
+- **Icon**: `chunk/target` — role: KPI/result anchor; anchor: result callout title; placement: left of result label before metric text; size: 32x32px; reason: direct objective metaphor
+"""
+
+    icon = svg_executor._icon_from_design_spec_for_page(design_spec, 2)
+
+    assert icon is not None
+    assert icon["name"] == "chunk/target"
+    assert icon["size"] == 32
+    assert icon["role"] == "KPI/result anchor"
+    assert icon["anchor"] == "result callout title"
+    assert icon["placement"] == "left of result label before metric text"
+    assert icon["reason"] == "direct objective metaphor"
 
 
 def test_icon_guidance_requires_data_icon_placeholder() -> None:
@@ -271,6 +295,8 @@ def test_icon_guidance_requires_data_icon_placeholder() -> None:
     assert 'data-icon="chunk/lightbulb"' in guidance
     assert "Do not redraw it with inline `<path>`" in guidance
     assert "double quotes" in guidance
+    assert "Reserve the icon slot before placing body text" in guidance
+    assert "Do not float it in an unrelated corner" in guidance
 
 
 def test_icon_guidance_without_assignment_bans_fake_badges() -> None:

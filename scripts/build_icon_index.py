@@ -69,12 +69,25 @@ def _name_to_words(name: str) -> list[str]:
 
 def _build_text(icon: dict) -> str:
     """Build embedding text for one icon."""
-    parts = [f"icon: {icon['name']}"]
+    name = icon["name"]
+    name_words = " ".join(_name_to_words(name))
+    parts = [
+        f"presentation icon path: {icon['path']}",
+        f"icon name: {name}",
+    ]
+    if name_words and name_words != name:
+        parts.append(f"icon words: {name_words}")
     if icon.get("category"):
         parts.append(f"category: {icon['category']}")
     if icon.get("tags"):
         parts.append(f"tags: {', '.join(icon['tags'])}")
     parts.append(f"library: {icon['lib']}")
+    parts.append(
+        "usage: simple pictogram for slide callouts, process nodes, KPI labels, "
+        "warnings, method cards, contribution cards, and compact visual anchors"
+    )
+    if name_words:
+        parts.append(f"visual metaphor: {name_words}")
     return " | ".join(parts)
 
 
@@ -227,7 +240,7 @@ def main() -> None:
     print(f"  {INDEX_NPZ} ({INDEX_NPZ.stat().st_size / 1024 / 1024:.1f} MB)")
 
     meta = {
-        "version": 1,
+        "version": 2,
         "model": EMBED_MODEL,
         "dimension": EMBED_DIM,
         "count": len(icons),

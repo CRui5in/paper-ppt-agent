@@ -8,12 +8,55 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 EMBED_MODEL = "gemini-embedding-2"
 EMBED_DIM = 768
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
+
+
+def _tokens(text: str) -> set[str]:
+    return {
+        token
+        for token in _TOKEN_RE.findall(text.lower().replace("-", " "))
+        if len(token) >= 3
+    }
+
+
+def _icon_tokens(icon: dict) -> set[str]:
+    parts = [
+        str(icon.get("name") or ""),
+        str(icon.get("category") or ""),
+        " ".join(str(tag) for tag in icon.get("tags", []) or []),
+        str(icon.get("text") or ""),
+    ]
+    return _tokens(" ".join(parts))
+
+
+def _lexical_boost(query: str, icon: dict) -> float:
+    query_tokens = _tokens(query)
+    if not query_tokens:
+        return 0.0
+
+    tokens = _icon_tokens(icon)
+    overlap = query_tokens & tokens
+    boost = min(0.16, 0.035 * len(overlap))
+
+    query_lower = query.lower()
+    name_phrase = str(icon.get("name") or "").replace("-", " ").lower()
+    if name_phrase and name_phrase in query_lower:
+        boost += 0.08
+
+    for tag in icon.get("tags", []) or []:
+        tag_text = str(tag).lower()
+        if len(tag_text) >= 3 and tag_text in query_lower:
+            boost += 0.04
+            break
+
+    return min(boost, 0.24)
 
 
 def _np():
@@ -56,7 +99,14 @@ class IconIndex:
 
         np = _np()
         data = np.load(npz_path)
-        self._vectors = data["vectors"]  # shape: (N, EMBED_DIM)
+        self._vectors = data["vectors"].astype(np.float32, copy=False)
+        norms = np.linalg.norm(self._vectors, axis=1, keepdims=True)
+        self._vectors = np.divide(
+            self._vectors,
+            norms,
+            out=self._vectors,
+            where=norms > 0,
+        )
         self._meta = json.loads(meta_path.read_text(encoding="utf-8"))
         self._loaded = True
         logger.info(
@@ -115,8 +165,15 @@ class IconIndex:
             indices = np.arange(len(icons))
             vecs = self._vectors
 
-        # Cosine similarity (vectors are already normalized)
-        sims = vecs @ query_vec
+        # Cosine similarity plus a small lexical boost. The boost helps exact
+        # icon-name/tag hits survive when the semantic embedding is close but
+        # too generic for a large visual catalog.
+        embedding_sims = vecs @ query_vec
+        boosts = np.array(
+            [_lexical_boost(query, icons[int(real_idx)]) for real_idx in indices],
+            dtype=np.float32,
+        )
+        sims = embedding_sims + boosts
 
         # Top-k
         top_k_idx = np.argsort(sims)[-k:][::-1]
@@ -132,6 +189,8 @@ class IconIndex:
                 "category": ic.get("category", ""),
                 "tags": ic.get("tags", []),
                 "score": float(sims[idx]),
+                "embedding_score": float(embedding_sims[idx]),
+                "lexical_boost": float(boosts[idx]),
             })
 
         return results
@@ -142,7 +201,11 @@ class IconIndex:
         try:
             genai, types = _genai()
             client = genai.Client()
-            formatted = f"task: search result | query: {query}"
+            formatted = (
+                "Find a simple presentation pictogram/icon for this slide concept. "
+                "Prefer concise visual metaphors that can anchor a callout, process "
+                f"step, metric, warning, or method card. Query: {query}"
+            )
             result = client.models.embed_content(
                 model=EMBED_MODEL,
                 contents=formatted,
