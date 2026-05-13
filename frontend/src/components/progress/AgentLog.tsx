@@ -12,6 +12,18 @@ function buildArchiveUrl(archivePath: string, jobId?: string): string | null {
   return `/api/critic-archive/${jobId}/${filename}`;
 }
 
+function formatRawResponse(raw?: string | null): string {
+  if (!raw) return "";
+  const trimmed = raw.trim();
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const candidate = fenced?.[1] ?? trimmed.match(/\{[\s\S]*\}/)?.[0] ?? trimmed;
+  try {
+    return JSON.stringify(JSON.parse(candidate), null, 2);
+  } catch {
+    return raw;
+  }
+}
+
 interface AgentLogProps {
   logs?: string[];
   criticEvents?: CriticEvent[];
@@ -40,23 +52,57 @@ export function AgentLog({ logs, criticEvents, jobId, mode = "mixed", hideHeader
   const [expandedPages, setExpandedPages] = useState<Set<number>>(new Set());
   const [expandedPrompts, setExpandedPrompts] = useState<Set<string>>(new Set());
   const [archivePreview, setArchivePreview] = useState<{ url: string; label: string; content: string } | null>(null);
+  const [comparePreview, setComparePreview] = useState<{
+    label: string;
+    before: { url: string; content: string };
+    after: { url: string; content: string };
+  } | null>(null);
+  const [imagePreview, setImagePreview] = useState<{ url: string; label: string } | null>(null);
   const [archiveLoadingKey, setArchiveLoadingKey] = useState<string | null>(null);
 
-  const openArchivePreview = useCallback(async (archivePath: string, label: string) => {
-    if (!jobId) return;
+  const fetchArchiveContent = useCallback(async (archivePath: string) => {
+    if (!jobId) return null;
     const url = buildArchiveUrl(archivePath, jobId);
-    if (!url) return;
+    if (!url) return null;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    return { url, content: await res.text() };
+  }, [jobId]);
+
+  const openArchivePreview = useCallback(async (archivePath: string, label: string) => {
     setArchiveLoadingKey(archivePath);
     try {
-      const res = await fetch(url);
-      if (!res.ok) return;
-      const content = await res.text();
-      setArchivePreview({ url, label, content });
+      const payload = await fetchArchiveContent(archivePath);
+      if (!payload) return;
+      setArchivePreview({ label, ...payload });
     } catch {
       // ignore
     } finally {
       setArchiveLoadingKey(null);
     }
+  }, [fetchArchiveContent]);
+
+  const openArchiveComparison = useCallback(async (beforePath: string, afterPath: string, label: string) => {
+    const key = `${beforePath}|${afterPath}`;
+    setArchiveLoadingKey(key);
+    try {
+      const [before, after] = await Promise.all([
+        fetchArchiveContent(beforePath),
+        fetchArchiveContent(afterPath),
+      ]);
+      if (!before || !after) return;
+      setComparePreview({ label, before, after });
+    } catch {
+      // ignore
+    } finally {
+      setArchiveLoadingKey(null);
+    }
+  }, [fetchArchiveContent]);
+
+  const openImagePreview = useCallback((archivePath: string, label: string) => {
+    const url = buildArchiveUrl(archivePath, jobId);
+    if (!url) return;
+    setImagePreview({ url, label });
   }, [jobId]);
 
   const togglePage = (page: number) => {
@@ -169,10 +215,23 @@ export function AgentLog({ logs, criticEvents, jobId, mode = "mixed", hideHeader
                     </button>
                     {isExpanded ? (
                       <div className="critic-attempts-list">
-                        {events.map((ev, idx) => (
-                          <div key={`${ev.page}-${ev.attempt}-${idx}`} className="critic-attempt">
+                        {events.map((ev, idx) => {
+                          const source = ev.source ?? "static";
+                          const sourceLabel = source === "visual" ? t("review.sourceVisual") : t("review.sourceStatic");
+                          const beforeArchive = ev.before_archive_path ?? ev.archive_path;
+                          const afterArchive = ev.after_archive_path;
+                          const renderedImagePath = ev.rendered_image_path;
+                          const compareKey = beforeArchive && afterArchive ? `${beforeArchive}|${afterArchive}` : "";
+                          const singleArchivePath = afterArchive ?? beforeArchive;
+                          const svgActionLoadingKey = compareKey || singleArchivePath || "";
+                          return (
+                          <div key={`${ev.page}-${ev.attempt}-${source}-${idx}`} className="critic-attempt">
                             <div className="critic-attempt-head">
                               <p className="critic-attempt-label">{t("review.attempt").replace("{count}", String(ev.attempt))}</p>
+                              <span className={`critic-badge critic-source-badge critic-source-${source}`}>{sourceLabel}</span>
+                              {ev.skipped_reason ? (
+                                <span className="critic-badge critic-source-badge">{ev.skipped_reason}</span>
+                              ) : null}
                               {ev.report.error_count > 0 ? <span className="critic-badge critic-badge-error">{t("review.errors").replace("{count}", String(ev.report.error_count))}</span> : null}
                               {ev.report.warning_count > 0 ? <span className="critic-badge critic-badge-warn">{t("review.warnings").replace("{count}", String(ev.report.warning_count))}</span> : null}
                             </div>
@@ -203,18 +262,45 @@ export function AgentLog({ logs, criticEvents, jobId, mode = "mixed", hideHeader
                                 ) : null}
                               </div>
                             ) : null}
-                            {ev.archive_path ? (
-                              <button
-                                type="button"
-                                className="critic-archive-link"
-                                onClick={() => void openArchivePreview(ev.archive_path!, t("review.archiveLabel").replace("{page}", String(ev.page)).replace("{attempt}", String(ev.attempt)))}
-                              >
-                                {archiveLoadingKey === ev.archive_path ? <Loader2 size={11} className="spin" /> : <Eye size={11} />}
-                                {t("review.preRepairSvg")}
-                              </button>
+                            {ev.raw_response_excerpt ? (
+                              <details className="critic-meta-details">
+                                <summary>{t("review.rawResponse")}</summary>
+                                <pre className="critic-repair-text">{formatRawResponse(ev.raw_response_excerpt)}</pre>
+                              </details>
+                            ) : null}
+                            {renderedImagePath || singleArchivePath ? (
+                              <div className="critic-archive-actions">
+                                {renderedImagePath ? (
+                                  <button
+                                    type="button"
+                                    className="critic-archive-link"
+                                    onClick={() => openImagePreview(renderedImagePath, t("review.visualRenderImageLabel").replace("{page}", String(ev.page)).replace("{attempt}", String(ev.attempt)))}
+                                  >
+                                    <Eye size={11} />
+                                    {t("review.visualRenderImage")}
+                                  </button>
+                                ) : null}
+                                {singleArchivePath ? (
+                                  <button
+                                    type="button"
+                                    className="critic-archive-link"
+                                    onClick={() => {
+                                      const label = t("review.compareArchiveLabel").replace("{page}", String(ev.page)).replace("{attempt}", String(ev.attempt));
+                                      if (beforeArchive && afterArchive) {
+                                        void openArchiveComparison(beforeArchive, afterArchive, label);
+                                      } else {
+                                        void openArchivePreview(singleArchivePath, label);
+                                      }
+                                    }}
+                                  >
+                                    {archiveLoadingKey === svgActionLoadingKey ? <Loader2 size={11} className="spin" /> : <Eye size={11} />}
+                                    {t("review.repairSvgSnapshot")}
+                                  </button>
+                                ) : null}
+                              </div>
                             ) : null}
                           </div>
-                        ))}
+                        )})}
                       </div>
                     ) : null}
                   </div>
@@ -235,6 +321,45 @@ export function AgentLog({ logs, criticEvents, jobId, mode = "mixed", hideHeader
             </button>
           </div>
           <div className="svg-preview-content" dangerouslySetInnerHTML={{ __html: archivePreview.content }} />
+        </div>
+      </div>,
+      document.body,
+    ) : null}
+    {comparePreview ? createPortal(
+      <div className="svg-preview-overlay" onClick={() => setComparePreview(null)}>
+        <div className="svg-preview-panel svg-preview-panel-compare" onClick={(e) => e.stopPropagation()}>
+          <div className="svg-preview-header">
+            <span className="svg-preview-title">{comparePreview.label}</span>
+            <button type="button" className="icon-btn" onClick={() => setComparePreview(null)}>
+              <X size={16} />
+            </button>
+          </div>
+          <div className="svg-preview-compare">
+            <div className="svg-preview-column">
+              <span>{t("review.preRepairSvgColumn")}</span>
+              <div className="svg-preview-content" dangerouslySetInnerHTML={{ __html: comparePreview.before.content }} />
+            </div>
+            <div className="svg-preview-column">
+              <span>{t("review.postRepairSvgColumn")}</span>
+              <div className="svg-preview-content" dangerouslySetInnerHTML={{ __html: comparePreview.after.content }} />
+            </div>
+          </div>
+        </div>
+      </div>,
+      document.body,
+    ) : null}
+    {imagePreview ? createPortal(
+      <div className="svg-preview-overlay" onClick={() => setImagePreview(null)}>
+        <div className="svg-preview-panel svg-preview-panel-image" onClick={(e) => e.stopPropagation()}>
+          <div className="svg-preview-header">
+            <span className="svg-preview-title">{imagePreview.label}</span>
+            <button type="button" className="icon-btn" onClick={() => setImagePreview(null)}>
+              <X size={16} />
+            </button>
+          </div>
+          <div className="svg-preview-image-content">
+            <img src={imagePreview.url} alt={imagePreview.label} />
+          </div>
         </div>
       </div>,
       document.body,

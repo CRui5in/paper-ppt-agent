@@ -716,8 +716,9 @@ export const useGeneration = create<GenerationState>()(
                   criticEvents = newEvents;
                 } else {
                   // Progress events carry per-page events — merge by dedup
-                  const existing = new Set(criticEvents.map((e) => `${e.page}-${e.attempt}`));
-                  const toAdd = newEvents.filter((e) => !existing.has(`${e.page}-${e.attempt}`));
+                  const eventKey = (e: CriticEvent) => `${e.page}-${e.attempt}-${e.source ?? "static"}-${e.repair_prompt ? "repair" : "check"}`;
+                  const existing = new Set(criticEvents.map(eventKey));
+                  const toAdd = newEvents.filter((e) => !existing.has(eventKey(e)));
                   criticEvents = [...criticEvents, ...toAdd];
                 }
               }

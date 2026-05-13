@@ -12,8 +12,8 @@ from pydantic import BaseModel, Field
 from backend.api.schemas import PreviewResponse, PreviewSlide
 from backend.config import settings
 from backend.generator.project_manager import get_svg_files
-from backend.generator.svg_finalize.render_ready import prepare_svg_file_for_render
-from backend.runtime import aoffload, apath_exists, aread_text, aremove
+from backend.generator.svg_finalize.render_ready import prepare_svg_content_for_render, prepare_svg_file_for_render
+from backend.runtime import aoffload, apath_exists, aread_bytes, aread_text, aremove
 from backend.session.manager import session_manager
 
 router = APIRouter()
@@ -61,7 +61,7 @@ async def get_critic_history(job_id: str) -> dict:
 
 @router.get("/critic-archive/{job_id}/{filename}")
 async def get_critic_archive_svg(job_id: str, filename: str) -> Response:
-    """Serve a pre-repair archived SVG from svg_archive/repair/."""
+    """Serve an archived critic SVG snapshot or visual QA render."""
     job = session_manager.get_job(job_id)
     if job is None or not job.project_dir:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
@@ -71,11 +71,30 @@ async def get_critic_archive_svg(job_id: str, filename: str) -> Response:
     if safe_name != filename or ".." in filename:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid filename.")
 
-    svg_path = Path(job.project_dir) / "svg_archive" / "repair" / safe_name
-    if not await apath_exists(svg_path):
+    archive_path = Path(job.project_dir) / "svg_archive" / "repair" / safe_name
+    if not await apath_exists(archive_path):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Archive not found.")
 
-    content = await aread_text(svg_path, encoding="utf-8")
+    suffix = archive_path.suffix.lower()
+    if suffix in {".png", ".jpg", ".jpeg", ".webp"}:
+        media_type = {
+            ".png": "image/png",
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".webp": "image/webp",
+        }[suffix]
+        content = await aread_bytes(archive_path)
+        return Response(content=content, media_type=media_type)
+
+    content = await aread_text(archive_path, encoding="utf-8")
+    try:
+        content = await aoffload(
+            prepare_svg_content_for_render,
+            content,
+            Path(job.project_dir) / "svg_output",
+        )
+    except Exception:
+        pass
     return Response(content=content, media_type="image/svg+xml")
 
 

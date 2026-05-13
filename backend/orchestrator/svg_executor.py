@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 import xml.etree.ElementTree as ET
 from collections.abc import AsyncIterator, Awaitable, Callable
+from inspect import Parameter, signature
 from pathlib import Path
 
 from PIL import Image
@@ -58,7 +59,11 @@ MAX_PRIOR_PAGES_IN_CONTEXT = 2
 # Initial response plus bounded same-page retries when no SVG can be extracted.
 MAX_SVG_EXTRACTION_ATTEMPTS = 3
 
-CriticCallback = Callable[[int, int, CriticReport, str | None, str | None], Awaitable[None]]
+CriticMetadata = dict[str, object]
+CriticCallback = Callable[
+    [int, int, CriticReport, str | None, str | None, CriticMetadata | None],
+    Awaitable[None],
+]
 SvgUpdateCallback = Callable[[int, str], Awaitable[None]]
 
 
@@ -764,6 +769,103 @@ def _merge_reports(*reports: CriticReport) -> CriticReport:
     )
 
 
+def _archive_repair_svg(
+    repair_archive_dir: Path,
+    *,
+    page_num: int,
+    attempt: int,
+    label: str,
+    svg_content: str,
+) -> str | None:
+    """Persist an SVG snapshot for review before/after repair."""
+    try:
+        repair_archive_dir.mkdir(parents=True, exist_ok=True)
+        archive_filename = f"p{page_num:02d}_attempt{attempt}_{label}.svg"
+        archive_path = repair_archive_dir / archive_filename
+        archive_path.write_text(svg_content, encoding="utf-8")
+        return f"svg_archive/repair/{archive_filename}"
+    except OSError:
+        return None
+
+
+def _archive_visual_render(
+    repair_archive_dir: Path,
+    *,
+    page_num: int,
+    attempt: int,
+    media_type: str | None,
+    image_bytes: bytes | None,
+) -> str | None:
+    if not image_bytes:
+        return None
+    ext = ".jpg" if media_type == "image/jpeg" else ".png"
+    try:
+        repair_archive_dir.mkdir(parents=True, exist_ok=True)
+        archive_filename = f"p{page_num:02d}_visual_attempt{attempt}{ext}"
+        archive_path = repair_archive_dir / archive_filename
+        archive_path.write_bytes(image_bytes)
+        return f"svg_archive/repair/{archive_filename}"
+    except OSError:
+        return None
+
+
+def _visual_outcome_metadata(
+    visual_outcome,
+    repair_archive_dir: Path | None = None,
+    *,
+    page_num: int | None = None,
+    attempt: int | None = None,
+) -> CriticMetadata:
+    metadata: CriticMetadata = {
+        "source": "visual",
+        "rendered": bool(getattr(visual_outcome, "rendered", False)),
+    }
+    if repair_archive_dir is not None and page_num is not None and attempt is not None:
+        rendered_image_path = _archive_visual_render(
+            repair_archive_dir,
+            page_num=page_num,
+            attempt=attempt,
+            media_type=getattr(visual_outcome, "media_type", None),
+            image_bytes=getattr(visual_outcome, "rendered_image_bytes", None),
+        )
+        if rendered_image_path:
+            metadata["rendered_image_path"] = rendered_image_path
+    for attr in ("media_type", "skipped_reason", "raw_response_excerpt"):
+        value = getattr(visual_outcome, attr, None)
+        if value:
+            metadata[attr] = value
+    return metadata
+
+
+async def _emit_critic(
+    on_critic: CriticCallback | None,
+    page_num: int,
+    attempt: int,
+    report: CriticReport,
+    repair_prompt: str | None,
+    archive_path: str | None,
+    metadata: CriticMetadata | None,
+) -> None:
+    if on_critic is None:
+        return
+    try:
+        params = signature(on_critic).parameters.values()
+        supports_varargs = any(param.kind == Parameter.VAR_POSITIONAL for param in params)
+        positional_params = [
+            param
+            for param in params
+            if param.kind in (Parameter.POSITIONAL_ONLY, Parameter.POSITIONAL_OR_KEYWORD)
+        ]
+    except (TypeError, ValueError):
+        supports_varargs = True
+        positional_params = []
+
+    if supports_varargs or len(positional_params) >= 6:
+        await on_critic(page_num, attempt, report, repair_prompt, archive_path, metadata)
+    else:
+        await on_critic(page_num, attempt, report, repair_prompt, archive_path)  # type: ignore[misc]
+
+
 async def generate_svg_pages(
     design_spec: str,
     manuscript: str,
@@ -989,112 +1091,126 @@ async def generate_svg_pages(
             visual_attempts = 0
             critic_attempt = 1
             while True:
-                if max_critic_attempts <= 0:
-                    best_svg = svg_content
-                    break
-                report = _merge_reports(
-                    check_svg(svg_content, critic_config),
-                    _validate_paper_figure_refs(
-                        svg_content,
-                        allowed_figures=used_figures,
-                        used_paper_figures=used_paper_figures,
-                    ),
-                    _validate_icon_refs(svg_content, required_icon=required_icon),
-                )
-                # Archive pre-repair SVG on first violation detection
-                first_archive: str | None = None
-                if not report.passed:
-                    try:
-                        repair_archive_dir.mkdir(parents=True, exist_ok=True)
-                        archive_filename = f"p{page_num:02d}_attempt{critic_attempt}.svg"
-                        archive_path = repair_archive_dir / archive_filename
-                        archive_path.write_text(svg_content, encoding="utf-8")
-                        first_archive = f"svg_archive/repair/{archive_filename}"
-                    except OSError:
-                        pass
+                report: CriticReport | None = None
+                report_metadata: CriticMetadata = {"source": "static"}
+                event_attempt = critic_attempt
 
-                # When the static critic is satisfied, run visual critic
-                # passes if enabled. Visual issues become the next repair
-                # prompt, bounded by the static critic budget.
-                if report.passed:
-                    if on_critic is not None:
-                        await on_critic(
+                if max_critic_attempts > 0:
+                    report = _merge_reports(
+                        check_svg(svg_content, critic_config),
+                        _validate_paper_figure_refs(
+                            svg_content,
+                            allowed_figures=used_figures,
+                            used_paper_figures=used_paper_figures,
+                        ),
+                        _validate_icon_refs(svg_content, required_icon=required_icon),
+                    )
+                    report_metadata = {"source": "static"}
+                    event_attempt = critic_attempt
+                    if not report.passed and critic_attempt >= max_critic_attempts:
+                        archive_rel = _archive_repair_svg(
+                            repair_archive_dir,
+                            page_num=page_num,
+                            attempt=event_attempt,
+                            label="unrepaired",
+                            svg_content=svg_content,
+                        )
+                        if archive_rel:
+                            report_metadata = {
+                                **report_metadata,
+                                "before_archive_path": archive_rel,
+                            }
+                        await _emit_critic(
+                            on_critic,
                             page_num,
-                            critic_attempt,
+                            event_attempt,
                             report,
                             None,
-                            first_archive,
+                            archive_rel,
+                            report_metadata,
                         )
-                    if enable_visual_critic and visual_attempts < visual_qa_max_attempts:
-                        visual_attempts += 1
-                        snapshot = set_usage_context(
-                            stage="visual_qa", page=page_num, attempt=visual_attempts
-                        )
-                        try:
-                            visual_outcome = await visual_check(
-                                svg_content,
-                                llm=llm,
-                                model=model,
-                                page_num=page_num,
-                                page_title=page_name,
-                                style=style,
-                                config=visual_critic_config,
-                            )
-                        finally:
-                            reset_usage_context(snapshot)
-                        if on_critic is not None:
-                            await on_critic(
-                                page_num,
-                                critic_attempt,
-                                visual_outcome.report,
-                                None,
-                                None,
-                            )
-                        if (
-                            visual_outcome.rendered
-                            and not visual_outcome.report.passed
-                        ):
-                            report = visual_outcome.report
-                            # fall through to the repair prompt below
-                        else:
-                            best_svg = svg_content
-                            break
-                    else:
                         best_svg = svg_content
                         break
 
-                if critic_attempt >= max_critic_attempts:
+                # Visual QA has its own budget. A static critic budget of zero
+                # disables only static checks; it does not disable visual QA.
+                if report is None or report.passed:
+                    if report is not None:
+                        await _emit_critic(
+                            on_critic,
+                            page_num,
+                            event_attempt,
+                            report,
+                            None,
+                            None,
+                            report_metadata,
+                        )
+                    if not enable_visual_critic or visual_attempts >= visual_qa_max_attempts:
+                        best_svg = svg_content
+                        break
+                    visual_attempts += 1
+                    snapshot = set_usage_context(
+                        stage="visual_qa", page=page_num, attempt=visual_attempts
+                    )
+                    try:
+                        visual_outcome = await visual_check(
+                            svg_content,
+                            llm=llm,
+                            model=model,
+                            page_num=page_num,
+                            page_title=page_name,
+                            style=style,
+                            config=visual_critic_config,
+                        )
+                    finally:
+                        reset_usage_context(snapshot)
+                    visual_metadata = _visual_outcome_metadata(
+                        visual_outcome,
+                        repair_archive_dir,
+                        page_num=page_num,
+                        attempt=visual_attempts,
+                    )
+                    event_attempt = visual_attempts
+                    if visual_outcome.report.passed:
+                        await _emit_critic(
+                            on_critic,
+                            page_num,
+                            event_attempt,
+                            visual_outcome.report,
+                            None,
+                            None,
+                            visual_metadata,
+                        )
+                        best_svg = svg_content
+                        break
+                    if not visual_outcome.rendered:
+                        best_svg = svg_content
+                        break
+                    report = visual_outcome.report
+                    report_metadata = visual_metadata
+
+                if report is None:
                     best_svg = svg_content
                     break
 
-                # Archive pre-repair SVG for before/after comparison
-                archive_rel: str | None = None
-                try:
-                    repair_archive_dir.mkdir(parents=True, exist_ok=True)
-                    archive_filename = f"p{page_num:02d}_attempt{critic_attempt + 1}.svg"
-                    archive_path = repair_archive_dir / archive_filename
-                    archive_path.write_text(svg_content, encoding="utf-8")
-                    archive_rel = f"svg_archive/repair/{archive_filename}"
-                except OSError:
-                    pass
+                # Archive pre-repair SVG for before/after comparison.
+                before_archive_rel = _archive_repair_svg(
+                    repair_archive_dir,
+                    page_num=page_num,
+                    attempt=event_attempt,
+                    label="before",
+                    svg_content=svg_content,
+                )
 
                 repair_prompt_text = (
                     report.to_prompt_block()
                     + "\n\nReturn the complete corrected SVG only, "
                     "wrapped in a ```svg code block."
                 )
-                if on_critic is not None:
-                    await on_critic(
-                        page_num,
-                        critic_attempt,
-                        report,
-                        repair_prompt_text,
-                        archive_rel or first_archive,
-                    )
                 conversation.append(LLMMessage.user(repair_prompt_text))
-                repair_temp = max(0.1, 0.3 - 0.1 * critic_attempt)
+                repair_temp = max(0.1, 0.3 - 0.1 * event_attempt)
                 snapshot = set_usage_context(
-                    stage="repair", page=page_num, attempt=critic_attempt + 1
+                    stage="repair", page=page_num, attempt=event_attempt
                 )
                 try:
                     response = await llm.chat(
@@ -1104,7 +1220,29 @@ async def generate_svg_pages(
                     reset_usage_context(snapshot)
 
                 repaired = _extract_svg(response.content)
+                after_archive_rel: str | None = None
                 if repaired:
+                    after_archive_rel = _archive_repair_svg(
+                        repair_archive_dir,
+                        page_num=page_num,
+                        attempt=event_attempt,
+                        label="after",
+                        svg_content=repaired,
+                    )
+                    event_metadata: CriticMetadata = dict(report_metadata)
+                    if before_archive_rel:
+                        event_metadata["before_archive_path"] = before_archive_rel
+                    if after_archive_rel:
+                        event_metadata["after_archive_path"] = after_archive_rel
+                    await _emit_critic(
+                        on_critic,
+                        page_num,
+                        event_attempt,
+                        report,
+                        repair_prompt_text,
+                        before_archive_rel,
+                        event_metadata,
+                    )
                     svg_content = repaired
                     best_svg = repaired
                     conversation.append(
@@ -1112,10 +1250,28 @@ async def generate_svg_pages(
                     )
                     if on_svg_update is not None:
                         await on_svg_update(page_num, repaired)
+                    if report_metadata.get("source") == "static":
+                        critic_attempt += 1
+                    else:
+                        # Visual QA attempts are counted when the image is
+                        # inspected, so visual repairs do not spend static
+                        # critic budget.
+                        pass
                 else:
+                    event_metadata = dict(report_metadata)
+                    if before_archive_rel:
+                        event_metadata["before_archive_path"] = before_archive_rel
+                    await _emit_critic(
+                        on_critic,
+                        page_num,
+                        event_attempt,
+                        report,
+                        repair_prompt_text,
+                        before_archive_rel,
+                        event_metadata,
+                    )
                     conversation.append(LLMMessage.assistant(response.content))
                     break
-                critic_attempt += 1
 
             svg_path = svg_output_dir / f"{page_num:02d}_{page_name}.svg"
             svg_path.write_text(best_svg, encoding="utf-8")

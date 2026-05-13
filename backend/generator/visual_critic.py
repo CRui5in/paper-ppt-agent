@@ -1,8 +1,8 @@
 """Visual critic — render SVG to PNG and ask a multimodal LLM to inspect it.
 
-Complements the static `svg_critic` by catching aesthetic and semantic issues
+Complements the static `svg_critic` by catching semantic and layout issues
 that XML inspection cannot see: overall composition, visual monotony, decorative
-clutter, perceived contrast, accidental overlap of icons with text, etc.
+clutter, figure/content mismatch, accidental overlap of icons with text, etc.
 
 The flow per page:
 
@@ -94,11 +94,11 @@ Look for:
 - Text or diagrams escaping their intended container, card, panel, or slide bounds
 - Text overflow or cut-off at edges or inside cards
 - A decorative horizontal LINE directly under the slide title (this is a forbidden AI-slide pattern; flag it)
-- Low contrast text (light text on light fill, dark on dark)
 - Cramped spacing (< 0.3" / ~24px gaps), uneven gaps, or insufficient slide-edge margins (< 0.5" / ~40px)
 - Text, badges, buttons, or chips pressed against a card/panel edge with little or no padding (< ~16px)
 - Misalignment between columns or grid items
 - Paper figures, charts, or screenshots that are visibly too small to read, detached from their caption, misplaced, or floating in an unrelated blank area
+- Paper figures, charts, screenshots, or images that do not match the page title, surrounding text, or caption
 - Excessive or redundant capsule tags/badges/chips that repeat nearby headings or make the slide feel fragmented
 - Text-only slides with zero visual elements
 - Body text or bullet lists that are CENTER-aligned (only titles may be centered)
@@ -126,10 +126,10 @@ You MUST respond with strict JSON in this exact shape:
 }
 
 Allowed rule ids: text_overlap, text_overflow, element_out_of_container,
-container_padding_too_small, accent_line_under_title, low_contrast,
+container_padding_too_small, accent_line_under_title,
 edge_margin_too_small, uneven_spacing, misalignment, figure_too_small,
 figure_misplaced, figure_caption_mismatch, text_only_slide, centered_body_text,
-decorative_clutter, tag_clutter, off_topic_styling, other.
+image_content_mismatch, decorative_clutter, tag_clutter, off_topic_styling, other.
 
 Use "error" only for issues that materially harm legibility, break the layout,
 or make a figure/chart misleading or unreadable. Use "warning" for aesthetic
@@ -169,6 +169,10 @@ def _extract_json(text: str) -> dict | None:
 @dataclass
 class VisualCheckOutcome:
     rendered: bool = False
+    media_type: str | None = None
+    rendered_image_bytes: bytes | None = None
+    skipped_reason: str | None = None
+    raw_response_excerpt: str | None = None
     report: CriticReport = field(
         default_factory=lambda: CriticReport(passed=True, violations=[])
     )
@@ -195,12 +199,15 @@ async def visual_check(
 
     png = render_svg_to_png(svg_content, width=cfg.render_width)
     if png is None:
+        outcome.skipped_reason = "render_failed_or_unavailable"
         return outcome
 
     image_bytes, media_type = (
         _maybe_to_jpeg(png, cfg.jpeg_quality) if cfg.use_jpeg else (png, "image/png")
     )
     outcome.rendered = True
+    outcome.media_type = media_type
+    outcome.rendered_image_bytes = image_bytes
 
     prompt = _USER_TEMPLATE.format(
         page_num=page_num,
@@ -216,14 +223,17 @@ async def visual_check(
         response = await llm.chat(messages, model, temperature=0.0, max_tokens=1024)
     except Exception as exc:  # noqa: BLE001 — provider may not support vision
         logger.info("Visual critic LLM call failed (likely text-only model): %s", exc)
+        outcome.skipped_reason = "llm_call_failed"
         return outcome
 
+    outcome.raw_response_excerpt = response.content
     parsed = _extract_json(response.content)
     if not parsed or not isinstance(parsed.get("issues"), list):
         logger.warning(
             "Visual critic returned non-JSON or unexpected shape; skipping. raw=%r",
             response.content[:200],
         )
+        outcome.skipped_reason = "non_json_response"
         return outcome
 
     violations: list[Violation] = []

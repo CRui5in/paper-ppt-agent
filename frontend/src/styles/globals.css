@@ -4680,6 +4680,18 @@ body::before {
   font-weight: 750;
 }
 
+.critic-source-badge {
+  border-color: var(--border-strong);
+  background: var(--surface-inset);
+  color: var(--muted-text);
+}
+
+.critic-source-visual {
+  border-color: rgba(37, 99, 235, 0.28);
+  background: rgba(37, 99, 235, 0.08);
+  color: var(--si-accent);
+}
+
 .critic-no-violations {
   margin: 0;
   color: var(--success);
@@ -4749,6 +4761,22 @@ body::before {
   font-weight: 750;
 }
 
+.critic-archive-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.critic-meta-details {
+  color: var(--muted-text);
+  font-size: 11px;
+}
+
+.critic-meta-details summary {
+  cursor: pointer;
+  font-weight: 750;
+}
+
 .critic-repair-text {
   max-height: 220px;
   margin: 0;
@@ -4784,6 +4812,14 @@ body::before {
   box-shadow: 0 30px 88px rgba(15, 23, 42, 0.34);
 }
 
+.svg-preview-panel-compare {
+  width: min(1500px, calc(100vw - 48px));
+}
+
+.svg-preview-panel-image {
+  width: min(1200px, calc(100vw - 48px));
+}
+
 .svg-preview-header {
   display: flex;
   align-items: center;
@@ -4814,6 +4850,70 @@ body::before {
   height: auto;
   border-radius: 8px;
   box-shadow: 0 18px 48px rgba(15, 23, 42, 0.12);
+}
+
+.svg-preview-image-content {
+  display: grid;
+  place-items: center;
+  min-height: 0;
+  padding: 16px;
+  overflow: auto;
+  background: var(--surface-inset);
+}
+
+.svg-preview-image-content img {
+  display: block;
+  max-width: 100%;
+  max-height: calc(100vh - 160px);
+  border-radius: 8px;
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.12);
+}
+
+.svg-preview-compare {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+  background: var(--surface-inset);
+}
+
+.svg-preview-column {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  border-right: 1px solid var(--line);
+}
+
+.svg-preview-column:last-child {
+  border-right: 0;
+}
+
+.svg-preview-column > span {
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--line);
+  color: var(--heading-color);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.svg-preview-column .svg-preview-content {
+  padding: 12px;
+}
+
+.svg-preview-column .svg-preview-content svg {
+  max-width: 690px;
+}
+
+@media (max-width: 900px) {
+  .svg-preview-compare {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .svg-preview-column {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
 }
 
 @media (max-width: 1320px) {

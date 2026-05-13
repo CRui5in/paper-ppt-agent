@@ -312,8 +312,16 @@ export interface CriticEvent {
   page: number;
   attempt: number;
   report: CriticReport;
+  source?: "static" | "visual";
+  rendered?: boolean;
+  media_type?: string | null;
+  rendered_image_path?: string | null;
+  skipped_reason?: string | null;
+  raw_response_excerpt?: string | null;
   repair_prompt?: string;
   archive_path?: string;
+  before_archive_path?: string;
+  after_archive_path?: string;
 }
 
 /** Heartbeat ping emitted by the server every ~20s of silence. */

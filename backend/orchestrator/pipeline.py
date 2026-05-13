@@ -393,16 +393,22 @@ async def run_pipeline(
             report: CriticReport,
             repair_prompt: str | None,
             archive_path: str | None,
+            metadata: dict | None = None,
         ) -> None:
             entry: dict = {
                 "page": page_num,
                 "attempt": attempt,
                 "report": report.to_dict(),
             }
+            if metadata:
+                for key, value in metadata.items():
+                    if value is not None:
+                        entry[key] = value
             if repair_prompt is not None:
                 entry["repair_prompt"] = repair_prompt
             if archive_path is not None:
                 entry["archive_path"] = archive_path
+                entry.setdefault("before_archive_path", archive_path)
             critic_events.append(entry)
 
         async def _on_svg_update(page_num: int, svg: str) -> None:
@@ -759,16 +765,22 @@ async def run_refine_pipeline(
         report: CriticReport,
         repair_prompt: str | None,
         archive_path: str | None,
+        metadata: dict | None = None,
     ) -> None:
         entry: dict = {
             "page": page_num,
             "attempt": attempt,
             "report": report.to_dict(),
         }
+        if metadata:
+            for key, value in metadata.items():
+                if value is not None:
+                    entry[key] = value
         if repair_prompt is not None:
             entry["repair_prompt"] = repair_prompt
         if archive_path is not None:
             entry["archive_path"] = archive_path
+            entry.setdefault("before_archive_path", archive_path)
         refine_critic_events.append(entry)
 
     refine_inventory = await _load_figure_inventory(project_dir)
