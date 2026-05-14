@@ -116,6 +116,52 @@ def test_manuscript_structure_rejects_summary_as_ending():
     assert error == "ending slide must be a closing/thanks page"
 
 
+def test_manuscript_structure_rejects_content_blocks_on_chapter_page():
+    parts = ["<!-- page_type: cover -->\n# Title"]
+    parts.append(
+        "<!-- page_type: chapter -->\n"
+        "# 1. 问题与目标\n\n"
+        "**核心问题**\n\n"
+        "- vanilla attention 的二次复杂度限制超长上下文\n"
+        "- agent 工作流需要更长上下文\n\n"
+        "**本章看点**\n\n"
+        "- 能否高效稳定部署 1M tokens"
+    )
+    for idx in range(1, 13):
+        parts.append(f"<!-- page_type: content -->\n## Content {idx}\n\n- point")
+    parts.append("<!-- page_type: ending -->\n# 谢谢聆听\n\nQ&A")
+
+    error = _manuscript_structure_error("\n\n---\n\n".join(parts), None)
+
+    assert error is not None
+    assert "chapter" in error
+    assert "bullet or numbered-list content" in error or "核心问题" in error
+
+
+def test_manuscript_structure_rejects_bulleted_cover_page():
+    parts = [
+        "<!-- page_type: cover -->\n"
+        "# VFR\n\n"
+        "## 轻量级可见性感知精炼\n\n"
+        "- 任务：实时姿态估计\n"
+        "- 结果：67.6% AP"
+    ]
+    for chapter in range(1, 4):
+        parts.append(f"<!-- page_type: chapter -->\n# Chapter {chapter}")
+        for slide in range(1, 5):
+            parts.append(
+                f"<!-- page_type: content -->\n## {chapter}.{slide} Content\n\n- point"
+            )
+    parts.append("<!-- page_type: content -->\n## Extra Content\n\n- point")
+    parts.append("<!-- page_type: ending -->\n# 谢谢聆听\n\nQ&A")
+
+    error = _manuscript_structure_error("\n\n---\n\n".join(parts), None)
+
+    assert error is not None
+    assert "cover" in error
+    assert "bullet or numbered-list content" in error
+
+
 def test_target_slide_guidance_expands_for_very_high_detail():
     guidance = _target_slides_guidance(None, "very_high")
 

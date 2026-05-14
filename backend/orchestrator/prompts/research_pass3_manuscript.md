@@ -38,6 +38,7 @@ The paper content lists available figures with stable tokens `[[FIG:fig_id]]`. W
 - Never invent IDs or write `![caption](path)`
 - Avoid reusing the same figure on multiple slides
 - Never mislabel figure numbers
+- Use figure tokens only on `content` slides. Do not put paper figures on `cover`, `chapter`, or `ending` slides.
 
 ### 6. Bold Usage
 - Bold **first occurrences** of key terms
@@ -67,6 +68,15 @@ Produce Markdown with `---` separating each slide. Each slide:
 ```
 
 Use one page type per slide. Match the target slide budget. The ending page should be a closing/thanks page.
+For `cover`, `chapter`, and `ending` slides, the Structural Page Rules below override the generic example format.
+
+### Structural Page Rules
+
+- `cover` is a title slide: title, authors/source, and at most one short thesis line. Do not include research-background bullet lists, contribution lists, metric/KPI blocks, charts, or paper figures.
+- `chapter` is a transition/divider slide: chapter title, optional short subtitle, and at most 1-2 brief orientation phrases. Do not include detailed metrics, evidence bullets, numbered question lists, charts, diagrams, paper figures, or labeled content blocks such as `核心问题` / `本章看点`.
+- All `chapter` slides must keep the same manuscript shape and visual intent across the deck: same title/subtitle pattern, no ad-hoc cards, no per-chapter mini-outline grids. Put detailed questions and preview bullets on the following `content` slides.
+- A chapter divider should normally introduce at least 2 following `content` slides. If a topic would have only 1 content slide, merge it into a neighboring chapter instead of creating a standalone divider.
+- `content` slides carry the actual evidence, mechanisms, figures, and detailed bullets. Do not style content slides as chapter dividers.
 
 ### Density Guidelines
 

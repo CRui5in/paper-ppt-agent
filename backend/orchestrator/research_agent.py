@@ -31,6 +31,7 @@ from backend.orchestrator.manuscript import (
     extract_page_type,
     page_type_budget,
     page_type_budget_guidance,
+    strip_page_type_metadata,
     split_manuscript_pages,
 )
 from backend.parser.paper_model import ParsedPaper
@@ -52,6 +53,7 @@ PASS4_PROMPT = PROMPTS_DIR / "research_pass4_review.md"
 LEGACY_PROMPT = PROMPTS_DIR / "research.md"
 
 DEEPSEEK_MAX_TOKENS = 24576
+DEEPSEEK_RESEARCH_MAX_TOKENS = DEEPSEEK_MAX_TOKENS
 QUALITY_THRESHOLD = 28  # out of 35 (7 dimensions × 5 points each)
 MAX_MANUSCRIPT_ATTEMPTS = 2
 SINGLE_PASS_SYSTEM_PROMPT = (
@@ -76,6 +78,12 @@ _REVIEW_HEADING_RE = re.compile(
     re.IGNORECASE,
 )
 _FIG_TOKEN_RE = re.compile(r"\[\[FIG:([A-Za-z0-9_\-]+)\]\]")
+_STRUCTURAL_PAGE_TYPES = frozenset({"cover", "chapter", "toc", "ending"})
+_STRUCTURAL_LIST_RE = re.compile(r"(?m)^\s*(?:[-*•]|\d+[\.)、])\s+\S+")
+_STRUCTURAL_LABEL_RE = re.compile(
+    r"(?i)(核心问题|本章看点|本章关注|本节关注|三个问题|主要结果|结果亮点|"
+    r"模型规格|关键目标|贡献|方法要点|实验看点|chapter\s+highlights|key\s+points)"
+)
 
 
 def _debug_write_text(debug_dir: Path | None, filename: str, content: str) -> None:
@@ -332,6 +340,13 @@ def _manuscript_structure_error(
             seen[page_type] += 1
         else:
             return f"slide {index} has unsupported page_type `{page_type}`"
+        structural_content_error = _structural_page_content_error(
+            page,
+            index,
+            page_type,
+        )
+        if structural_content_error:
+            return structural_content_error
 
     if missing_meta:
         return "missing page_type metadata on slides " + ", ".join(missing_meta[:8])
@@ -375,6 +390,83 @@ def _manuscript_structure_error(
         )
         if not any(marker in ending_text for marker in closing_markers):
             return "ending slide must be a closing/thanks page"
+
+    chapter_group_error = _chapter_group_structure_error(pages)
+    if chapter_group_error:
+        return chapter_group_error
+    return None
+
+
+def _structural_page_content_error(
+    page: str,
+    index: int,
+    page_type: str,
+) -> str | None:
+    if page_type not in _STRUCTURAL_PAGE_TYPES:
+        return None
+
+    visible = strip_page_type_metadata(page)
+    if "[[FIG:" in visible:
+        return f"slide {index} ({page_type}) is structural but contains a paper figure token"
+
+    if page_type in {"cover", "chapter"} and _STRUCTURAL_LIST_RE.search(visible):
+        return (
+            f"slide {index} ({page_type}) is structural but contains bullet or "
+            "numbered-list content"
+        )
+
+    non_heading_lines = [
+        line.strip()
+        for line in visible.splitlines()
+        if line.strip()
+        and not line.lstrip().startswith("#")
+        and not line.strip().startswith("<!--")
+    ]
+    non_heading_text = "\n".join(non_heading_lines)
+    if page_type in {"cover", "chapter"} and _STRUCTURAL_LABEL_RE.search(non_heading_text):
+        return (
+            f"slide {index} ({page_type}) is structural but contains content-block "
+            "labels such as 核心问题/本章看点"
+        )
+
+    if page_type == "cover" and len(non_heading_lines) > 2:
+        return "cover slide must contain only title, source/authors, and at most one thesis line"
+    if page_type == "chapter" and len(non_heading_lines) > 2:
+        return "chapter slide must contain only title and at most 1-2 orientation phrases"
+    return None
+
+
+def _chapter_group_structure_error(pages: list[str]) -> str | None:
+    if len(pages) < 12:
+        return None
+
+    groups: list[tuple[int, int]] = []
+    current_chapter_page: int | None = None
+    current_content_count = 0
+    for index, page in enumerate(pages, start=1):
+        page_type = extract_page_type(page)
+        if page_type == "chapter":
+            if current_chapter_page is not None:
+                groups.append((current_chapter_page, current_content_count))
+            current_chapter_page = index
+            current_content_count = 0
+        elif page_type == "content" and current_chapter_page is not None:
+            current_content_count += 1
+        elif page_type == "ending" and current_chapter_page is not None:
+            groups.append((current_chapter_page, current_content_count))
+            current_chapter_page = None
+            current_content_count = 0
+
+    if current_chapter_page is not None:
+        groups.append((current_chapter_page, current_content_count))
+
+    for chapter_page, content_count in groups:
+        if content_count < 2:
+            return (
+                f"chapter slide {chapter_page} introduces only {content_count} "
+                "content slide(s); merge it into a neighboring section or add "
+                "at least 2 following content slides"
+            )
     return None
 
 
@@ -450,6 +542,8 @@ def _structure_retry_prompt(
         f"{error}.\n\n"
         "Regenerate the full slide manuscript only.\n"
         "If the error mentions paper figure tokens, replace invalid tokens with exact tokens from the Valid Paper Figure Tokens list, or omit the real figure when no listed token matches.\n"
+        "Structural-page rules are strict: cover/chapter/ending slides must not contain bullet lists, numbered question lists, KPI/result blocks, paper figures, or labeled sections such as `核心问题` / `本章看点`. "
+        "All chapter slides must use the same manuscript shape: one chapter title plus an optional short subtitle/orientation phrase only; put all detailed questions and evidence on following content slides.\n"
         f"{page_type_budget_guidance(num_pages, detail_level)}"
     )
 
@@ -696,6 +790,8 @@ async def analyze_paper(
     if final_error and not manuscript_error:
         logger.warning("Pass 4 changed manuscript structure; keeping Pass 3 output: %s", final_error)
         final_output = manuscript
+    elif final_error:
+        raise ValueError(f"Manuscript validation failed after retries: {final_error}")
     _debug_write_text(debug_dir, "research_final_manuscript.md", final_output)
     logger.info("Research Pass 4 complete. Final manuscript: %d chars", len(final_output))
     if on_progress:

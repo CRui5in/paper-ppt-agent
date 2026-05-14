@@ -24,10 +24,12 @@ const HISTORY_STORAGE_LIMIT = 50;
 const HISTORY_STATUS_SYNC_LIMIT = 8;
 const LEGACY_GENERATION_STORAGE_KEY = "paper-ppt-agent-generation-v1";
 const GENERATION_STORAGE_KEY = "paper-ppt-agent-generation-v2";
-const PERSISTED_LOG_LIMIT = 200;
+const PERSISTED_LOG_LIMIT = 80;
 const LIVE_JOB_STORAGE_PREFIX = "paper-ppt-live-job:";
 const HISTORY_STATUS_SYNC_TIMEOUT_MS = 4000;
 const BACKEND_HEALTH_TIMEOUT_MS = 2500;
+const PREVIEW_REFRESH_DEBOUNCE_MS = 500;
+const previewRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 /** Per-job seq deduper. Replays after reconnect can re-deliver events
  *  the client already processed; we drop anything with seq <= the last
@@ -133,6 +135,16 @@ function appendSlide(slides: PreviewSlide[], slide: PreviewSlide): PreviewSlide[
   return [...remaining, slide].sort((left, right) => left.index - right.index);
 }
 
+function mergeSlidesByIndex(current: PreviewSlide[], incoming: PreviewSlide[]): PreviewSlide[] {
+  if (!incoming.length) {
+    return current;
+  }
+  const byIndex = new Map<number, PreviewSlide>();
+  current.forEach((slide) => byIndex.set(slide.index, slide));
+  incoming.forEach((slide) => byIndex.set(slide.index, slide));
+  return Array.from(byIndex.values()).sort((left, right) => left.index - right.index);
+}
+
 function formatLog(event: JobEvent): string {
   return `[${event.stage}] ${event.message}`;
 }
@@ -160,13 +172,14 @@ function buildExtraLogs(event: JobEvent): string[] {
 }
 
 function shouldReplaceSlides(current: PreviewSlide[], incoming: PreviewSlide[]): boolean {
-  if (incoming.length > current.length) {
-    return true;
+  if (incoming.length === 0) {
+    return false;
   }
-  if (incoming.length === 0 || current.length === 0) {
-    return incoming.length > 0;
-  }
-  return incoming.some((slide, index) => current[index]?.content !== slide.content);
+  const currentByIndex = new Map(current.map((slide) => [slide.index, slide]));
+  return incoming.some((slide) => {
+    const existing = currentByIndex.get(slide.index);
+    return !existing || existing.content !== slide.content || existing.name !== slide.name || existing.source !== slide.source;
+  });
 }
 
 function upsertHistoryItem(history: GenerationHistoryItem[], item: GenerationHistoryItem): GenerationHistoryItem[] {
@@ -361,13 +374,16 @@ function applyRunToCurrent(run?: RunSnapshot) {
   if (!run) {
     return {};
   }
+  const slides = Array.isArray(run.slides) ? run.slides : [];
+  const logs = Array.isArray(run.logs) ? run.logs : [];
+  const criticEvents = Array.isArray(run.criticEvents) ? run.criticEvents : [];
   return {
     uploadSession: run.uploadSession,
     jobId: run.jobId,
     job: run.job,
-    slides: run.slides,
-    logs: run.logs,
-    criticEvents: run.criticEvents,
+    slides,
+    logs,
+    criticEvents,
     enrichmentStats: run.enrichmentStats,
     selectedSlide: run.selectedSlide,
     connectionStatus: run.connectionStatus,
@@ -398,7 +414,9 @@ function serializeRunsForStorage(runs: Record<string, RunSnapshot>) {
         uploadSession: run.uploadSession,
         job: run.job,
         logs: run.logs.slice(-PERSISTED_LOG_LIMIT),
-        criticEvents: run.criticEvents,
+        // Critic details and SVG previews can be large. They are recoverable
+        // from backend files/endpoints, so localStorage keeps only run metadata.
+        criticEvents: [],
         error: run.error,
         currentRunConfig: run.currentRunConfig,
         connectionStatus: "disconnected" as const,
@@ -411,14 +429,14 @@ function normalizeStoredRun(jobId: string, run?: Partial<RunSnapshot>): RunSnaps
   return createRunSnapshot(jobId, {
     uploadSession: run?.uploadSession,
     job: run?.job,
-    slides: Array.isArray(run?.slides) ? run.slides : [],
+    slides: [],
     logs: Array.isArray(run?.logs)
-      ? run.logs.filter((log): log is string => typeof log === "string")
+      ? run.logs.filter((log): log is string => typeof log === "string").slice(-PERSISTED_LOG_LIMIT)
       : [],
-    criticEvents: Array.isArray(run?.criticEvents) ? run.criticEvents : [],
-    selectedSlide: run?.selectedSlide,
+    criticEvents: [],
+    selectedSlide: undefined,
     error: run?.error,
-    result: run?.result,
+    result: undefined,
     currentRunConfig: run?.currentRunConfig,
     connectionStatus: "disconnected",
     enrichmentStats: run?.enrichmentStats,
@@ -432,6 +450,38 @@ function normalizeStoredRuns(runs?: Record<string, StoredRunSnapshot>) {
   return Object.fromEntries(
     Object.entries(runs).map(([jobId, run]) => [jobId, normalizeStoredRun(jobId, run)]),
   );
+}
+
+function normalizePersistedGenerationFields(persistedState: unknown): Partial<GenerationState> {
+  const state = (persistedState ?? {}) as Partial<GenerationState> & {
+    runs?: Record<string, StoredRunSnapshot>;
+  };
+  const runs = normalizeStoredRuns(state.runs);
+  const currentRun = state.jobId ? runs[state.jobId] : undefined;
+
+  // Drop ``paper-ppt-live-job:*`` markers for jobs that no longer appear in
+  // our persisted run map. This also protects same-version v2 storage written
+  // before run snapshots were normalized on hydration.
+  clearOrphanedLiveMarkers(new Set(Object.keys(runs)));
+
+  return {
+    uploadSession: state.uploadSession,
+    jobId: state.jobId,
+    job: state.job,
+    error: state.error,
+    activeJobId: state.activeJobId,
+    currentRunConfig: state.currentRunConfig,
+    slides: currentRun?.slides ?? [],
+    logs: currentRun?.logs ?? [],
+    criticEvents: currentRun?.criticEvents ?? [],
+    enrichmentStats: currentRun?.enrichmentStats,
+    selectedSlide: currentRun?.selectedSlide,
+    history: Array.isArray(state.history) ? state.history : [],
+    runs,
+    connectionStatus: "disconnected" as const,
+    backendStatus: "connecting" as const,
+    socketsByJob: {},
+  };
 }
 
 async function fetchJobStatusWithTimeout(jobId: string, timeoutMs = HISTORY_STATUS_SYNC_TIMEOUT_MS) {
@@ -508,13 +558,13 @@ export const useGeneration = create<GenerationState>()(
         const run = createRunSnapshot(response.job_id, {
           uploadSession: get().uploadSession,
           job: {
-            status: response.status,
+            status: "parsing",
             progress: 0,
-            message: "Generation started",
+            message: "Parsing paper...",
             slides_completed: 0,
             total_slides: 0,
           },
-          logs: ["[generate] Generation started"],
+          logs: ["[parsing] Parsing paper..."],
           currentRunConfig: {
             provider: payload.model_config.provider,
             model: payload.model_config.model,
@@ -685,11 +735,16 @@ export const useGeneration = create<GenerationState>()(
                 }
               }
 
+              const completedFromData =
+                typeof event.data.completed_count === "number" ? event.data.completed_count : undefined;
+              const rawSlidesCompleted = Math.max(event.slides_completed, completedFromData ?? 0);
+              const slidesCompleted =
+                event.total_slides > 0 ? Math.min(rawSlidesCompleted, event.total_slides) : rawSlidesCompleted;
               const nextJob: JobStatus = {
                 status: event.type === "complete" ? "complete" : event.type === "error" ? "error" : event.stage,
                 progress: event.progress,
                 message: event.message,
-                slides_completed: event.slides_completed,
+                slides_completed: slidesCompleted,
                 total_slides: event.total_slides,
                 output_path:
                   typeof event.data.output_path === "string" ? event.data.output_path : currentRun.job?.output_path,
@@ -758,12 +813,19 @@ export const useGeneration = create<GenerationState>()(
             });
             get().syncHistory(jobId);
 
-            if (
-              event.stage === "generation" ||
-              (event.stage === "postprocess" && event.status === "complete")
-            ) {
-              void fetchPreview(jobId)
-                .then((preview) => {
+            const hasInlineSlideSvg = event.type === "slide_ready" && typeof event.data.svg === "string";
+            const shouldRefreshPreview =
+              (event.type === "slide_ready" && !hasInlineSlideSvg) ||
+              (event.stage === "postprocess" && event.status === "complete");
+            if (shouldRefreshPreview) {
+              const existingTimer = previewRefreshTimers.get(jobId);
+              if (existingTimer) {
+                clearTimeout(existingTimer);
+              }
+              const timer = setTimeout(() => {
+                previewRefreshTimers.delete(jobId);
+                void fetchPreview(jobId)
+                  .then((preview) => {
                   set((state) => {
                     const currentRun = state.runs[jobId] ?? createRunSnapshot(jobId);
                     if (!shouldReplaceSlides(currentRun.slides, preview.slides)) {
@@ -773,11 +835,23 @@ export const useGeneration = create<GenerationState>()(
                           }
                         : {};
                     }
+                    const mergedSlides = mergeSlidesByIndex(currentRun.slides, preview.slides);
+                    const mergedSlideCount = mergedSlides.length;
+                    const totalSlides = Math.max(currentRun.job?.total_slides ?? 0, 0);
+                    const job = currentRun.job
+                      ? {
+                          ...currentRun.job,
+                          slides_completed: totalSlides > 0
+                            ? Math.min(Math.max(currentRun.job.slides_completed, mergedSlideCount), totalSlides)
+                            : Math.max(currentRun.job.slides_completed, mergedSlideCount),
+                        }
+                      : currentRun.job;
                     const updatedRun: RunSnapshot = {
                       ...currentRun,
-                      result: preview,
-                      slides: preview.slides,
-                      selectedSlide: pickLiveSelectedSlide(currentRun.slides, preview.slides, currentRun.selectedSlide),
+                      job,
+                      result: { ...preview, slides: mergedSlides },
+                      slides: mergedSlides,
+                      selectedSlide: pickLiveSelectedSlide(currentRun.slides, mergedSlides, currentRun.selectedSlide),
                     };
                     return {
                       ...(state.jobId === jobId ? applyRunToCurrent(updatedRun) : {}),
@@ -790,6 +864,8 @@ export const useGeneration = create<GenerationState>()(
                   get().syncHistory(jobId);
                 })
                 .catch(() => undefined);
+              }, PREVIEW_REFRESH_DEBOUNCE_MS);
+              previewRefreshTimers.set(jobId, timer);
             }
 
             if (event.type === "complete") {
@@ -1081,6 +1157,11 @@ export const useGeneration = create<GenerationState>()(
         await deleteJob(jobId).catch(() => undefined);
         const socket = get().socketsByJob[jobId];
         socket?.close();
+        const previewTimer = previewRefreshTimers.get(jobId);
+        if (previewTimer) {
+          clearTimeout(previewTimer);
+          previewRefreshTimers.delete(jobId);
+        }
         set((state) => {
           const nextRuns = { ...state.runs };
           delete nextRuns[jobId];
@@ -1129,6 +1210,11 @@ export const useGeneration = create<GenerationState>()(
           const nextSockets = { ...state.socketsByJob };
           if (jobId) {
             delete nextSockets[jobId];
+            const previewTimer = previewRefreshTimers.get(jobId);
+            if (previewTimer) {
+              clearTimeout(previewTimer);
+              previewRefreshTimers.delete(jobId);
+            }
           }
           return {
             uploadSession: undefined,
@@ -1150,36 +1236,19 @@ export const useGeneration = create<GenerationState>()(
     }),
     {
       name: GENERATION_STORAGE_KEY,
-      version: 1,
+      version: 2,
       storage: createJSONStorage(() => {
         clearLegacyGenerationStorage();
         return window.localStorage;
       }),
       migrate: (persistedState) => {
-        const state = (persistedState ?? {}) as Partial<GenerationState> & {
-          runs?: Record<string, StoredRunSnapshot>;
-        };
-        const runs = normalizeStoredRuns(state.runs);
-        const currentRun = state.jobId ? runs[state.jobId] : undefined;
-
-        // Drop ``paper-ppt-live-job:*`` markers for jobs that no longer
-        // appear in our persisted run map — they accumulated from prior
-        // sessions where the page was killed before cleanup ran.
-        clearOrphanedLiveMarkers(new Set(Object.keys(runs)));
-
-        return {
-          ...state,
-          slides: currentRun?.slides ?? [],
-          logs: currentRun?.logs ?? [],
-          criticEvents: currentRun?.criticEvents ?? [],
-          selectedSlide: currentRun?.selectedSlide,
-          history: Array.isArray(state.history) ? state.history : [],
-          runs,
-          connectionStatus: "disconnected" as const,
-          backendStatus: "connecting" as const,
-          socketsByJob: {},
-        };
+        return normalizePersistedGenerationFields(persistedState);
       },
+      merge: (persistedState, currentState) =>
+        ({
+          ...currentState,
+          ...normalizePersistedGenerationFields(persistedState),
+        }) satisfies GenerationState,
       partialize: (state) => ({
         uploadSession: state.uploadSession,
         jobId: state.jobId,

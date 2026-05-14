@@ -37,6 +37,74 @@ def _svg(body: str) -> str:
     )
 
 
+def test_chapter_parallel_groups_make_cover_and_ending_standalone() -> None:
+    groups = svg_executor._chapter_parallel_groups(
+        [
+            {"page_num": 1, "page_type": "cover"},
+            {"page_num": 2, "page_type": "chapter"},
+            {"page_num": 3, "page_type": "content"},
+            {"page_num": 4, "page_type": "chapter"},
+            {"page_num": 5, "page_type": "content"},
+            {"page_num": 6, "page_type": "ending"},
+        ]
+    )
+
+    assert [[item["page_num"] for item in group] for group in groups] == [
+        [1],
+        [2, 3],
+        [4, 5],
+        [6],
+    ]
+
+
+def test_extract_page_design_block_stops_before_next_part_heading() -> None:
+    design_spec = """
+### IX. Content Outline
+
+### Part 1: Problem
+
+#### Slide 04 - Content
+- **Page Type**: content
+- **Title**: Current chapter content
+
+### Part 2: Method
+
+#### Slide 05 - Chapter
+- **Page Type**: chapter
+- **Title**: Next chapter
+"""
+
+    block = svg_executor._extract_page_design_block(design_spec, 4)
+
+    assert "Current chapter content" in block
+    assert "Part 2" not in block
+    assert "Next chapter" not in block
+    assert svg_executor._extract_page_section_heading(design_spec, 4) == "### Part 1: Problem"
+    assert svg_executor._extract_page_section_heading(design_spec, 5) == "### Part 2: Method"
+
+
+def test_template_skeleton_placeholders_use_chapter_index_not_page_number() -> None:
+    pages = svg_executor.split_manuscript_pages(
+        "<!-- page_type: cover -->\n# Cover\n\n---\n\n"
+        "<!-- page_type: chapter -->\n# 第一章\n**背景**\n\n---\n\n"
+        "<!-- page_type: content -->\n**内容页**\n\n---\n\n"
+        "<!-- page_type: chapter -->\n# 第二章\n**方法**"
+    )
+    variables = svg_executor._template_vars_by_page(pages)
+
+    resolved = svg_executor._resolve_template_skeleton_placeholders(
+        "<svg><text>{{CHAPTER_NUM}}</text><text>0{{CHAPTER_NUM}}</text>"
+        "<text>{{CHAPTER_TITLE}}</text><text>{{CHAPTER_DESC}}</text></svg>",
+        variables[4],
+    )
+
+    assert "<text>02</text>" in resolved
+    assert "<text>002</text>" not in resolved
+    assert "第二章" in resolved
+    assert "方法" in resolved
+    assert "04" not in resolved
+
+
 @pytest.mark.asyncio
 async def test_generate_svg_pages_adds_deepseek_executor_guidance(
     workspace_tmp,
@@ -60,6 +128,103 @@ async def test_generate_svg_pages_adds_deepseek_executor_guidance(
     initial_prompt = llm.message_snapshots[0][1].content
     assert "Detail Level Guidelines" in initial_prompt
     assert "preserve depth without overcrowding" in initial_prompt
+
+
+@pytest.mark.asyncio
+async def test_generate_svg_pages_parallel_preserves_page_numbers_and_structural_policy(
+    workspace_tmp,
+) -> None:
+    manuscript = (
+        "<!-- page_type: cover -->\n"
+        "# Cover\n\n"
+        "[[FIG:fig_001_p1]] - Figure 1 overview\n\n"
+        "---\n\n"
+        "# Results\n\n"
+        "[[FIG:fig_001_p1]] - Figure 1 overview"
+    )
+    figure_inventory = [
+        {
+            "path": "../sources/images/fig_001_p1.png",
+            "caption": "Figure 1. Overview.",
+            "natural_width": 1200,
+            "natural_height": 800,
+        }
+    ]
+    llm = _FakeLLM([_svg('<text x="100" y="100" font-size="24">ok</text>')])
+
+    pages = [
+        page_num
+        async for page_num, _ in svg_executor.generate_svg_pages_parallel(
+            "# Design",
+            manuscript,
+            workspace_tmp,
+            llm,
+            "fake-model",
+            mode="page_parallel",
+            parallel_concurrency=2,
+            figure_inventory=figure_inventory,
+            max_critic_attempts=0,
+        )
+    ]
+
+    assert sorted(pages) == [1, 2]
+    assert (workspace_tmp / "parallel_executor_context.md").exists()
+    output_names = {
+        path.name for path in (workspace_tmp / "svg_output").glob("*.svg")
+    }
+    assert any(name.startswith("01_") for name in output_names)
+    assert any(name.startswith("02_") for name in output_names)
+
+    prompts = [snapshot[-1].content for snapshot in llm.message_snapshots]
+    cover_prompt = next(prompt for prompt in prompts if "Generate page 1/2" in prompt)
+    content_prompt = next(prompt for prompt in prompts if "Generate page 2/2" in prompt)
+    assert "Structural page paper-figure policy" in cover_prompt
+    assert "PAPER FIGURE" not in cover_prompt
+    assert "fig_001_p1.png" not in cover_prompt
+    assert "PAPER FIGURE" in content_prompt
+    assert "fig_001_p1.png" in content_prompt
+
+
+@pytest.mark.asyncio
+async def test_chapter_parallel_passes_previous_layout_brief_within_group(
+    workspace_tmp,
+) -> None:
+    manuscript = (
+        "<!-- page_type: chapter -->\n"
+        "# 第一章\n\n"
+        "---\n\n"
+        "<!-- page_type: content -->\n"
+        "# 内容页\n\n"
+        "- 要点"
+    )
+    first_svg = _svg(
+        '<rect x="80" y="120" width="520" height="180" rx="18" fill="#123456"/>'
+        '<text x="96" y="172" font-family="Source Han Sans SC" font-size="28">chapter</text>'
+    )
+    second_svg = _svg('<text x="100" y="100" font-size="24">content</text>')
+    llm = _FakeLLM([first_svg, second_svg])
+
+    pages = [
+        page_num
+        async for page_num, _ in svg_executor.generate_svg_pages_parallel(
+            "# Design",
+            manuscript,
+            workspace_tmp,
+            llm,
+            "fake-model",
+            mode="chapter_parallel",
+            max_critic_attempts=0,
+        )
+    ]
+
+    assert pages == [1, 2]
+    first_prompt = next(prompt[-1].content for prompt in llm.message_snapshots if "Generate page 1/2" in prompt[-1].content)
+    second_prompt = next(prompt[-1].content for prompt in llm.message_snapshots if "Generate page 2/2" in prompt[-1].content)
+    assert "Previous Page Layout Continuity" not in first_prompt
+    assert "Previous Page Layout Continuity" in second_prompt
+    assert "Source Han Sans SC" in second_prompt
+    assert "rect x=80 y=120 w=520 h=180" in second_prompt
+    assert "do not copy its text" in second_prompt
 
 
 @pytest.mark.asyncio
@@ -328,6 +493,17 @@ def test_classify_page_type_reads_manuscript_metadata() -> None:
     assert svg_executor._classify_page_type("## Slide 3: Ordinary content\n\n- point") == "content"
 
 
+def test_template_vars_use_second_heading_as_chapter_description() -> None:
+    pages = [
+        "<!-- page_type: chapter -->\n# 1. 背景与问题\n\n## 从效率到可见性缺口\n\n- extra body"
+    ]
+
+    vars_by_page = svg_executor._template_vars_by_page(pages)
+
+    assert vars_by_page[1]["CHAPTER_TITLE"] == "1. 背景与问题"
+    assert vars_by_page[1]["CHAPTER_DESC"] == "从效率到可见性缺口"
+
+
 @pytest.mark.asyncio
 async def test_template_skeleton_uses_page_type_metadata_not_design_outline(
     workspace_tmp,
@@ -358,6 +534,38 @@ async def test_template_skeleton_uses_page_type_metadata_not_design_outline(
 
 
 @pytest.mark.asyncio
+async def test_generate_svg_pages_minimizes_structural_page_prompt(
+    workspace_tmp,
+) -> None:
+    manuscript = (
+        "<!-- page_type: chapter -->\n"
+        "# 1. 问题与目标\n\n"
+        "**核心问题**\n\n"
+        "- vanilla attention 的二次复杂度限制超长上下文\n\n"
+        "**本章看点**\n\n"
+        "- 能否高效稳定部署 1M tokens"
+    )
+    llm = _FakeLLM([_svg('<text x="100" y="100" font-size="24">ok</text>')])
+
+    pages = [
+        page_num
+        async for page_num, _ in generate_svg_pages(
+            "# Design",
+            manuscript,
+            workspace_tmp,
+            llm,
+            "fake-model",
+        )
+    ]
+
+    assert pages == [1]
+    prompt = llm.message_snapshots[0][-1].content
+    assert "Structural Page Override" in prompt
+    assert "vanilla attention" not in prompt
+    assert "1M tokens" not in prompt
+
+
+@pytest.mark.asyncio
 async def test_generate_svg_pages_repairs_unallowed_paper_figure_href(
     workspace_tmp,
 ) -> None:
@@ -375,7 +583,12 @@ async def test_generate_svg_pages_repairs_unallowed_paper_figure_href(
     pages = [
         page_num
         async for page_num, svg in generate_svg_pages(
-            "# Design", manuscript, workspace_tmp, llm, "fake-model"
+            "# Design",
+            manuscript,
+            workspace_tmp,
+            llm,
+            "fake-model",
+            max_critic_attempts=2,
         )
         if "native summary" in svg
     ]
@@ -413,7 +626,12 @@ async def test_generate_svg_pages_repairs_missing_required_icon_placeholder(
     slides = [
         svg
         async for _, svg in generate_svg_pages(
-            design_spec, manuscript, workspace_tmp, llm, "fake-model"
+            design_spec,
+            manuscript,
+            workspace_tmp,
+            llm,
+            "fake-model",
+            max_critic_attempts=2,
         )
     ]
 
@@ -459,6 +677,7 @@ async def test_generate_svg_pages_repairs_cross_slide_reused_paper_figure(
             llm,
             "fake-model",
             figure_inventory=figure_inventory,
+            max_critic_attempts=2,
         )
     ]
 

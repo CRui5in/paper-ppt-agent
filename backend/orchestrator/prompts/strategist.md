@@ -46,8 +46,13 @@ Follow this structure exactly:
 
 ## Principles
 
-- Academic presentations default to: light theme, serif headings, clean layout, 16:9
+- Academic presentations default to: light theme, clean 16:9 layout, and a CJK-compatible Source Han/Noto/PingFang/Microsoft YaHei sans-serif fallback stack
 - Use conservative color schemes (navy/white/blue for academic)
 - Prioritize readability and data clarity over visual flair
 - Every design decision should serve communication, not decoration
 - Treat the manuscript page inventory as fixed. Structural pages are counted pages, not optional styling.
+- Keep structural pages and content pages visually distinct: cover/chapter/ending pages are minimal title/divider/closing slides; content pages carry figures, charts, evidence, and detailed bullets.
+- Do not assign paper figures, charts, dense bullet grids, or multi-column evidence layouts to cover/chapter/ending pages.
+- For cover/chapter/ending pages, compress any extra manuscript body text into at most one subtitle/key phrase. Do not plan cards, KPI strips, question lists, `核心问题` / `本章看点` blocks, or mini-agendas on structural pages.
+- All chapter pages in one deck must share one consistent divider layout and visual rhythm; only chapter number, title, and optional subtitle/key phrase should change.
+- Do not use administrative header labels such as page numbers or section counters as decorative chrome. If page numbering is needed, keep it in the footer only.

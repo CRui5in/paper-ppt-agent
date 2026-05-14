@@ -110,7 +110,10 @@ def page_type_budget_guidance(
             "- Budget: cover 1, chapter/transition 3-5, ending 1; use remaining slides for content.\n"
             "- Put `<!-- page_type: cover|chapter|content|ending -->` at the top of every slide.\n"
             "- Cover, chapter/transition, and ending pages are real slides, not styling guesses.\n"
-            "- Place chapter/transition pages before major chapter blocks.\n"
+            "- Cover/chapter/ending pages are minimal structural slides: no bullets, numbered question lists, metrics/KPI blocks, paper figures, or labeled blocks such as `核心问题` / `本章看点`.\n"
+            "- Keep all chapter/transition pages in the same shape: chapter title plus optional short subtitle/orientation phrase only.\n"
+            "- Place chapter/transition pages before major chapter blocks; each chapter divider should normally introduce at least 2 following content slides.\n"
+            "- If a section would have only 1 content slide, merge that topic into a neighboring section instead of creating a standalone chapter divider.\n"
             "- The ending page is a closing/thanks slide, not another content summary."
         )
     return (
@@ -119,7 +122,10 @@ def page_type_budget_guidance(
         f"content {budget['content']}, ending {budget['ending']}.\n"
         "- Put `<!-- page_type: cover|chapter|content|ending -->` at the top of every slide.\n"
         "- Cover, chapter/transition, and ending pages are real slides, not styling guesses.\n"
-        "- Place chapter/transition pages before major chapter blocks.\n"
+        "- Cover/chapter/ending pages are minimal structural slides: no bullets, numbered question lists, metrics/KPI blocks, paper figures, or labeled blocks such as `核心问题` / `本章看点`.\n"
+        "- Keep all chapter/transition pages in the same shape: chapter title plus optional short subtitle/orientation phrase only.\n"
+        "- Place chapter/transition pages before major chapter blocks; each chapter divider should normally introduce at least 2 following content slides.\n"
+        "- If a section would have only 1 content slide, merge that topic into a neighboring section instead of creating a standalone chapter divider.\n"
         "- The ending page is a closing/thanks slide, not another content summary."
     )
 

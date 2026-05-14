@@ -122,6 +122,7 @@ The parsed paper content lists available paper figures with stable tokens of the
 - If no listed figure fits, omit the real paper figure instead of guessing — never write `![caption](path)` or make up a path.
 - Avoid reusing the same figure token on multiple slides. If a later slide needs the same idea, summarize it with bullets, a native diagram, or a small redrawn chart instead of repeating the same extracted image.
 - Do not claim a different figure/table number than the token caption. For example, never describe a `Figure 3` token as `Figure 4`.
+- Use figure tokens only on `content` slides. Do not place paper figures on `cover`, `chapter/transition`, or `ending` slides.
 
 These tokens are the only valid way to reference extracted paper figures.
 
@@ -137,6 +138,15 @@ Produce a Markdown document where each slide is separated by `---`. Each slide s
 6. **Key data/numbers** highlighted in bold
 
 The ending page should be a closing/thanks page, not a final content summary.
+For `cover`, `chapter/transition`, and `ending` slides, the Structural Page Boundaries below override the generic slide format.
+
+### 3.6 Structural Page Boundaries
+
+- `cover` is only a title slide: title, authors/source, and at most one short thesis line. It must not contain research-background bullet lists, contribution lists, metric/KPI blocks, charts, or paper figures.
+- `chapter/transition` is only a divider: chapter title, optional short subtitle, and at most 1-2 brief orientation phrases. It must not contain detailed metrics, evidence bullets, numbered question lists, charts, diagrams, paper figures, or labeled content blocks such as `核心问题` / `本章看点`.
+- All `chapter/transition` slides must keep the same manuscript shape and visual intent across the deck: same title/subtitle pattern, no ad-hoc cards, no per-chapter mini-outline grids. Put detailed questions and preview bullets on the following `content` slides.
+- A chapter divider should normally introduce at least 2 following `content` slides. If a topic would have only 1 content slide, merge it into a neighboring chapter instead of creating a standalone divider.
+- `content` slides carry the actual mechanisms, evidence, figures, and detailed bullets. Do not make content slides look like chapter dividers.
 
 ---
 
