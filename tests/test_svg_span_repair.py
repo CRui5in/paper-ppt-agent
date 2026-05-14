@@ -104,3 +104,64 @@ def test_repair_converts_html_span_inside_svg_text(workspace_tmp: Path) -> None:
     assert "<span" not in content
     assert "</span>" not in content
     assert '<tspan fill="#64748B"> - MAE 0.3598</tspan>' in content
+
+
+def test_repair_malformed_quoted_font_family_stack(workspace_tmp: Path) -> None:
+    svg_path = workspace_tmp / "font_stack.svg"
+    svg_path.write_text(
+        """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720">
+  <text x="60" y="55" font-family="SF Pro Display", "PingFang SC", "Segoe UI", Roboto, sans-serif" font-size="14">08</text>
+  <text x="60" y="100" font-family="SF Pro Display", "PingFang SC", "Segoe UI", Roboto, sans-serif" font-size="28">标题</text>
+</svg>""",
+        encoding="utf-8",
+    )
+
+    changed = repair_svg_file(svg_path)
+    content = svg_path.read_text(encoding="utf-8")
+
+    assert changed == 1
+    assert 'font-family="SF Pro Display, PingFang SC, Segoe UI, Roboto, sans-serif"' in content
+    assert "标题" in content
+
+
+def test_repair_removes_animation_features(workspace_tmp: Path) -> None:
+    svg_path = workspace_tmp / "animated.svg"
+    svg_path.write_text(
+        """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720">
+  <style>@keyframes pulse { 0% { opacity: .2; } 100% { opacity: 1; } }</style>
+  <circle cx="120" cy="120" r="20" fill="#2563EB" style="animation: pulse 2s infinite;">
+    <animate attributeName="r" from="10" to="20" dur="1s"/>
+  </circle>
+  <text x="80" y="200">静态内容</text>
+</svg>""",
+        encoding="utf-8",
+    )
+
+    changed = repair_svg_file(svg_path)
+    content = svg_path.read_text(encoding="utf-8")
+
+    assert changed == 1
+    assert "<animate" not in content
+    assert "@keyframes" not in content
+    assert "animation:" not in content
+    assert "静态内容" in content
+
+
+def test_repair_removes_top_left_admin_label_only(workspace_tmp: Path) -> None:
+    svg_path = workspace_tmp / "header_label.svg"
+    svg_path.write_text(
+        """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720">
+  <text x="60" y="55" font-size="14">SECTION 03</text>
+  <text x="60" y="100" font-size="28">真实页面标题</text>
+  <text x="640" y="680" text-anchor="middle" font-size="14">8 / 19</text>
+</svg>""",
+        encoding="utf-8",
+    )
+
+    changed = repair_svg_file(svg_path)
+    content = svg_path.read_text(encoding="utf-8")
+
+    assert changed == 1
+    assert "SECTION 03" not in content
+    assert "真实页面标题" in content
+    assert "8 / 19" in content

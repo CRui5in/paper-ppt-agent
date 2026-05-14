@@ -92,6 +92,19 @@ class ParsedPaper:
         suspicious = {"body_text_intrusion", "low_graphic_coverage", "page_level_fallback"}
         if fig.review_flags and suspicious.intersection(fig.review_flags) and fig.quality_score < 0.55:
             return False
+        if (
+            fig.extraction_method == "caption_region"
+            and "body_text_intrusion" in fig.review_flags
+            and fig.quality_score < 0.75
+        ):
+            return False
+        if "low_graphic_coverage" in fig.review_flags and fig.quality_score < 0.65:
+            return False
+        if (
+            fig.extraction_method == "embedded_image"
+            and "too_small" in fig.review_flags
+        ):
+            return False
         return True
 
     def to_markdown(self) -> str:

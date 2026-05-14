@@ -201,7 +201,8 @@ async def _build_preview_response(
         output_files = get_svg_files(project_dir, "output")
         slide_files = final_files or output_files
         source = "final" if final_files else "output"
-        for index, svg_path in enumerate(slide_files, start=1):
+        for fallback_index, svg_path in enumerate(slide_files, start=1):
+            index = _slide_index_from_svg_path(svg_path, fallback_index)
             # ``prepare_svg_file_for_render`` rewrites href base64 inlines etc.
             # — synchronous CPU work; offload it.
             try:
@@ -233,6 +234,16 @@ async def _build_preview_response(
         output_path=output_path,
         status=status_value,
     )
+
+
+def _slide_index_from_svg_path(svg_path: Path, fallback_index: int) -> int:
+    match = re.match(r"^0*(\d+)(?:_|$)", svg_path.stem)
+    if not match:
+        return fallback_index
+    try:
+        return int(match.group(1))
+    except ValueError:
+        return fallback_index
 
 
 def _slides_from_retained_events(job_id: str) -> list[PreviewSlide]:

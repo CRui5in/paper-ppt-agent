@@ -235,6 +235,32 @@ async def test_create_design_spec_inserts_missing_outline_page_type() -> None:
     assert len(llm.calls) == 1
 
 
+@pytest.mark.asyncio
+async def test_create_design_spec_appends_missing_outline_pages() -> None:
+    partial = _valid_design_spec().replace(
+        "- Page Count: 1",
+        "- Page Count: 21",
+    )
+    manuscript = (
+        "<!-- page_type: cover -->\n# Cover\n\n---\n\n"
+        "<!-- page_type: content -->\n# Method\n\n---\n\n"
+        "<!-- page_type: ending -->\n# Thanks"
+    )
+    llm = _FakeLLM([partial])
+
+    spec = await strategist_agent.create_design_spec(
+        manuscript,
+        llm,
+        "fake-model",
+    )
+
+    assert "Page Count: 3" in spec
+    assert "#### Slide 02 - Method" in spec
+    assert "- **Page Type**: content" in spec
+    assert "#### Slide 03 - Thanks" in spec
+    assert len(llm.calls) == 1
+
+
 
 def test_design_spec_validation_rejects_missing_icon_asset() -> None:
     bad = _valid_design_spec().replace(

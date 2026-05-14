@@ -54,6 +54,9 @@ Every page MUST follow this three-region structure. Content area boundary is a *
 17. **Line wrapping**: Wrap text by the local container width, not the full page width. A card, column, callout, or diagram label is a hard text box. Keep manual line breaks if they prevent overflow; do not merge lines just to fill width.
 18. **Icon-text vertical alignment**: When an explicitly assigned icon or structural marker sits beside a text label on the same visual row, SVG `y` is the baseline, not the visual center. To center text with a circle marker, use: `text_y = circle_cy + font_size × 0.35`. Example: circle at cy=200, font_size=18 → text y = 200 + 6.3 ≈ 206. Do NOT set text y equal to circle cy.
 19. **No fake card icons**: If the current page's Icon Guidance says there is no explicit icon assignment, do not create standalone letter/symbol badges such as `P`, `Δ`, `!`, `G`, `?`, or `i` inside small squares/circles. For technical cards, use numbered markers or small mechanism diagrams instead.
+20. **Static SVG only**: Do not use SVG/CSS animation, transitions, SMIL elements, keyframes, or animated decorative effects. The browser preview and exported PPTX must show the same static page.
+21. **Chrome consistency**: Page numbers belong in the footer only. Do not add top-left administrative labels such as section counters, chapter counters, or page-number labels unless they are part of a provided template skeleton.
+22. **Respect page roles**: Cover/chapter/ending pages are structural and minimal. Content pages must not use chapter-divider layouts, oversized chapter numerals, or transition-slide treatment.
 
 ## CJK Text Layout Reference
 

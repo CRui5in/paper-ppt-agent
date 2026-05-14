@@ -75,9 +75,11 @@ class GenerationOptions(BaseModel):
     num_pages: int | None = None
     language: str = "zh"
     detail_level: str = "normal"
+    generation_mode: Literal["sequential", "chapter_parallel", "page_parallel"] = "sequential"
+    parallel_concurrency: int = Field(default=3, ge=1, le=8)
     icon_library: str = "chunk"  # chunk / tabler-filled / tabler-outline
     timeout_seconds: int | None = Field(default=None, ge=1)
-    max_critic_attempts: int = Field(default=3, ge=0, le=10)
+    max_critic_attempts: int = Field(default=0, ge=0, le=10)
     style_overrides: StyleOverrides | None = None
     enable_deep_research: bool = False
     enable_visual_critic: bool = False

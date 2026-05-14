@@ -14,6 +14,8 @@ interface OptionsPanelProps {
   customLanguage: string;
   numPages: string;
   detailLevel: string;
+  generationMode: "sequential" | "chapter_parallel" | "page_parallel";
+  parallelConcurrency: string;
   timeoutSeconds: string;
   maxCriticAttempts: string;
   visualQaMaxAttempts: string;
@@ -37,6 +39,8 @@ interface OptionsPanelProps {
   onCustomLanguageChange: (value: string) => void;
   onNumPagesChange: (value: string) => void;
   onDetailLevelChange: (value: string) => void;
+  onGenerationModeChange: (value: "sequential" | "chapter_parallel" | "page_parallel") => void;
+  onParallelConcurrencyChange: (value: string) => void;
   onTimeoutSecondsChange: (value: string) => void;
   onMaxCriticAttemptsChange: (value: string) => void;
   onVisualQaMaxAttemptsChange: (value: string) => void;
@@ -184,7 +188,10 @@ export function OptionsPanel(props: OptionsPanelProps) {
           />
         </label>
         <label className="form-field">
-          <span>{t("options.maxCriticAttempts")}</span>
+          <span>
+            {t("options.maxCriticAttempts")}
+            <ConfigHelp text={t("options.maxCriticAttemptsTooltip")} />
+          </span>
           <input
             type="number"
             min="0"
@@ -204,7 +211,6 @@ export function OptionsPanel(props: OptionsPanelProps) {
             </span>
             <span className="visual-qa-copy">
               <span className="visual-qa-name">{t("options.visualCritic")}</span>
-              <span className="visual-qa-experimental">{t("common.experimental")}</span>
             </span>
             <ConfigHelp text={t("options.visualCriticTooltip")} />
             <Switch checked={props.enableVisualCritic} onCheckedChange={props.onEnableVisualCriticChange} />
@@ -247,12 +253,71 @@ export function OptionsPanel(props: OptionsPanelProps) {
             </span>
             <span className="visual-qa-copy">
               <span className="visual-qa-name">{t("options.deepResearch")}</span>
-              <span className="visual-qa-experimental">{t("common.experimental")}</span>
             </span>
             <ConfigHelp text={t("options.deepResearchTooltip")} />
             <Switch checked={props.enableDeepResearch} onCheckedChange={props.onEnableDeepResearchChange} />
           </span>
         </label>
+      </div>
+
+      <div className="options-icon-section">
+        <label className="visual-qa-field visual-qa-field-wide">
+          <span
+            className={`visual-qa-control ${
+              props.generationMode !== "sequential" ? "visual-qa-control-active" : ""
+            }`}
+          >
+            <span className="visual-qa-icon" aria-hidden="true">
+              <FlaskConical size={16} />
+            </span>
+            <span className="visual-qa-copy">
+              <span className="visual-qa-name">{t("options.parallelGeneration")}</span>
+              <span className="visual-qa-experimental parallel-experimental-badge">{t("common.experimental")}</span>
+            </span>
+            <ConfigHelp text={t("options.parallelGenerationTooltip")} />
+            <Switch
+              checked={props.generationMode !== "sequential"}
+              onCheckedChange={(checked) =>
+                props.onGenerationModeChange(checked ? "chapter_parallel" : "sequential")
+              }
+            />
+          </span>
+        </label>
+        {props.generationMode !== "sequential" ? (
+          <div className="options-icon-sub visual-qa-attempts-sub">
+            <label className="form-field">
+              <Select
+                value={props.generationMode}
+                onValueChange={(value) =>
+                  props.onGenerationModeChange(value as "chapter_parallel" | "page_parallel")
+                }
+              >
+                <SelectTrigger className="parallel-mode-trigger" aria-label={t("options.parallelMode")}>
+                  <SelectValue className="parallel-mode-value" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="chapter_parallel">{t("options.parallelChapter")}</SelectItem>
+                  <SelectItem value="page_parallel">{t("options.parallelPage")}</SelectItem>
+                </SelectContent>
+              </Select>
+            </label>
+            {props.generationMode === "page_parallel" ? (
+              <label className="form-field">
+                <span>
+                  {t("options.parallelPageConcurrency")}
+                  <ConfigHelp text={t("options.parallelPageConcurrencyTooltip")} />
+                </span>
+                <input
+                  type="number"
+                  min="1"
+                  max="8"
+                  value={props.parallelConcurrency}
+                  onChange={(event) => props.onParallelConcurrencyChange(event.target.value)}
+                />
+              </label>
+            ) : null}
+          </div>
+        ) : null}
       </div>
 
       {/* Icon section */}
@@ -344,7 +409,6 @@ export function OptionsPanel(props: OptionsPanelProps) {
             </span>
             <span className="visual-qa-copy">
               <span className="visual-qa-name">{t("options.researchEnrichment")}</span>
-              <span className="visual-qa-experimental">{t("common.experimental")}</span>
             </span>
             <ConfigHelp text={t("options.researchEnrichmentTooltip")} />
             <Switch

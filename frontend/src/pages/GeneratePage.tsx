@@ -93,6 +93,8 @@ interface PresentationSettingsDraft {
   customLanguage?: string;
   numPages?: string;
   detailLevel?: string;
+  generationMode?: "sequential" | "chapter_parallel" | "page_parallel";
+  parallelConcurrency?: string;
   timeoutSeconds?: string;
   maxCriticAttempts?: string;
   visualQaMaxAttempts?: string;
@@ -211,8 +213,12 @@ export function GeneratePage() {
   const [customLanguage, setCustomLanguage] = useState(initialSettings.customLanguage ?? "");
   const [numPages, setNumPages] = useState(initialSettings.numPages ?? "");
   const [detailLevel, setDetailLevel] = useState(initialSettings.detailLevel ?? "normal");
+  const [generationMode, setGenerationMode] = useState<"sequential" | "chapter_parallel" | "page_parallel">(
+    initialSettings.generationMode ?? "sequential",
+  );
+  const [parallelConcurrency, setParallelConcurrency] = useState(initialSettings.parallelConcurrency ?? "3");
   const [timeoutSeconds, setTimeoutSeconds] = useState(initialSettings.timeoutSeconds ?? "");
-  const [maxCriticAttempts, setMaxCriticAttempts] = useState(initialSettings.maxCriticAttempts ?? "3");
+  const [maxCriticAttempts, setMaxCriticAttempts] = useState(initialSettings.maxCriticAttempts ?? "0");
   const [visualQaMaxAttempts, setVisualQaMaxAttempts] = useState(initialSettings.visualQaMaxAttempts ?? "1");
   const [instruction, setInstruction] = useState(initialSettings.instruction ?? "");
   const GEMINI_KEY_STORAGE = "paper-ppt-agent-gemini-api-key";
@@ -398,6 +404,8 @@ export function GeneratePage() {
     }
     setNumPages(options.num_pages ? String(options.num_pages) : "");
     setDetailLevel(options.detail_level || "normal");
+    setGenerationMode(options.generation_mode || "sequential");
+    setParallelConcurrency(String(options.parallel_concurrency ?? 3));
     setTimeoutSeconds(options.timeout_seconds ? String(options.timeout_seconds) : "");
     setMaxCriticAttempts(String(options.max_critic_attempts ?? 3));
     setEnableDeepResearch(Boolean(options.enable_deep_research));
@@ -453,6 +461,8 @@ export function GeneratePage() {
         customLanguage,
         numPages,
         detailLevel,
+        generationMode,
+        parallelConcurrency,
         timeoutSeconds,
         maxCriticAttempts,
         visualQaMaxAttempts,
@@ -491,7 +501,9 @@ export function GeneratePage() {
     bodyFont,
     instruction,
     languageMode,
+    generationMode,
     numPages,
+    parallelConcurrency,
     researchConfig,
     templateId,
     timeoutSeconds,
@@ -535,8 +547,12 @@ export function GeneratePage() {
         language: resolveRequestedLanguage(languageMode, customLanguage),
         num_pages: numPages ? Number(numPages) : undefined,
         detail_level: detailLevel,
+        generation_mode: generationMode,
+        parallel_concurrency: generationMode === "page_parallel"
+          ? parseBoundedInt(parallelConcurrency, 3, 1, 8)
+          : undefined,
         timeout_seconds: parseOptionalPositiveInt(timeoutSeconds),
-        max_critic_attempts: parseBoundedInt(maxCriticAttempts, 3, 0, 10),
+        max_critic_attempts: parseBoundedInt(maxCriticAttempts, 0, 0, 10),
         style_overrides:
           customFont || headingFont || bodyFont || cjkHeadingFont || cjkBodyFont || density !== "normal"
             ? {
@@ -580,6 +596,7 @@ export function GeneratePage() {
           jobId={jobId}
           connectionStatus={connectionStatus}
           enrichmentStats={enrichmentStats}
+          slideCount={slides.length}
           logs={logs}
           history={history}
           runs={runs}
@@ -590,6 +607,7 @@ export function GeneratePage() {
 
         <SlideWorkspace
           jobId={jobId}
+          job={job}
           slides={slides}
           selectedSlide={selectedSlide}
           onSelect={selectSlide}
@@ -635,6 +653,8 @@ export function GeneratePage() {
                 customLanguage={customLanguage}
                 numPages={numPages}
                 detailLevel={detailLevel}
+                generationMode={generationMode}
+                parallelConcurrency={parallelConcurrency}
                 timeoutSeconds={timeoutSeconds}
                 maxCriticAttempts={maxCriticAttempts}
                 visualQaMaxAttempts={visualQaMaxAttempts}
@@ -651,6 +671,8 @@ export function GeneratePage() {
                 onCustomLanguageChange={setCustomLanguage}
                 onNumPagesChange={setNumPages}
                 onDetailLevelChange={setDetailLevel}
+                onGenerationModeChange={setGenerationMode}
+                onParallelConcurrencyChange={setParallelConcurrency}
                 onTimeoutSecondsChange={setTimeoutSeconds}
                 onMaxCriticAttemptsChange={setMaxCriticAttempts}
                 onVisualQaMaxAttemptsChange={setVisualQaMaxAttempts}
@@ -718,6 +740,7 @@ export function GeneratePage() {
           jobId={jobId}
           connectionStatus={connectionStatus}
           enrichmentStats={enrichmentStats}
+          slideCount={slides.length}
           activePanel={secondaryPanel}
           onOpenPanel={setSecondaryPanel}
         />
@@ -759,6 +782,7 @@ function SourcesPanel({
   jobId,
   connectionStatus,
   enrichmentStats,
+  slideCount,
   logs,
   history,
   runs,
@@ -771,6 +795,7 @@ function SourcesPanel({
   jobId?: string;
   connectionStatus: string;
   enrichmentStats?: ResearchEnrichmentStats;
+  slideCount: number;
   logs: string[];
   history: GenerationHistoryItem[];
   runs: ReturnType<typeof useGeneration.getState>["runs"];
@@ -823,7 +848,7 @@ function SourcesPanel({
               <BarChart3 size={17} className="panel-title-icon" />
               <span>{t("progress.title")}</span>
             </div>
-            <ProgressPanel compact hideHeader job={job} connectionStatus={connectionStatus} enrichmentStats={enrichmentStats} logs={logs} />
+            <ProgressPanel compact hideHeader job={job} connectionStatus={connectionStatus} enrichmentStats={enrichmentStats} slideCount={slideCount} logs={logs} />
           </div>
         </>
       )}
@@ -884,6 +909,7 @@ function SourceList({
 
 function SlideWorkspace({
   jobId,
+  job,
   slides,
   selectedSlide,
   onSelect,
@@ -893,6 +919,7 @@ function SlideWorkspace({
   onImageApplied,
 }: {
   jobId?: string;
+  job?: JobStatus;
   slides?: PreviewSlide[];
   selectedSlide?: PreviewSlide;
   onSelect: (slide: PreviewSlide) => void;
@@ -903,6 +930,12 @@ function SlideWorkspace({
 }) {
   const { t } = useLocale();
   const safeSlides = Array.isArray(slides) ? slides : [];
+  const lastSlideIndex = safeSlides.length > 0 ? safeSlides[safeSlides.length - 1].index : 0;
+  const totalSlides = Math.max(job?.total_slides ?? 0, lastSlideIndex, safeSlides.length);
+  const slideByIndex = new Map(safeSlides.map((slide) => [slide.index, slide]));
+  const railItems = totalSlides > 0
+    ? Array.from({ length: totalSlides }, (_, index) => slideByIndex.get(index + 1) ?? index + 1)
+    : [];
   const [imageSearchOpen, setImageSearchOpen] = useState(false);
   const canUseImageSearch = Boolean(jobId && selectedSlide && !loading);
   return (
@@ -953,16 +986,29 @@ function SlideWorkspace({
               <span>{index + 1}</span>
               <div className="rail-placeholder motion-skeleton" />
             </button>
-          )) : safeSlides.length > 0 ? safeSlides.map((slide) => (
-            <button
-              type="button"
-              key={slide.index}
-              className={`rail-slide ${selectedSlide?.index === slide.index ? "rail-slide-active" : ""}`}
-              onClick={() => onSelect(slide)}
-            >
-              <span>{slide.index}</span>
-              <div dangerouslySetInnerHTML={{ __html: slide.content }} />
-            </button>
+          )) : railItems.length > 0 ? railItems.map((item) => (
+            typeof item === "number" ? (
+              <button
+                type="button"
+                key={`pending-${item}`}
+                className="rail-slide rail-slide-pending"
+                disabled
+                aria-label={`PPT ${item} pending`}
+              >
+                <span>{item}</span>
+                <div className="rail-placeholder rail-placeholder-pending motion-skeleton" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                key={item.index}
+                className={`rail-slide ${selectedSlide?.index === item.index ? "rail-slide-active" : ""}`}
+                onClick={() => onSelect(item)}
+              >
+                <span>{item.index}</span>
+                <div dangerouslySetInnerHTML={{ __html: item.content }} />
+              </button>
+            )
           )) : Array.from({ length: 1 }).map((_, index) => (
             <button type="button" className={`rail-slide ${index === 0 ? "rail-slide-active" : ""}`} key={index}>
               <span>{index + 1}</span>
@@ -1009,6 +1055,7 @@ function AgentMonitor({
   jobId,
   connectionStatus,
   enrichmentStats,
+  slideCount,
   activePanel,
   onOpenPanel,
 }: {
@@ -1018,12 +1065,16 @@ function AgentMonitor({
   jobId?: string;
   connectionStatus: string;
   enrichmentStats?: ResearchEnrichmentStats;
+  slideCount: number;
   activePanel: SecondaryPanel | null;
   onOpenPanel: (panel: SecondaryPanel) => void;
 }) {
   const { t, locale } = useLocale();
-  const totalSlides = Math.max(job?.total_slides ?? 0, job?.slides_completed ?? 0, 0);
-  const completedSlides = clamp(job?.slides_completed ?? 0, 0, totalSlides);
+  const totalSlides = Math.max(job?.total_slides ?? 0, 0);
+  const rawCompletedSlides = Math.max(job?.slides_completed ?? 0, slideCount);
+  const completedSlides = totalSlides > 0
+    ? clamp(rawCompletedSlides, 0, totalSlides)
+    : rawCompletedSlides;
   const progress = clamp(Math.round((job?.progress ?? (totalSlides > 0 ? completedSlides / totalSlides : 0)) * 100), 0, 100);
   const status = job?.status ?? "idle";
   const rawLatestText = logs.length > 0

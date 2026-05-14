@@ -14,4 +14,5 @@ async def delete_session(session_id: str) -> Response:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found.")
 
     session_manager.delete_session(session_id)
+    await session_manager.flush_now()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -20,6 +20,8 @@ from backend.config import settings
 from backend.api.schemas import ResearchConfig
 from backend.generator.svg_critic import CriticReport
 from backend.runtime import aoffload, aread_text, awrite_text
+from backend.runtime.resource_gates import heavy_stage_slot
+from backend.session.progress import describe_exception
 from backend.usage.tracker import reset_usage_context, set_usage_context
 
 from .manuscript import count_manuscript_pages
@@ -121,8 +123,10 @@ class GenerationRequest:
     instruction: str = ""
     language: str = "zh"
     detail_level: str = "normal"
+    generation_mode: Literal["sequential", "chapter_parallel", "page_parallel"] = "sequential"
+    parallel_concurrency: int = 3
     timeout_seconds: int | None = None
-    max_critic_attempts: int = 3
+    max_critic_attempts: int = 0
     style_overrides: dict | None = None  # {palette: [...], font: "...", density: "..."}
     enable_deep_research: bool = False
     icon_library: str = "chunk"  # chunk / tabler-filled / tabler-outline
@@ -194,7 +198,8 @@ async def run_pipeline(
         else:
             parser = LaTeXParser()
 
-        paper = await parser.parse(request.file_path, output_dir)
+        async with heavy_stage_slot():
+            paper = await parser.parse(request.file_path, output_dir)
 
         parse_info: dict = {}
         if request.source_type == "pdf":
@@ -375,12 +380,19 @@ async def run_pipeline(
         # Stage 4: SVG executor
         set_usage_context(stage="generation", page=None, attempt=1)
         total_pages = count_manuscript_pages(manuscript)
+        generation_start_data: dict[str, object] = {"total_slides": total_pages}
+        if request.generation_mode != "sequential":
+            generation_start_data["generation_mode"] = request.generation_mode
+            if request.generation_mode == "page_parallel":
+                generation_start_data["parallel_concurrency"] = request.parallel_concurrency
         yield ProgressEvent(
             "generation",
             "started",
-            "Generating slide SVGs...",
+            "Generating slide SVGs..."
+            if request.generation_mode == "sequential"
+            else "Generating slide SVGs in parallel...",
             0.40,
-            data={"total_slides": total_pages},
+            data=generation_start_data,
         )
         generated = 0
 
@@ -414,25 +426,50 @@ async def run_pipeline(
         async def _on_svg_update(page_num: int, svg: str) -> None:
             svg_update_queue.append((page_num, svg))
 
-        async for page_num, svg_content in svg_executor.generate_svg_pages(
-            design_spec,
-            manuscript,
-            project_dir,
-            llm,
-            request.model,
-            style=request.style,
-            language=request.language,
-            detail_level=request.detail_level,
-            extra_instruction=_build_style_overrides_block(request.style_overrides),
-            on_critic=_on_critic,
-            on_svg_update=_on_svg_update,
-            figure_inventory=figure_inventory,
-            enable_visual_critic=request.enable_visual_critic,
-            max_critic_attempts=request.max_critic_attempts,
-            visual_qa_max_attempts=request.visual_qa_max_attempts,
-            template_context=template_context_exec or None,
-            template_skeletons=template_skeletons,
-        ):
+        if request.generation_mode == "sequential":
+            svg_iter = svg_executor.generate_svg_pages(
+                design_spec,
+                manuscript,
+                project_dir,
+                llm,
+                request.model,
+                style=request.style,
+                language=request.language,
+                detail_level=request.detail_level,
+                extra_instruction=_build_style_overrides_block(request.style_overrides),
+                on_critic=_on_critic,
+                on_svg_update=_on_svg_update,
+                figure_inventory=figure_inventory,
+                enable_visual_critic=request.enable_visual_critic,
+                max_critic_attempts=request.max_critic_attempts,
+                visual_qa_max_attempts=request.visual_qa_max_attempts,
+                template_context=template_context_exec or None,
+                template_skeletons=template_skeletons,
+            )
+        else:
+            svg_iter = svg_executor.generate_svg_pages_parallel(
+                design_spec,
+                manuscript,
+                project_dir,
+                llm,
+                request.model,
+                mode=request.generation_mode,
+                parallel_concurrency=request.parallel_concurrency,
+                style=request.style,
+                language=request.language,
+                detail_level=request.detail_level,
+                extra_instruction=_build_style_overrides_block(request.style_overrides),
+                on_critic=_on_critic,
+                on_svg_update=_on_svg_update,
+                figure_inventory=figure_inventory,
+                enable_visual_critic=request.enable_visual_critic,
+                max_critic_attempts=request.max_critic_attempts,
+                visual_qa_max_attempts=request.visual_qa_max_attempts,
+                template_context=template_context_exec or None,
+                template_skeletons=template_skeletons,
+            )
+
+        async for page_num, svg_content in svg_iter:
             generated += 1
             progress = 0.40 + (generated / total_pages) * 0.35
 
@@ -444,24 +481,35 @@ async def run_pipeline(
             while svg_update_queue:
                 upd_page, upd_svg = svg_update_queue.pop(0)
                 upd_preview = _embed_svg_preview(upd_svg, project_dir)
+                repair_data: dict[str, object] = {
+                    "page": upd_page,
+                    "svg": upd_preview,
+                }
+                if request.generation_mode != "sequential":
+                    repair_data["completed_count"] = generated
+                    repair_data["generation_mode"] = request.generation_mode
                 yield ProgressEvent(
                     "generation",
                     "progress",
                     f"Repaired slide {upd_page}",
                     progress,
-                    data={"page": upd_page, "svg": upd_preview},
+                    data=repair_data,
                 )
 
+            progress_data: dict[str, object] = {
+                "page": page_num,
+                "svg": preview_svg,
+                "critic": page_critic,
+            }
+            if request.generation_mode != "sequential":
+                progress_data["completed_count"] = generated
+                progress_data["generation_mode"] = request.generation_mode
             yield ProgressEvent(
                 "generation",
                 "progress",
                 f"Generated slide {page_num}/{total_pages}",
                 progress,
-                data={
-                    "page": page_num,
-                    "svg": preview_svg,
-                    "critic": page_critic,
-                },
+                data=progress_data,
             )
 
         yield ProgressEvent(
@@ -481,7 +529,8 @@ async def run_pipeline(
         # rewrites: minutes of synchronous CPU work. Push it to the offload
         # pool so heartbeats, the WS event bus, and the scheduler dispatcher
         # all keep ticking.
-        stats = await aoffload(finalize_project, project_dir)
+        async with heavy_stage_slot():
+            stats = await aoffload(finalize_project, project_dir)
         yield ProgressEvent(
             "postprocess",
             "complete",
@@ -498,13 +547,14 @@ async def run_pipeline(
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         pptx_path = project_dir / "exports" / f"presentation_{timestamp}.pptx"
 
-        await aoffload(
-            create_pptx,
-            svg_files,
-            pptx_path,
-            canvas_format=request.canvas_format,
-            notes=notes,
-        )
+        async with heavy_stage_slot():
+            await aoffload(
+                create_pptx,
+                svg_files,
+                pptx_path,
+                canvas_format=request.canvas_format,
+                notes=notes,
+            )
 
         yield ProgressEvent(
             "export",
@@ -515,7 +565,7 @@ async def run_pipeline(
         )
 
     except Exception as e:
-        yield ProgressEvent("error", "error", str(e))
+        yield ProgressEvent("error", "error", describe_exception(e, "Pipeline failed"))
         raise
     finally:
         reset_usage_context(usage_snapshot)
@@ -539,6 +589,8 @@ async def _load_figure_inventory(project_dir: Path) -> list[dict]:
         return []
     inventory: list[dict] = []
     for rec in records:
+        if not _figure_record_should_include(rec):
+            continue
         try:
             abs_path = Path(rec.get("path") or "").resolve()
             try:
@@ -555,6 +607,9 @@ async def _load_figure_inventory(project_dir: Path) -> list[dict]:
             "aspect_ratio": float(rec.get("aspect_ratio") or 0.0),
             "caption": rec.get("caption") or "",
             "page_number": rec.get("page_number"),
+            "extraction_method": rec.get("extraction_method") or "",
+            "quality_score": float(rec.get("quality_score") or 0.0),
+            "review_flags": rec.get("review_flags") or [],
         })
     return inventory
 
@@ -564,6 +619,9 @@ def _build_figure_inventory(paper, project_dir: Path) -> list[dict]:
     inventory: list[dict] = []
     for fig in paper.all_figures():
         if not getattr(fig, "available", False):
+            continue
+        should_include = getattr(paper, "_should_include_figure", None)
+        if callable(should_include) and not should_include(fig):
             continue
         try:
             rel = Path(fig.path).resolve().relative_to(project_dir.resolve())
@@ -577,8 +635,30 @@ def _build_figure_inventory(paper, project_dir: Path) -> list[dict]:
             "aspect_ratio": float(getattr(fig, "aspect_ratio", 0.0) or 0.0),
             "caption": getattr(fig, "caption", "") or "",
             "page_number": getattr(fig, "page_number", None),
+            "extraction_method": getattr(fig, "extraction_method", "") or "",
+            "quality_score": float(getattr(fig, "quality_score", 0.0) or 0.0),
+            "review_flags": list(getattr(fig, "review_flags", []) or []),
         })
     return inventory
+
+
+def _figure_record_should_include(rec: dict) -> bool:
+    flags = set(rec.get("review_flags") or [])
+    quality = float(rec.get("quality_score") or 0.0)
+    suspicious = {"body_text_intrusion", "low_graphic_coverage", "page_level_fallback"}
+    if flags.intersection(suspicious) and quality < 0.55:
+        return False
+    if (
+        rec.get("extraction_method") == "caption_region"
+        and "body_text_intrusion" in flags
+        and quality < 0.75
+    ):
+        return False
+    if "low_graphic_coverage" in flags and quality < 0.65:
+        return False
+    if rec.get("extraction_method") == "embedded_image" and "too_small" in flags:
+        return False
+    return True
 
 
 def _embed_svg_preview(svg_content: str, project_dir: Path) -> str:
@@ -615,8 +695,10 @@ class RefineRequest:
     style: str = "academic"
     language: str = "zh"
     detail_level: str = "normal"
+    generation_mode: Literal["sequential", "chapter_parallel", "page_parallel"] = "sequential"
+    parallel_concurrency: int = 3
     timeout_seconds: int | None = None
-    max_critic_attempts: int = 3
+    max_critic_attempts: int = 0
     target_pages: list[int] | None = None
     allow_structure_changes: bool = False
     style_overrides: dict | None = None
@@ -842,7 +924,8 @@ async def run_refine_pipeline(
     postprocess_start = generation_start + generation_span
     export_start = 0.80 if request.allow_structure_changes else 0.80
     yield ProgressEvent("postprocess", "started", "Finalizing SVGs...", postprocess_start)
-    stats = await aoffload(finalize_project, project_dir)
+    async with heavy_stage_slot():
+        stats = await aoffload(finalize_project, project_dir)
     yield ProgressEvent(
         "postprocess", "complete",
         f"Processed {stats['total_files']} files",
@@ -858,13 +941,14 @@ async def run_refine_pipeline(
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     pptx_path = project_dir / "exports" / f"presentation_{timestamp}.pptx"
 
-    await aoffload(
-        create_pptx,
-        svg_files,
-        pptx_path,
-        canvas_format=request.canvas_format,
-        notes=notes,
-    )
+    async with heavy_stage_slot():
+        await aoffload(
+            create_pptx,
+            svg_files,
+            pptx_path,
+            canvas_format=request.canvas_format,
+            notes=notes,
+        )
 
     # Persist feedback history to disk for auditability
     await _save_feedback_history(project_dir, request.feedback_history)

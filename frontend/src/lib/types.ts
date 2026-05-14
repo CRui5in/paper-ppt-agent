@@ -86,6 +86,8 @@ export interface GenerationOptions {
   num_pages?: number;
   language: string;
   detail_level: string;
+  generation_mode?: "sequential" | "chapter_parallel" | "page_parallel";
+  parallel_concurrency?: number;
   timeout_seconds?: number;
   max_critic_attempts?: number;
   style_overrides?: StyleOverridesPayload;
@@ -181,31 +183,6 @@ export interface ReexportResponse {
   output_path: string;
   fallback_slides?: number[];
   warnings?: string[];
-}
-
-export type SlideDocumentElementType = "text" | "rect" | "image" | "table";
-
-export interface SlideDocumentElement {
-  id: string;
-  type: SlideDocumentElementType;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  rotation?: number;
-  sourceTag?: string;
-  sourceIndex?: number;
-  committed?: boolean;
-  [key: string]: unknown;
-}
-
-export interface SlideDocument {
-  version: number;
-  width: number;
-  height: number;
-  backgroundSvg: string;
-  speakerNotes?: string;
-  elements: SlideDocumentElement[];
 }
 
 export type SlideDocumentElementType = "text" | "rect" | "image" | "table";

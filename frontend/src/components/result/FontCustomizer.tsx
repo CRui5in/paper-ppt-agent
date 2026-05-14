@@ -3,56 +3,24 @@ import { Loader2 } from "lucide-react";
 import { useLocale } from "../../i18n";
 import { updateSvgFonts, reexportPresentation } from "../../lib/api";
 import type { UpdateFontsRequest } from "../../lib/types";
+import {
+  CJK_BODY_FONT_OPTIONS,
+  CJK_HEADING_FONT_OPTIONS,
+  WESTERN_BODY_FONT_OPTIONS,
+  WESTERN_HEADING_FONT_OPTIONS,
+  fontPreviewFamily,
+} from "../../lib/fontOptions";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 
 interface FontOption { label: string; value: string }
 
-const WH_OPTIONS: FontOption[] = [
-  { label: "-- keep default --", value: "" },
-  { label: "Arial Black", value: "Arial Black" },
-  { label: "Impact", value: "Impact" },
-  { label: "Helvetica", value: "Helvetica" },
-  { label: "Calibri", value: "Calibri" },
-  { label: "Georgia", value: "Georgia" },
-  { label: "Cambria", value: "Cambria" },
-  { label: "Times New Roman", value: "Times New Roman" },
-  { label: "Verdana", value: "Verdana" },
-];
-const WB_OPTIONS: FontOption[] = [
-  { label: "-- keep default --", value: "" },
-  { label: "Arial", value: "Arial" },
-  { label: "Calibri", value: "Calibri" },
-  { label: "Helvetica", value: "Helvetica" },
-  { label: "Times New Roman", value: "Times New Roman" },
-  { label: "Verdana", value: "Verdana" },
-  { label: "Georgia", value: "Georgia" },
-  { label: "Cambria", value: "Cambria" },
-  { label: "Palatino", value: "Palatino" },
-];
-const CH_OPTIONS: FontOption[] = [
-  { label: "-- 保持默认 --", value: "" },
-  { label: "微软雅黑", value: "Microsoft YaHei" },
-  { label: "黑体", value: "SimHei" },
-  { label: "思源黑体", value: "Source Han Sans SC" },
-  { label: "楷体", value: "KaiTi" },
-  { label: "等线", value: "DengXian" },
-  { label: "华文黑体", value: "STHeiti" },
-];
-const CB_OPTIONS: FontOption[] = [
-  { label: "-- 保持默认 --", value: "" },
-  { label: "宋体", value: "SimSun" },
-  { label: "仿宋", value: "FangSong" },
-  { label: "楷体", value: "KaiTi" },
-  { label: "微软雅黑", value: "Microsoft YaHei" },
-  { label: "等线", value: "DengXian" },
-  { label: "华文宋体", value: "STSong" },
-  { label: "华文楷体", value: "STKaiti" },
-  { label: "思源宋体", value: "Source Han Serif SC" },
-];
-
 interface Props {
   jobId: string;
   onReexported: (outputPath: string) => void;
+}
+
+function withDefaultOption(options: FontOption[], label: string): FontOption[] {
+  return [{ label, value: "" }, ...options];
 }
 
 export function FontCustomizer({ jobId, onReexported }: Props) {
@@ -99,20 +67,20 @@ export function FontCustomizer({ jobId, onReexported }: Props) {
       </div>
 
       {[
-        { key: "wh", label: t("result.fontsWesternHeading"), value: wh, setter: setWh, options: WH_OPTIONS },
-        { key: "wb", label: t("result.fontsWesternBody"), value: wb, setter: setWb, options: WB_OPTIONS },
-        { key: "ch", label: t("result.fontsCJKHeading"), value: ch, setter: setCh, options: CH_OPTIONS },
-        { key: "cb", label: t("result.fontsCJKBody"), value: cb, setter: setCb, options: CB_OPTIONS },
+        { key: "wh", label: t("result.fontsWesternHeading"), value: wh, setter: setWh, options: withDefaultOption(WESTERN_HEADING_FONT_OPTIONS, t("font.noSelection")) },
+        { key: "wb", label: t("result.fontsWesternBody"), value: wb, setter: setWb, options: withDefaultOption(WESTERN_BODY_FONT_OPTIONS, t("font.noSelection")) },
+        { key: "ch", label: t("result.fontsCJKHeading"), value: ch, setter: setCh, options: withDefaultOption(CJK_HEADING_FONT_OPTIONS, t("font.noSelection")) },
+        { key: "cb", label: t("result.fontsCJKBody"), value: cb, setter: setCb, options: withDefaultOption(CJK_BODY_FONT_OPTIONS, t("font.noSelection")) },
       ].map((item) => (
         <div key={item.key} className="font-customizer-field">
           <label>{item.label}</label>
           <Select value={item.value || "__default__"} onValueChange={(value) => item.setter(value === "__default__" ? "" : value)} disabled={loading}>
-            <SelectTrigger style={{ fontFamily: item.value || undefined }}>
+            <SelectTrigger style={{ fontFamily: fontPreviewFamily(item.value) }}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
             {item.options.map((opt) => (
-              <SelectItem key={opt.value || "__default__"} value={opt.value || "__default__"} style={{ fontFamily: opt.value || undefined }}>
+              <SelectItem key={opt.value || "__default__"} value={opt.value || "__default__"} style={{ fontFamily: fontPreviewFamily(opt.value) }}>
                 {opt.label}
               </SelectItem>
             ))}
