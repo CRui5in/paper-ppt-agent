@@ -100,6 +100,8 @@ async def test_create_design_spec_adds_deepseek_strategy_guidance() -> None:
     user_prompt = llm.calls[0]["messages"][-1].content
     assert "Detail Level Guidelines" in user_prompt
     assert "preserve the manuscript's analytical depth" in user_prompt
+    assert "Style Family:" in user_prompt
+    assert "chapter index" in user_prompt
 
 
 @pytest.mark.asyncio
@@ -232,6 +234,32 @@ async def test_create_design_spec_inserts_missing_outline_page_type() -> None:
     )
 
     assert "#### Slide 1 - Evidence ladder\n- **Type**: content" in spec
+    assert len(llm.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_create_design_spec_appends_missing_outline_pages() -> None:
+    partial = _valid_design_spec().replace(
+        "- Page Count: 1",
+        "- Page Count: 21",
+    )
+    manuscript = (
+        "<!-- page_type: cover -->\n# Cover\n\n---\n\n"
+        "<!-- page_type: content -->\n# Method\n\n---\n\n"
+        "<!-- page_type: ending -->\n# Thanks"
+    )
+    llm = _FakeLLM([partial])
+
+    spec = await strategist_agent.create_design_spec(
+        manuscript,
+        llm,
+        "fake-model",
+    )
+
+    assert "Page Count: 3" in spec
+    assert "#### Slide 02 - Method" in spec
+    assert "- **Page Type**: content" in spec
+    assert "#### Slide 03 - Thanks" in spec
     assert len(llm.calls) == 1
 
 

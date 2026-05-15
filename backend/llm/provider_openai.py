@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import base64
+import json
 import time
 from collections.abc import AsyncIterator
+from types import SimpleNamespace
 
+import httpx
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 
+from backend.runtime.resource_gates import llm_request_slot
 from backend.usage.tracker import current_usage_context, usage_tracker
 
 from .base import LLMProvider
@@ -29,6 +33,14 @@ DEFAULT_OPENAI_GPT_SETTINGS = {
     "reasoning_effort": "medium",
     "verbosity": "high",
 }
+
+
+class _RetryableRawChatError(RuntimeError):
+    """Raw compatibility error that should use the shared retry budget."""
+
+    def __init__(self, message: str, *, status_code: int) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
 
 def normalize_openai_base_url(base_url: str | None) -> str | None:
@@ -60,6 +72,7 @@ class OpenAIProvider(LLMProvider):
     ) -> None:
         normalized_base_url = normalize_openai_base_url(base_url)
         self._client = AsyncOpenAI(api_key=api_key, base_url=normalized_base_url)
+        self._api_key = api_key
         self._provider_name = provider_name
         self._base_url = (normalized_base_url or "").rstrip("/")
         self._deepseek_settings = deepseek_settings
@@ -184,12 +197,260 @@ class OpenAIProvider(LLMProvider):
             )
         )
 
+    def _should_use_raw_compat_fallback(
+        self,
+        kwargs: dict,
+        exc: BaseException,
+    ) -> bool:
+        model = str(kwargs.get("model") or "")
+        if not self._base_url:
+            return False
+        if self._provider_name != "openai":
+            return False
+        if self._is_official_openai_request(model) or self._is_deepseek_request(model):
+            return False
+
+        status = getattr(exc, "status_code", None) or getattr(exc, "status", None)
+        response = getattr(exc, "response", None)
+        if response is not None:
+            status = status or getattr(response, "status_code", None)
+        text = str(exc).lower()
+        return (
+            "your request was blocked" in text
+            or "request was blocked" in text
+            or "instructions are required" in text
+            or "non-json" in text
+            or "<!doctype html" in text
+            or "<html" in text
+            or status in {403, 406}
+            or (isinstance(status, int) and 500 <= status < 600)
+        )
+
+    def _raw_chat_endpoint_candidates(self) -> list[str]:
+        base_url = self._base_url.rstrip("/")
+        if not base_url:
+            return []
+        normalized = base_url.lower()
+        if normalized.endswith("/chat/completions"):
+            return [base_url]
+        if normalized.endswith("/v1"):
+            return [f"{base_url}/chat/completions"]
+        return [
+            f"{base_url}/v1/chat/completions",
+            f"{base_url}/chat/completions",
+        ]
+
+    def _raw_chat_payload_variants(self, kwargs: dict) -> list[dict]:
+        payload = dict(kwargs)
+        extra_body = payload.pop("extra_body", None)
+        if isinstance(extra_body, dict):
+            payload.update(extra_body)
+        payload.pop("stream", None)
+
+        variants = [payload]
+        without_token_limit = dict(payload)
+        removed_token_limit = False
+        for key in ("max_tokens", "max_completion_tokens"):
+            if key in without_token_limit:
+                without_token_limit.pop(key, None)
+                removed_token_limit = True
+        if removed_token_limit:
+            variants.append(without_token_limit)
+
+        without_sampling = dict(without_token_limit if removed_token_limit else payload)
+        if "temperature" in without_sampling:
+            without_sampling.pop("temperature", None)
+            if without_sampling not in variants:
+                variants.append(without_sampling)
+        return variants
+
+    def _content_from_raw_message(self, message: dict) -> str:
+        content = message.get("content")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts: list[str] = []
+            for part in content:
+                if isinstance(part, str):
+                    parts.append(part)
+                elif isinstance(part, dict) and isinstance(part.get("text"), str):
+                    parts.append(part["text"])
+            return "".join(parts)
+        return ""
+
+    def _raw_chat_response_to_namespace(self, data: dict):
+        choices = []
+        for choice in data.get("choices") or []:
+            if not isinstance(choice, dict):
+                continue
+            message = choice.get("message")
+            if not isinstance(message, dict):
+                continue
+            choices.append(
+                SimpleNamespace(
+                    index=choice.get("index", len(choices)),
+                    finish_reason=choice.get("finish_reason"),
+                    message=SimpleNamespace(
+                        role=message.get("role") or "assistant",
+                        content=self._content_from_raw_message(message),
+                    ),
+                )
+            )
+
+        if not choices and isinstance(data.get("output_text"), str):
+            choices.append(
+                SimpleNamespace(
+                    index=0,
+                    finish_reason=None,
+                    message=SimpleNamespace(
+                        role="assistant",
+                        content=data["output_text"],
+                    ),
+                )
+            )
+
+        usage = None
+        usage_data = data.get("usage")
+        if isinstance(usage_data, dict):
+            usage = SimpleNamespace(
+                prompt_tokens=int(usage_data.get("prompt_tokens") or 0),
+                completion_tokens=int(usage_data.get("completion_tokens") or 0),
+            )
+
+        return SimpleNamespace(
+            id=data.get("id"),
+            object=data.get("object"),
+            model=data.get("model"),
+            choices=choices,
+            usage=usage,
+            raw=data,
+        )
+
+    def _raw_chat_error_priority(self, exc: BaseException) -> int:
+        text = str(exc).lower()
+        if "non-json response" in text and (
+            "<!doctype html" in text or "<html" in text
+        ):
+            return 0
+        if "returned no message content" in text:
+            return 1
+        return 2
+
+    def _remember_raw_chat_error(
+        self,
+        current: BaseException | None,
+        candidate: BaseException,
+    ) -> BaseException:
+        if current is None:
+            return candidate
+        if self._raw_chat_error_priority(candidate) >= self._raw_chat_error_priority(current):
+            return candidate
+        return current
+
+    async def _create_raw_chat_completion(self, kwargs: dict):
+        endpoints = self._raw_chat_endpoint_candidates()
+        payloads = self._raw_chat_payload_variants(kwargs)
+        headers = {
+            "Authorization": f"Bearer {self._api_key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": "Mozilla/5.0",
+        }
+
+        async def attempt():
+            last_error: BaseException | None = None
+            timeout = httpx.Timeout(120.0, connect=30.0)
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                for endpoint in endpoints:
+                    endpoint_retryable_error: _RetryableRawChatError | None = None
+                    for payload in payloads:
+                        try:
+                            response = await client.post(
+                                endpoint,
+                                headers=headers,
+                                json=payload,
+                            )
+                            if response.status_code >= 400:
+                                message = (
+                                    f"OpenAI-compatible endpoint returned "
+                                    f"{response.status_code} from {endpoint}: "
+                                    f"{response.text[:500]}"
+                                )
+                                if response.status_code == 429 or response.status_code >= 500:
+                                    endpoint_retryable_error = _RetryableRawChatError(
+                                        message,
+                                        status_code=response.status_code,
+                                    )
+                                    last_error = self._remember_raw_chat_error(
+                                        last_error,
+                                        endpoint_retryable_error,
+                                    )
+                                    continue
+                                last_error = self._remember_raw_chat_error(
+                                    last_error,
+                                    RuntimeError(message),
+                                )
+                                continue
+                            try:
+                                data = response.json()
+                            except json.JSONDecodeError:
+                                preview = response.text[:500].strip()
+                                if not preview:
+                                    preview = "<empty response body>"
+                                last_error = self._remember_raw_chat_error(
+                                    last_error,
+                                    RuntimeError(
+                                        "OpenAI-compatible endpoint returned non-JSON "
+                                        f"response from {endpoint}: {preview}"
+                                    ),
+                                )
+                                continue
+                            resp = self._raw_chat_response_to_namespace(data)
+                            if resp.choices and (
+                                resp.choices[0].message.content or ""
+                            ).strip():
+                                return resp
+                            endpoint_retryable_error = _RetryableRawChatError(
+                                "OpenAI-compatible endpoint returned no message "
+                                f"content from {endpoint}",
+                                status_code=502,
+                            )
+                            last_error = self._remember_raw_chat_error(
+                                last_error,
+                                endpoint_retryable_error,
+                            )
+                        except httpx.TimeoutException as exc:
+                            endpoint_retryable_error = _RetryableRawChatError(
+                                "OpenAI-compatible endpoint timed out after "
+                                f"120s from {endpoint}. The gateway or upstream "
+                                "model did not finish the request in time; try "
+                                "again with a smaller prompt, a faster model, or "
+                                "a gateway with a longer upstream timeout.",
+                                status_code=504,
+                            )
+                            last_error = self._remember_raw_chat_error(
+                                last_error,
+                                endpoint_retryable_error,
+                            )
+                            break
+                        except BaseException as exc:
+                            last_error = self._remember_raw_chat_error(last_error, exc)
+                    if endpoint_retryable_error is not None:
+                        raise endpoint_retryable_error
+            if last_error:
+                raise last_error
+            raise RuntimeError("OpenAI-compatible endpoint did not return a response")
+
+        return await call_with_retry(attempt)
+
     async def _create_chat_completion(self, kwargs: dict):
         try:
             return await call_with_retry(
                 lambda: self._client.chat.completions.create(**kwargs)
             )
         except BaseException as exc:
+            if self._should_use_raw_compat_fallback(kwargs, exc):
+                return await self._create_raw_chat_completion(kwargs)
             fallbacks = self._fallback_chat_kwargs(kwargs)
             if not fallbacks or not self._is_parameter_compat_error(exc):
                 raise
@@ -300,10 +561,11 @@ class OpenAIProvider(LLMProvider):
         )
 
         t0 = time.monotonic()
-        if response_format:
-            resp = await self._parse_chat_completion(kwargs, response_format)
-        else:
-            resp = await self._create_chat_completion(kwargs)
+        async with llm_request_slot():
+            if response_format:
+                resp = await self._parse_chat_completion(kwargs, response_format)
+            else:
+                resp = await self._create_chat_completion(kwargs)
         duration_ms = int((time.monotonic() - t0) * 1000)
 
         content = resp.choices[0].message.content or ""
@@ -344,31 +606,32 @@ class OpenAIProvider(LLMProvider):
             stream=True,
         )
 
-        stream = None
-        try:
-            stream = await self._client.chat.completions.create(**kwargs)
-        except BaseException as exc:
-            fallbacks = self._fallback_chat_kwargs(kwargs)
-            if not fallbacks or not self._is_parameter_compat_error(exc):
-                raise
-            for index, fallback in enumerate(fallbacks):
-                try:
-                    stream = await self._client.chat.completions.create(**fallback)
-                    break
-                except BaseException as fallback_exc:
-                    if (
-                        index >= len(fallbacks) - 1
-                        or not self._is_parameter_compat_error(fallback_exc)
-                    ):
-                        raise
-        assert stream is not None
-        async for chunk in stream:
-            delta = chunk.choices[0].delta
-            if delta.content:
-                yield LLMStreamChunk(
-                    delta=delta.content,
-                    finish_reason=chunk.choices[0].finish_reason,
-                )
+        async with llm_request_slot():
+            stream = None
+            try:
+                stream = await self._client.chat.completions.create(**kwargs)
+            except BaseException as exc:
+                fallbacks = self._fallback_chat_kwargs(kwargs)
+                if not fallbacks or not self._is_parameter_compat_error(exc):
+                    raise
+                for index, fallback in enumerate(fallbacks):
+                    try:
+                        stream = await self._client.chat.completions.create(**fallback)
+                        break
+                    except BaseException as fallback_exc:
+                        if (
+                            index >= len(fallbacks) - 1
+                            or not self._is_parameter_compat_error(fallback_exc)
+                        ):
+                            raise
+            assert stream is not None
+            async for chunk in stream:
+                delta = chunk.choices[0].delta
+                if delta.content:
+                    yield LLMStreamChunk(
+                        delta=delta.content,
+                        finish_reason=chunk.choices[0].finish_reason,
+                    )
 
     async def validate(self) -> bool:
         try:

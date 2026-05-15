@@ -288,7 +288,7 @@ class SessionManager:
         event["seq"] = job.last_seq
         event["ts"] = time.time()
 
-        job.events.append(event)
+        job.events.append(_event_for_replay(event))
         # Cap memory: keep only the most recent ``EVENT_RING_SIZE`` events.
         if len(job.events) > EVENT_RING_SIZE:
             job.events = job.events[-EVENT_RING_SIZE:]
@@ -371,6 +371,24 @@ class SessionManager:
         self._ws_queues.clear()
         self._tasks.clear()
         self._persist_state()
+
+    async def flush_now(self) -> None:
+        """Write the compacted runtime snapshot immediately.
+
+        Delete operations use this so removing a recent record shrinks
+        ``.runtime/session_state.json`` right away instead of waiting for the
+        debounce timer or process shutdown.
+        """
+        self._dirty = False
+        if self._flush_event is not None:
+            self._flush_event.clear()
+        payload = self._build_state_payload()
+        try:
+            from backend.runtime.offload import aoffload
+
+            await aoffload(self._write_payload_blocking, payload)
+        except RuntimeError:
+            self._write_payload_blocking(payload)
 
     def _mark_orphaned_running_jobs(self) -> None:
         """After process restart, any job left in a non-terminal state
@@ -479,7 +497,14 @@ class SessionManager:
             json.dumps(payload, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
-        temp_path.replace(self._state_file)
+        for attempt in range(5):
+            try:
+                temp_path.replace(self._state_file)
+                return
+            except PermissionError:
+                if attempt >= 4:
+                    raise
+                time.sleep(0.05 * (attempt + 1))
 
     def _load_state(self) -> None:
         if not self._state_file.exists():
@@ -589,6 +614,22 @@ def _offer_to_queue(queue: asyncio.Queue, event: dict) -> None:
         queue.put_nowait(event)
     except asyncio.QueueFull:  # pragma: no cover — extremely unlikely race
         pass
+
+
+def _event_for_replay(event: dict) -> dict:
+    """Return the retained/replayed form of a live socket event.
+
+    Live subscribers still receive full ``slide_ready`` SVG payloads for a
+    snappy preview. Persisted replay frames intentionally drop the SVG blob:
+    reconnecting or opening an old in-flight job should fetch the current
+    preview from disk instead of replaying megabytes of historical SVG text
+    and making the UI fast-forward through every past slide.
+    """
+    replay = dict(event)
+    data = replay.get("data")
+    if isinstance(data, dict) and "svg" in data:
+        replay["data"] = {key: value for key, value in data.items() if key != "svg"}
+    return replay
 
 
 # Global singleton

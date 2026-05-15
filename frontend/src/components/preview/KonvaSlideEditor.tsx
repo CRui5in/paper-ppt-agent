@@ -4,6 +4,7 @@ import Konva from "konva";
 import { Group, Image as KonvaImage, Layer, Rect, Stage, Text, Transformer } from "react-konva";
 import type { PreviewSlide, SlideDocument } from "../../lib/types";
 import { useLocale } from "../../i18n";
+import { DEFAULT_EDITOR_FONT, EDITOR_FONT_OPTIONS, fontPreviewFamily } from "../../lib/fontOptions";
 
 export type EditorCommandType =
   | "addText"
@@ -131,7 +132,6 @@ const SVG_NS = "http://www.w3.org/2000/svg";
 const DEFAULT_WIDTH = 1280;
 const DEFAULT_HEIGHT = 720;
 const AUTOSAVE_STORAGE_KEY = "paper-ppt-agent-slide-editor-autosave-v2";
-const FONT_OPTIONS = ["Arial", "Calibri", "Inter", "Microsoft YaHei", "SimHei", "Times New Roman", "Georgia"];
 
 export function KonvaSlideEditor({ slide, editable, command, onStateChange, onSave }: KonvaSlideEditorProps) {
   const { t } = useLocale();
@@ -302,7 +302,7 @@ export function KonvaSlideEditor({ slide, editable, command, onStateChange, onSa
       height: 64,
       text: t("editor.defaultText"),
       fontSize: 36,
-      fontFamily: "Microsoft YaHei",
+      fontFamily: DEFAULT_EDITOR_FONT,
       fill: "#0f172a",
       fontStyle: "normal",
     align: "left",
@@ -865,7 +865,11 @@ function FloatingTextTools({
   return (
     <div className="konva-floating-tools" style={{ left, top }}>
       <select title={t("editor.font")} value={node.fontFamily} onChange={(event) => onChange({ fontFamily: event.target.value } as Partial<EditorNode>)}>
-        {FONT_OPTIONS.map((font) => <option key={font} value={font}>{font}</option>)}
+        {EDITOR_FONT_OPTIONS.map((font) => (
+          <option key={font.value} value={font.value} style={{ fontFamily: fontPreviewFamily(font.value) }}>
+            {font.label}
+          </option>
+        ))}
       </select>
       <input title={t("editor.fontSize")} type="number" min={8} max={160} value={node.fontSize} onChange={(event) => onChange({ fontSize: Number(event.target.value) } as Partial<EditorNode>)} />
       <input title={t("editor.color")} type="color" value={normalizeColor(node.fill)} onChange={(event) => onChange({ fill: event.target.value } as Partial<EditorNode>)} />
@@ -1013,7 +1017,7 @@ function TableShape({
               text={node.cells[row]?.[col] ?? ""}
               fill={node.textFill}
               fontSize={node.fontSize}
-              fontFamily="Microsoft YaHei"
+              fontFamily={DEFAULT_EDITOR_FONT}
             />
           </Group>
         )),
@@ -1138,7 +1142,7 @@ function normalizeDocumentNode(raw: unknown): EditorNode | null {
       type: "text",
       text: typeof node.text === "string" ? node.text : "Text",
       fontSize: positiveNumber(node.fontSize, 28),
-      fontFamily: typeof node.fontFamily === "string" ? node.fontFamily : "Microsoft YaHei",
+      fontFamily: typeof node.fontFamily === "string" ? node.fontFamily : DEFAULT_EDITOR_FONT,
       fill: normalizeColor(typeof node.fill === "string" ? node.fill : "#0f172a"),
       fontStyle: typeof node.fontStyle === "string" ? node.fontStyle : "normal",
       align: node.align === "center" || node.align === "right" ? node.align : "left",
@@ -1346,7 +1350,7 @@ function composeSvgFromNodes(backgroundSvg: string, nodes: EditorNode[], appendC
           text.setAttribute("x", String(round(col * cellW + 8)));
           text.setAttribute("y", String(round(row * cellH + node.fontSize + 6)));
           text.setAttribute("font-size", String(node.fontSize));
-          text.setAttribute("font-family", "Microsoft YaHei");
+          text.setAttribute("font-family", DEFAULT_EDITOR_FONT);
           text.setAttribute("fill", node.textFill);
           text.textContent = node.cells[row]?.[col] ?? "";
           group.appendChild(text);
@@ -1385,7 +1389,7 @@ function textFromElement(element: SVGTextElement, index: number, overrides: Part
     rotation: 0,
     text,
     fontSize,
-    fontFamily: cleanFontFamily(element.getAttribute("font-family") || inheritedAttr(element, "font-family") || "Microsoft YaHei"),
+    fontFamily: cleanFontFamily(element.getAttribute("font-family") || inheritedAttr(element, "font-family") || DEFAULT_EDITOR_FONT),
     fill: normalizeColor(element.getAttribute("fill") || inheritedAttr(element, "fill") || "#0f172a"),
     fontStyle: [fontWeightToStyle(element.getAttribute("font-weight") || inheritedAttr(element, "font-weight")), element.getAttribute("font-style") === "italic" ? "italic" : ""].filter(Boolean).join(" ") || "normal",
     align,
@@ -1693,7 +1697,7 @@ function normalizeText(text: string) {
 }
 
 function cleanFontFamily(font: string) {
-  return font.split(",")[0]?.replace(/['"]/g, "").trim() || "Microsoft YaHei";
+  return font.split(",")[0]?.replace(/['"]/g, "").trim() || DEFAULT_EDITOR_FONT;
 }
 
 function fontWeightToStyle(weight: string | null) {

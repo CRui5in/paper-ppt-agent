@@ -38,6 +38,7 @@ The paper content lists available figures with stable tokens `[[FIG:fig_id]]`. W
 - Never invent IDs or write `![caption](path)`
 - Avoid reusing the same figure on multiple slides
 - Never mislabel figure numbers
+- Use figure tokens only on `content` slides. Do not put paper figures on `cover`, `chapter`, or `ending` slides.
 
 ### 6. Bold Usage
 - Bold **first occurrences** of key terms
@@ -47,6 +48,12 @@ The paper content lists available figures with stable tokens `[[FIG:fig_id]]`. W
 ---
 
 ## Output Format
+
+Before writing the Markdown, internally verify the chapter plan from Pass 2:
+
+- Every `chapter` slide must introduce at least **two** following `content` slides before the next chapter or ending page.
+- If a planned chapter would cover only one content slide, merge it into a neighboring chapter and write that slide as `content`.
+- If a slide needs bullets, figures, metrics, labeled blocks such as `核心问题` / `本章看点`, or evidence, it is a `content` slide, not a `chapter` slide.
 
 Produce Markdown with `---` separating each slide. Each slide:
 
@@ -67,6 +74,15 @@ Produce Markdown with `---` separating each slide. Each slide:
 ```
 
 Use one page type per slide. Match the target slide budget. The ending page should be a closing/thanks page.
+For `cover`, `chapter`, and `ending` slides, the Structural Page Rules below override the generic example format.
+
+### Structural Page Rules
+
+- `cover` is a lightweight title/meta slide: title, optional subtitle, authors/source/venue/date if available, and a few short context or thesis lines. Do not include paper figures or turn it into a detailed research-background, contribution, metric, or results slide.
+- `chapter` is a transition/divider slide: chapter title, optional short subtitle, and at most 1-2 brief orientation phrases. Do not include detailed metrics, evidence bullets, numbered question lists, charts, diagrams, paper figures, or labeled content blocks such as `核心问题` / `本章看点`.
+- All `chapter` slides must keep the same manuscript shape and visual intent across the deck: same title/subtitle pattern, no ad-hoc cards, no per-chapter mini-outline grids. Put detailed questions and preview bullets on the following `content` slides.
+- A chapter divider should normally introduce at least 2 following `content` slides. If a topic would have only 1 content slide, merge it into a neighboring chapter instead of creating a standalone divider.
+- `content` slides carry the actual evidence, mechanisms, figures, and detailed bullets. Do not style content slides as chapter dividers.
 
 ### Density Guidelines
 
@@ -88,3 +104,5 @@ Use one page type per slide. Match the target slide budget. The ending page shou
 - [ ] No filler slides — every slide earns its place
 - [ ] Gap analysis insights from Pass 1 are reflected in the narrative arc
 - [ ] Each slide answers "So what?" — not just "What?"
+- [ ] Every chapter divider introduces at least two following content slides
+- [ ] No chapter slide contains content-block labels, bullets, figures, metrics, or evidence

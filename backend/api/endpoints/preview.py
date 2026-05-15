@@ -175,7 +175,7 @@ async def delete_preview_slide(job_id: str, slide_index: int) -> PreviewResponse
 
 
 @router.get("/preview-project", response_model=PreviewResponse)
-async def get_project_preview(project_dir: str) -> PreviewResponse:
+async def get_project_preview(project_dir: str, last_slide_only: bool = False) -> PreviewResponse:
     resolved_project_dir = _resolve_workspace_path(project_dir)
     if resolved_project_dir is None or not resolved_project_dir.exists():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
@@ -186,6 +186,7 @@ async def get_project_preview(project_dir: str) -> PreviewResponse:
         project_dir=resolved_project_dir,
         output_path=str(output_path) if output_path else None,
         status_value="complete" if output_path else "unknown",
+        last_slide_only=last_slide_only,
     )
 
 
@@ -194,14 +195,19 @@ async def _build_preview_response(
     project_dir: Path | None,
     output_path: str | None,
     status_value: str,
+    *,
+    last_slide_only: bool = False,
 ) -> PreviewResponse:
     slides: list[PreviewSlide] = []
     if project_dir and project_dir.exists():
         final_files = get_svg_files(project_dir, "final")
         output_files = get_svg_files(project_dir, "output")
         slide_files = final_files or output_files
+        if last_slide_only and slide_files:
+            slide_files = slide_files[-1:]
         source = "final" if final_files else "output"
-        for index, svg_path in enumerate(slide_files, start=1):
+        for fallback_index, svg_path in enumerate(slide_files, start=1):
+            index = _slide_index_from_svg_path(svg_path, fallback_index)
             # ``prepare_svg_file_for_render`` rewrites href base64 inlines etc.
             # — synchronous CPU work; offload it.
             try:
@@ -233,6 +239,16 @@ async def _build_preview_response(
         output_path=output_path,
         status=status_value,
     )
+
+
+def _slide_index_from_svg_path(svg_path: Path, fallback_index: int) -> int:
+    match = re.match(r"^0*(\d+)(?:_|$)", svg_path.stem)
+    if not match:
+        return fallback_index
+    try:
+        return int(match.group(1))
+    except ValueError:
+        return fallback_index
 
 
 def _slides_from_retained_events(job_id: str) -> list[PreviewSlide]:

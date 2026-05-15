@@ -21,7 +21,40 @@ DETAIL_AUTO_SLIDE_RANGES = {
 
 def split_manuscript_pages(manuscript: str) -> list[str]:
     """Split manuscript Markdown on standalone slide delimiter lines only."""
-    return [page.strip() for page in _SLIDE_DELIMITER_RE.split(manuscript) if page.strip()]
+    normalized = normalize_manuscript_slide_delimiters(manuscript)
+    return [page.strip() for page in _SLIDE_DELIMITER_RE.split(normalized) if page.strip()]
+
+
+def normalize_manuscript_slide_delimiters(manuscript: str) -> str:
+    """Restore slide delimiters when page_type markers already define page starts.
+
+    Some OpenAI-compatible models occasionally keep the `<!-- page_type: ... -->`
+    markers but omit most `---` slide separators. In that case the manuscript is
+    semantically multi-page, but delimiter-only parsing collapses it into a few
+    giant pages. This repair is intentionally structural: it never edits slide
+    text, only inserts standard delimiters between page_type blocks.
+    """
+    text = manuscript.strip()
+    markers = list(_PAGE_TYPE_RE.finditer(text))
+    if len(markers) <= 1:
+        return text
+
+    delimiter_pages = [page.strip() for page in _SLIDE_DELIMITER_RE.split(text) if page.strip()]
+    if len(delimiter_pages) >= len(markers):
+        return text
+
+    prefix = text[: markers[0].start()].strip()
+    pages: list[str] = []
+    if prefix:
+        pages.append(prefix)
+    for index, marker in enumerate(markers):
+        start = marker.start()
+        end = markers[index + 1].start() if index + 1 < len(markers) else len(text)
+        page = text[start:end].strip()
+        page = _SLIDE_DELIMITER_RE.sub("", page).strip()
+        if page:
+            pages.append(page)
+    return "\n\n---\n\n".join(pages)
 
 
 def count_manuscript_pages(manuscript: str) -> int:
@@ -107,19 +140,27 @@ def page_type_budget_guidance(
         )
         return (
             f"{lead}\n"
-            "- Budget: cover 1, chapter/transition 3-5, ending 1; use remaining slides for content.\n"
+            "- Planning: use chapter/transition slides only when they help the narrative; usually 2-5, or the user-requested chapter count if specified. Do not force a fixed chapter count.\n"
             "- Put `<!-- page_type: cover|chapter|content|ending -->` at the top of every slide.\n"
             "- Cover, chapter/transition, and ending pages are real slides, not styling guesses.\n"
-            "- Place chapter/transition pages before major chapter blocks.\n"
+            "- Cover pages are lightweight title/meta slides: title, optional subtitle, paper metadata (authors/source/venue/date when available), and a few short context or thesis lines. Do not insert paper figures or turn the cover into a detailed content slide.\n"
+            "- Chapter/ending pages are minimal structural slides: no bullets, numbered question lists, metrics/KPI blocks, paper figures, or labeled blocks such as `核心问题` / `本章看点`.\n"
+            "- Keep all chapter/transition pages in the same shape: chapter title plus optional short subtitle/orientation phrase only.\n"
+            "- Place chapter/transition pages before major chapter blocks; each chapter divider should normally introduce at least 2 following content slides.\n"
+            "- If a section would have only 1 content slide, merge that topic into a neighboring section instead of creating a standalone chapter divider.\n"
             "- The ending page is a closing/thanks slide, not another content summary."
         )
     return (
         f"{lead}\n"
-        f"- Budget: cover {budget['cover']}, chapter/transition {budget['chapter']}, "
-        f"content {budget['content']}, ending {budget['ending']}.\n"
+        f"- Suggested structure: cover {budget['cover']}, about {budget['chapter']} chapter/transition slide(s), "
+        f"content about {budget['content']}, ending {budget['ending']}. Treat chapter count as a planning hint; follow any user-requested chapter count when specified.\n"
         "- Put `<!-- page_type: cover|chapter|content|ending -->` at the top of every slide.\n"
         "- Cover, chapter/transition, and ending pages are real slides, not styling guesses.\n"
-        "- Place chapter/transition pages before major chapter blocks.\n"
+        "- Cover pages are lightweight title/meta slides: title, optional subtitle, paper metadata (authors/source/venue/date when available), and a few short context or thesis lines. Do not insert paper figures or turn the cover into a detailed content slide.\n"
+        "- Chapter/ending pages are minimal structural slides: no bullets, numbered question lists, metrics/KPI blocks, paper figures, or labeled blocks such as `核心问题` / `本章看点`.\n"
+        "- Keep all chapter/transition pages in the same shape: chapter title plus optional short subtitle/orientation phrase only.\n"
+        "- Place chapter/transition pages before major chapter blocks; each chapter divider should normally introduce at least 2 following content slides.\n"
+        "- If a section would have only 1 content slide, merge that topic into a neighboring section instead of creating a standalone chapter divider.\n"
         "- The ending page is a closing/thanks slide, not another content summary."
     )
 

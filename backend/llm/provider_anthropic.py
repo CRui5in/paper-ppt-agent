@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator
 from anthropic import AsyncAnthropic
 from pydantic import BaseModel
 
+from backend.runtime.resource_gates import llm_request_slot
 from backend.usage.tracker import current_usage_context, usage_tracker
 
 from .base import LLMProvider
@@ -89,7 +90,8 @@ class AnthropicProvider(LLMProvider):
             kwargs["system"] = system_text
 
         t0 = time.monotonic()
-        resp = await call_with_retry(lambda: self._client.messages.create(**kwargs))
+        async with llm_request_slot():
+            resp = await call_with_retry(lambda: self._client.messages.create(**kwargs))
         duration_ms = int((time.monotonic() - t0) * 1000)
 
         content = ""
@@ -134,9 +136,10 @@ class AnthropicProvider(LLMProvider):
         if system_text:
             kwargs["system"] = system_text
 
-        async with self._client.messages.stream(**kwargs) as stream:
-            async for text in stream.text_stream:
-                yield LLMStreamChunk(delta=text)
+        async with llm_request_slot():
+            async with self._client.messages.stream(**kwargs) as stream:
+                async for text in stream.text_stream:
+                    yield LLMStreamChunk(delta=text)
 
     async def validate(self) -> bool:
         try:

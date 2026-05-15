@@ -393,6 +393,8 @@ class PDFParser(PaperParser):
                 continue
             if not self._is_meaningful_image_candidate(page_rect, bbox, img_info):
                 continue
+            if self._is_suspicious_embedded_xobject(page_rect, bbox, img_info):
+                continue
 
             try:
                 pix = fitz.Pixmap(doc, xref)
@@ -498,12 +500,21 @@ class PDFParser(PaperParser):
 
         # ── pass B: caption-anchored object-region render ──────────────────
         for cap_text, cap_rect in caption_map.values():
+            if self._has_reliable_caption_figure(figures, cap_text):
+                continue
             clip = self._build_caption_anchored_clip(
                 page_rect,
                 cap_rect,
                 text_blocks,
                 graphic_rects,
             )
+            if clip is None:
+                clip = self._infer_caption_anchored_clip(
+                    page_rect,
+                    cap_rect,
+                    text_blocks,
+                    graphic_rects,
+                )
             if clip is None:
                 continue
 
@@ -657,6 +668,75 @@ class PDFParser(PaperParser):
 
         return True
 
+    @staticmethod
+    def _caption_key(caption: str) -> str:
+        return re.sub(r"\s+", " ", (caption or "").strip().lower())
+
+    def _has_reliable_caption_figure(
+        self,
+        figures: list[PaperFigure],
+        caption: str,
+    ) -> bool:
+        key = self._caption_key(caption)
+        if not key:
+            return False
+        for fig in figures:
+            if fig.extraction_method not in {"embedded_image", "table_region"}:
+                continue
+            if fig.quality_score < 0.75:
+                continue
+            if self._caption_key(fig.caption) == key:
+                return True
+        return False
+
+    def _is_suspicious_embedded_xobject(
+        self,
+        page_rect: fitz.Rect,
+        bbox: fitz.Rect,
+        img_info: dict,
+    ) -> bool:
+        """Reject embedded XObjects that are likely masks or texture slices.
+
+        Some PDFs expose a displayed image for only one paint layer of a figure
+        (often indexed-color plus an alpha mask) at extremely high effective
+        PPI. Extracting that XObject alone produces a misleading fragment, while
+        rendering the caption-anchored page region captures the complete figure.
+        """
+        if bbox.is_empty or page_rect.is_empty:
+            return True
+
+        width = float(img_info.get("width", 0) or 0)
+        height = float(img_info.get("height", 0) or 0)
+        if width <= 0 or height <= 0:
+            return False
+
+        display_width_in = max(bbox.width / 72.0, 1e-6)
+        display_height_in = max(bbox.height / 72.0, 1e-6)
+        x_ppi = width / display_width_in
+        y_ppi = height / display_height_in
+        effective_ppi = max(
+            x_ppi,
+            y_ppi,
+            float(img_info.get("xres", 0) or 0),
+            float(img_info.get("yres", 0) or 0),
+        )
+        area_ratio = bbox.get_area() / page_rect.get_area()
+        colorspace_name = str(img_info.get("cs-name") or "").lower()
+        has_mask = bool(img_info.get("has-mask", False))
+        storage_size = float(img_info.get("size", 0) or 0)
+        pixels = max(width * height, 1.0)
+        bytes_per_pixel = storage_size / pixels if storage_size else 0.0
+
+        indexed_or_masked = "indexed" in colorspace_name or has_mask
+        very_dense = effective_ppi >= 700
+        thin_or_small_display = (
+            area_ratio < 0.035
+            or bbox.width < MIN_RENDERED_FIGURE_SIDE * 2
+            or bbox.height < MIN_RENDERED_FIGURE_SIDE * 1.5
+        )
+        highly_compressed_layer = bytes_per_pixel and bytes_per_pixel < 0.08
+        return indexed_or_masked and very_dense and (thin_or_small_display or highly_compressed_layer)
+
     def _build_caption_anchored_clip(
         self,
         page_rect: fitz.Rect,
@@ -711,7 +791,7 @@ class PDFParser(PaperParser):
             rect = block["rect"]
             if not label_zone.intersects(rect):
                 continue
-            if block["char_count"] > LABEL_TEXT_CHARS_THRESHOLD and block["line_count"] > 3:
+            if block["char_count"] > LABEL_TEXT_CHARS_THRESHOLD:
                 continue
             cluster_rect.include_rect(rect)
 
@@ -721,15 +801,96 @@ class PDFParser(PaperParser):
             min(page_rect.x1, cluster_rect.x1 + 18),
             min(caption_rect.y0 - 4, cluster_rect.y1 + 18),
         )
+        clip = self._trim_leading_body_text(clip, text_blocks)
         if clip.width < MIN_RENDERED_FIGURE_SIDE or clip.height < MIN_RENDERED_FIGURE_SIDE:
             return None
         return clip
+
+    def _infer_caption_anchored_clip(
+        self,
+        page_rect: fitz.Rect,
+        caption_rect: fitz.Rect,
+        text_blocks: list[dict],
+        graphic_rects: list[fitz.Rect],
+    ) -> fitz.Rect | None:
+        """Infer a figure crop above a caption when object bboxes are missing.
+
+        This is intentionally conservative and only runs after the precise
+        graphic-cluster path fails. It helps PDFs that store a composed figure as
+        paint operations or masked image fragments rather than a single clean
+        XObject.
+        """
+        search_top = max(page_rect.y0, caption_rect.y0 - MAX_CAPTION_GAP_PX)
+        nearby_graphics = [
+            rect
+            for rect in graphic_rects
+            if rect.y1 <= caption_rect.y0 + 12
+            and rect.y0 >= search_top
+            and rect.width >= MIN_RENDERED_FIGURE_SIDE / 2
+            and rect.height >= MIN_RENDERED_FIGURE_SIDE / 3
+        ]
+        if nearby_graphics:
+            cluster = fitz.Rect(nearby_graphics[0])
+            for rect in nearby_graphics[1:]:
+                cluster.include_rect(rect)
+            clip = fitz.Rect(
+                max(page_rect.x0, cluster.x0 - 24),
+                max(page_rect.y0, cluster.y0 - 24),
+                min(page_rect.x1, cluster.x1 + 24),
+                min(caption_rect.y0 - 4, cluster.y1 + 24),
+            )
+            if clip.width >= MIN_RENDERED_FIGURE_SIDE and clip.height >= MIN_RENDERED_FIGURE_SIDE:
+                return clip
+
+        nearest_body_bottom: float | None = None
+        for block in text_blocks:
+            rect = block["rect"]
+            if rect.y1 > caption_rect.y0 or rect.y1 < search_top:
+                continue
+            if block["char_count"] < BODY_TEXT_CHARS_THRESHOLD:
+                continue
+            nearest_body_bottom = rect.y1 if nearest_body_bottom is None else max(nearest_body_bottom, rect.y1)
+
+        top = max(search_top, (nearest_body_bottom + 8) if nearest_body_bottom is not None else search_top)
+        if caption_rect.y0 - top < MIN_RENDERED_FIGURE_SIDE:
+            top = max(search_top, caption_rect.y0 - 260)
+
+        horizontal_pad = max(24.0, page_rect.width * 0.08)
+        clip = fitz.Rect(
+            page_rect.x0 + horizontal_pad,
+            top,
+            page_rect.x1 - horizontal_pad,
+            caption_rect.y0 - 4,
+        )
+        clip = self._trim_leading_body_text(clip, text_blocks)
+        if clip.width < MIN_RENDERED_FIGURE_SIDE or clip.height < MIN_RENDERED_FIGURE_SIDE:
+            return None
+        return clip
+
+    def _trim_leading_body_text(
+        self,
+        clip: fitz.Rect,
+        text_blocks: list[dict],
+    ) -> fitz.Rect:
+        trimmed = fitz.Rect(clip)
+        for block in text_blocks:
+            rect = block["rect"]
+            if not trimmed.intersects(rect):
+                continue
+            if block["char_count"] <= LABEL_TEXT_CHARS_THRESHOLD:
+                continue
+            if rect.y0 > trimmed.y0 + 12:
+                continue
+            if rect.y1 > trimmed.y0 + trimmed.height * 0.30:
+                continue
+            trimmed.y0 = max(trimmed.y0, rect.y1 + 4)
+        return trimmed
 
     def _is_region_already_covered(self, region: fitz.Rect, raster_rects: list[fitz.Rect]) -> bool:
         for rect in raster_rects:
             if not region.intersects(rect):
                 continue
-            overlap = region.intersect(rect).get_area()
+            overlap = fitz.Rect(region).intersect(rect).get_area()
             if overlap >= region.get_area() * 0.78:
                 return True
         return False
@@ -751,7 +912,7 @@ class PDFParser(PaperParser):
             block_rect = block["rect"]
             if not rect.intersects(block_rect):
                 continue
-            overlap = rect.intersect(block_rect).get_area()
+            overlap = fitz.Rect(rect).intersect(block_rect).get_area()
             if overlap <= 0:
                 continue
             if block["char_count"] >= BODY_TEXT_CHARS_THRESHOLD and block["line_count"] >= 3:
@@ -762,7 +923,7 @@ class PDFParser(PaperParser):
         for graphic_rect in graphic_rects:
             if not rect.intersects(graphic_rect):
                 continue
-            graphics_overlap_area += rect.intersect(graphic_rect).get_area()
+            graphics_overlap_area += fitz.Rect(rect).intersect(graphic_rect).get_area()
 
         graphic_coverage = graphics_overlap_area / rect.get_area() if rect.get_area() else 0.0
         if body_text_chars > max(120, label_text_chars * 1.5):

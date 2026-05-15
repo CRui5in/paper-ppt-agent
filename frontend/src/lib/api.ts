@@ -199,9 +199,18 @@ export async function fetchPreview(jobId: string): Promise<PreviewResponse> {
   return request<PreviewResponse>(`/api/preview/${jobId}`);
 }
 
-export async function fetchProjectPreview(projectDir: string): Promise<PreviewResponse> {
+export async function fetchProjectPreview(
+  projectDir: string,
+  options: { lastSlideOnly?: boolean; signal?: AbortSignal } = {},
+): Promise<PreviewResponse> {
   const params = new URLSearchParams({ project_dir: projectDir });
-  return request<PreviewResponse>(`/api/preview-project?${params.toString()}`);
+  if (options.lastSlideOnly) {
+    params.set("last_slide_only", "1");
+  }
+  return request<PreviewResponse>(
+    `/api/preview-project?${params.toString()}`,
+    options.signal ? { signal: options.signal } : undefined,
+  );
 }
 
 export async function updatePreviewSlide(jobId: string, slideIndex: number, content: string, document?: SlideDocument, notes?: string): Promise<PreviewSlide> {

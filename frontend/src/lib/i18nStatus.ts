@@ -97,6 +97,7 @@ export function translateJobMessage(message: string | undefined, locale: Locale)
     "Creating design specification...": "正在生成设计规范...",
     "Design spec created": "设计规范已生成",
     "Generating slide SVGs...": "正在生成幻灯片 SVG...",
+    "Generating slide SVGs in parallel...": "正在并行生成幻灯片 SVG...",
     "Finalizing SVGs...": "正在整理 SVG...",
     "Exporting to PowerPoint...": "正在导出 PowerPoint...",
     "PowerPoint generated!": "PowerPoint 已生成",

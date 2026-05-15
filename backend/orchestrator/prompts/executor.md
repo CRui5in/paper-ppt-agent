@@ -54,6 +54,9 @@ Every page MUST follow this three-region structure. Content area boundary is a *
 17. **Line wrapping**: Wrap text by the local container width, not the full page width. A card, column, callout, or diagram label is a hard text box. Keep manual line breaks if they prevent overflow; do not merge lines just to fill width.
 18. **Icon-text vertical alignment**: When an explicitly assigned icon or structural marker sits beside a text label on the same visual row, SVG `y` is the baseline, not the visual center. To center text with a circle marker, use: `text_y = circle_cy + font_size × 0.35`. Example: circle at cy=200, font_size=18 → text y = 200 + 6.3 ≈ 206. Do NOT set text y equal to circle cy.
 19. **No fake card icons**: If the current page's Icon Guidance says there is no explicit icon assignment, do not create standalone letter/symbol badges such as `P`, `Δ`, `!`, `G`, `?`, or `i` inside small squares/circles. For technical cards, use numbered markers or small mechanism diagrams instead.
+20. **Static SVG only**: Do not use SVG/CSS animation, transitions, SMIL elements, keyframes, or animated decorative effects. The browser preview and exported PPTX must show the same static page.
+21. **Chrome consistency**: Page numbers belong in the footer only. Do not add top-left administrative labels such as section counters, chapter counters, or page-number labels unless they are part of a provided template skeleton.
+22. **Respect page roles**: Cover/chapter/ending pages are structural and minimal. Content pages must not use chapter-divider layouts, oversized chapter numerals, or transition-slide treatment.
 
 ## CJK Text Layout Reference
 
@@ -81,15 +84,21 @@ When a page contains images, calculate layout based on the image's original aspe
 **Left-Right**: Image height=H, width=H×R. Text area width=W-image_width-20. Constraint: ≥280px.
 **Multi-Image Grid**: cell_w=(W-(cols-1)×20)/cols, cell_h=(H-(rows-1)×20)/rows.
 
+### Boundary Enforcement (Mandatory)
+
+The content area (y=100, h=520) ends at y=620. Every element you place has a y-coordinate and height -- their sum must stay under 620. When stacking multiple images or cards, divide the 520px among them before placing text. If the math does not fit, shrink images or reduce content. Never place anything in the footer region (y=660+) except the page number.
+
 ## Template Usage (when a Template Skeleton is provided)
 
 When a page message includes a `## Template Skeleton` block, follow these rules:
 
 1. **Start from the skeleton** — do NOT generate the SVG from scratch. Use the provided skeleton as your starting point.
-2. **Replace placeholder tokens** — tokens like `{{TITLE}}`, `{{SUBTITLE}}`, `{{PAGE_TITLE}}`, `{{SECTION_NUM}}`, `{{KEY_MESSAGE}}`, `{{COVER_QUOTE}}`, `{{DATE}}`, `{{SOURCE}}`, `{{CONTENT_AREA}}` must be replaced with actual content from the manuscript.
-3. **Preserve ALL decorative elements** — gradients, glow effects, grid lines, accent bars, decorative shapes, neural network lines, node circles, etc. must remain unchanged.
-4. **Preserve structural chrome** — headers, footers, sidebars, accent decorations, and brand identifiers from the skeleton must be kept.
-5. **Content area** — add your page-specific content (text, images, charts) inside the content area boundary only. Do not overflow beyond the content area.
-6. **Colors and fonts** — match the skeleton's color scheme and font-family exactly. Do not substitute different colors or fonts.
-7. **Content pages** — if no skeleton is provided for a content page, follow the color scheme and layout style from the content page skeleton reference provided in the initial context.
-8. **Layout contract** — follow the layout type declared for the page in Section IX. Do not switch a top-bottom page to left-right, or a fixed card grid to another structure, unless the page would otherwise be impossible to render without overflow.
+2. **Respect the Structured Deck Plan** — page number, page type, chapter index, chapter title, style family, and density target are already decided before SVG generation. Do not reinterpret them from neighboring prose.
+3. **Replace remaining placeholder tokens only** — tokens like `{{TITLE}}`, `{{SUBTITLE}}`, `{{PAGE_TITLE}}`, `{{SECTION_NUM}}`, `{{KEY_MESSAGE}}`, `{{AUTHOR}}`, `{{AUTHORS}}`, `{{JOURNAL}}`, `{{VENUE}}`, `{{CONFERENCE}}`, `{{COVER_QUOTE}}`, `{{DATE}}`, `{{SOURCE}}`, `{{BRAND_LABEL}}`, `{{CONTENT_AREA}}` must be replaced with actual content from the current slide plan/manuscript. If a skeleton already contains a resolved literal such as `01`, keep it unless the current slide plan says otherwise.
+4. **Do not derive chapter numbers from page numbers** — `PAGE_NUM` is for footer pagination only. `SECTION_NUM` / `CHAPTER_NUM` are planned chapter indices and may differ from the page number.
+5. **Preserve ALL decorative elements** — gradients, glow effects, grid lines, accent bars, decorative shapes, neural network lines, node circles, etc. must remain unchanged.
+6. **Preserve structural chrome** — headers, footers, sidebars, accent decorations, and brand identifiers from the skeleton must be kept.
+7. **Content area** — add your page-specific content (text, images, charts) inside the content area boundary only. Do not overflow beyond the content area.
+8. **Colors and fonts** — match the skeleton's color scheme and font-family exactly. Do not substitute different colors or fonts.
+9. **Content pages** — if no skeleton is provided for a content page, follow the color scheme and layout style from the content page skeleton reference provided in the initial context.
+10. **Layout contract** — follow the layout type declared for the page in Section IX. Do not switch a top-bottom page to left-right, or a fixed card grid to another structure, unless the page would otherwise be impossible to render without overflow.

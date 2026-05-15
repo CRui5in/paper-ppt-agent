@@ -23,7 +23,7 @@ from backend.orchestrator.provider_guidance import (
 logger = logging.getLogger(__name__)
 
 PROMPT_PATH = Path(__file__).parent / "prompts" / "strategist.md"
-DESIGN_SPEC_MAX_TOKENS = 24576
+DESIGN_SPEC_MAX_TOKENS = 32768
 MAX_DESIGN_SPEC_ATTEMPTS = 2
 
 # Number of icon candidates to pre-select via RAG
@@ -333,9 +333,15 @@ def _design_spec_validation_error(
                     f"expected no more than {expected_page_count}"
                 )
             if len(set(page_nums)) != expected_page_count:
+                missing_pages = sorted(set(range(1, expected_page_count + 1)) - set(page_nums))
+                missing_suffix = (
+                    "; missing pages: " + ", ".join(str(page) for page in missing_pages[:12])
+                    if missing_pages
+                    else ""
+                )
                 return (
                     f"Content Outline lists {len(set(page_nums))} unique pages, "
-                    f"expected {expected_page_count}"
+                    f"expected {expected_page_count}{missing_suffix}"
                 )
 
     if expected_inventory:
@@ -372,6 +378,69 @@ def _design_spec_validation_error(
             + ". Choose exact paths from the provided icon candidate table, or use Icon: None."
         )
     return None
+
+
+def _outline_page_numbers(content: str) -> set[int]:
+    outline = _extract_design_spec_section(content, "IX")
+    return {
+        int(match.group(1))
+        for match in re.finditer(r"(?i)\b(?:page|slide)\s*0*(\d+)\b", outline)
+    }
+
+
+def _repair_design_spec_page_contract(
+    content: str,
+    expected_inventory: list[dict[str, str | int]],
+) -> str:
+    """Patch harmless page-count omissions in a valid design spec.
+
+    Long decks can cause the strategist to stop Section IX early. Rather than
+    fail the entire run, append minimal page contracts from the already-fixed
+    manuscript inventory. Extra/out-of-range pages are still left for
+    validation to reject.
+    """
+    if not expected_inventory:
+        return content
+
+    expected_page_count = len(expected_inventory)
+    repaired = re.sub(
+        r"(?im)(\bPage Count\s*[:：]\s*)\d+\b",
+        rf"\g<1>{expected_page_count}",
+        content,
+        count=1,
+    )
+
+    outline = _extract_design_spec_section(repaired, "IX")
+    if not outline:
+        return repaired
+
+    present = _outline_page_numbers(repaired)
+    if present and max(present) > expected_page_count:
+        return repaired
+
+    missing = [item for item in expected_inventory if int(item["page"]) not in present]
+    if not missing:
+        return repaired
+
+    additions = []
+    for item in missing:
+        page_num = int(item["page"])
+        page_type = str(item["type"])
+        title = str(item["title"]).strip() or f"Page {page_num}"
+        additions.append(
+            f"#### Slide {page_num:02d} - {title}\n"
+            f"- **Page Type**: {page_type}\n"
+            f"- **Title**: {title}\n"
+            "- **Layout**: Follow the global design system and the manuscript content for this page."
+        )
+
+    patched_outline = outline.rstrip() + "\n\n" + "\n\n".join(additions)
+    start = repaired.find(outline)
+    if start < 0:
+        return repaired
+    suffix = repaired[start + len(outline):]
+    separator = "\n\n" if suffix and not suffix.startswith("\n") else ""
+    return repaired[:start] + patched_outline + separator + suffix
 
 
 def _align_content_outline_page_types(
@@ -512,7 +581,16 @@ async def create_design_spec(
             "\n## Hard Constraints",
             "- The template's color scheme, typography, and page structure MUST take precedence over any style defaults.",
             f"- Page contract: exactly {page_count} pages; page N in Section IX must match manuscript page N.",
+            "- For decks over 30 pages, keep Section IX concise but list every page exactly once; never stop before the final manuscript page.",
             "- Do not add, remove, or reorder cover, chapter/transition, content, or ending pages.",
+            "- Keep cover/chapter/ending pages distinct from content pages: cover pages may include title metadata and a modest context/accent treatment, while chapter/ending pages stay minimal dividers/closers.",
+            "- Do not assign paper figures, dense article-content blocks, multi-column evidence layouts, or detailed result sections to cover/chapter/ending pages.",
+            "- If a chapter/ending manuscript page contains extra body text, summarize it into at most one subtitle/key phrase in Section IX; do not create cards, KPI strips, question lists, mini-agendas, or `核心问题` / `本章看点` blocks on those pages.",
+            "- Keep every chapter page on the same divider layout; only chapter number, title, and optional subtitle/key phrase may change.",
+            "- Keep content pages as content pages: do not style them as chapter dividers or add oversized chapter/section counters.",
+            "- Put any page number in the footer only; do not create top-left administrative labels or mixed section/page counters.",
+            "- In Section IX, every page must include `Style Family:`, `Layout Family:`, and `Density:` fields. All chapter pages must share the same Style Family.",
+            "- In Section IX, separate footer page numbering from chapter index. Chapter labels use the planned chapter index, never the slide page number.",
             f"- The visible slide language must be `{language}`.",
             f"- {_language_constraint(language)}",
             "- Detail level `normal` should keep pages concise, `high` should allow moderately denser explanatory content, and `very_high` should accommodate richer explanations and fuller evidence coverage without becoming unreadable.",
@@ -522,11 +600,23 @@ async def create_design_spec(
         user_parts.extend([
             f"- Primary Color: {style_info['primary']}",
             f"- Accent Color: {style_info['accent']}",
-            f"- Typography: Sans-serif (Inter/Arial for body, bold for headings)",
+            "- Typography: use a CJK-compatible sans-serif stack by default: "
+            "`Source Han Sans SC`, `Noto Sans CJK SC`, `Noto Sans SC`, "
+            "`PingFang SC`, `Microsoft YaHei`, `Arial`, `sans-serif`; "
+            "use heavier weights for headings.",
             "\n## Hard Constraints",
             "- Respect the selected design style. Do not silently fall back to a default academic theme when another style is selected.",
             f"- Page contract: exactly {page_count} pages; page N in Section IX must match manuscript page N.",
+            "- For decks over 30 pages, keep Section IX concise but list every page exactly once; never stop before the final manuscript page.",
             "- Do not add, remove, or reorder cover, chapter/transition, content, or ending pages.",
+            "- Keep cover/chapter/ending pages distinct from content pages: cover pages may include title metadata and a modest context/accent treatment, while chapter/ending pages stay minimal dividers/closers.",
+            "- Do not assign paper figures, dense article-content blocks, multi-column evidence layouts, or detailed result sections to cover/chapter/ending pages.",
+            "- If a chapter/ending manuscript page contains extra body text, summarize it into at most one subtitle/key phrase in Section IX; do not create cards, KPI strips, question lists, mini-agendas, or `核心问题` / `本章看点` blocks on those pages.",
+            "- Keep every chapter page on the same divider layout; only chapter number, title, and optional subtitle/key phrase may change.",
+            "- Keep content pages as content pages: do not style them as chapter dividers or add oversized chapter/section counters.",
+            "- Put any page number in the footer only; do not create top-left administrative labels or mixed section/page counters.",
+            "- In Section IX, every page must include `Style Family:`, `Layout Family:`, and `Density:` fields. All chapter pages must share the same Style Family.",
+            "- In Section IX, separate footer page numbering from chapter index. Chapter labels use the planned chapter index, never the slide page number.",
             f"- The visible slide language must be `{language}`.",
             f"- {_language_constraint(language)}",
             "- Detail level `normal` should keep pages concise, `high` should allow moderately denser explanatory content, and `very_high` should accommodate richer explanations and fuller evidence coverage without becoming unreadable.",
@@ -672,6 +762,7 @@ async def create_design_spec(
             max_tokens=DESIGN_SPEC_MAX_TOKENS,
         )
         content = response.content.strip()
+        content = _repair_design_spec_page_contract(content, inventory)
         if enforce_page_types:
             content = _align_content_outline_page_types(content, inventory)
         error = _design_spec_validation_error(

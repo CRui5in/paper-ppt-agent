@@ -29,16 +29,19 @@ def is_deepseek_provider(llm: LLMProvider, model: str) -> bool:
 def deepseek_research_guidance(detail_level: str) -> str:
     if detail_level != "very_high":
         return (
-            "## Detail Level Guidelines\n\n"
+            "## DeepSeek Calibration\n\n"
             "Preserve concrete paper details in the final answer. Avoid collapsing method, "
             "evidence, or result slides into generic labels."
         )
     return (
-        "## Detail Level Guidelines\n\n"
+        "## DeepSeek Calibration\n\n"
         "For this `very_high` deck, keep the final manuscript analytically dense but still "
         "slide-ready:\n"
         "- For each substantive slide, include mechanism, evidence/data, and implication "
         "when the paper provides them.\n"
+        "- Structural pages are exempt from this density target: keep cover, "
+        "chapter/transition, and ending slides minimal, with no supporting "
+        "bullet lists, metric blocks, or evidence sections.\n"
         "- Method slides should name the actual modules, training/inference flow, "
         "objective functions, routing decisions, or architectural constraints instead "
         "of only high-level labels.\n"
@@ -60,8 +63,13 @@ def deepseek_strategy_guidance(detail_level: str) -> str:
         "## Detail Level Guidelines\n\n"
         "For `very_high`, the design spec must preserve the manuscript's analytical "
         "depth while keeping layouts readable:\n"
-        "- In section IX, each non-cover page must list the concrete content blocks to "
-        "render, not just a layout name.\n"
+        "- In section IX, each content page must list the concrete content blocks to "
+        "render, not just a layout name. Do not apply this content-block rule to "
+        "cover, chapter/transition, TOC, or ending pages.\n"
+        "- For cover pages, list title/meta elements plus only a modest context/accent "
+        "treatment. For chapter/ending pages, list only the title and at most one short "
+        "subtitle/key phrase. Do not create question lists, KPI rows, cards, or "
+        "`核心问题` / `本章看点` blocks for chapter/ending structural pages.\n"
         "- Preserve mechanism/evidence/implication from the manuscript. If a page has "
         "a method flow, result table, ablation, or limitation, the spec must say how "
         "that information appears visually.\n"
