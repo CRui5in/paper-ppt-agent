@@ -141,6 +141,15 @@ class GenerationRequest:
     research_config: ResearchConfig | None = None  # Optional external research enrichment
 
 
+def _effective_deep_research(request: GenerationRequest) -> bool:
+    """Use multi-pass planning when the requested deck needs stable structure."""
+    if request.enable_deep_research:
+        return True
+    if request.detail_level == "very_high":
+        return True
+    return request.generation_mode != "sequential"
+
+
 async def run_pipeline(
     request: GenerationRequest,
 ) -> AsyncIterator[ProgressEvent]:
@@ -184,6 +193,8 @@ async def run_pipeline(
     )
 
     try:
+        effective_deep_research = _effective_deep_research(request)
+
         # Stage 1: Parse paper
         yield ProgressEvent(
             "parsing",
@@ -226,8 +237,13 @@ async def run_pipeline(
             "research",
             "started",
             "Deep reading: analyzing paper content..."
-            if request.enable_deep_research
+            if effective_deep_research
             else "Analyzing paper content...",
+            data={
+                "effective_deep_research": effective_deep_research,
+                "auto_deep_research": effective_deep_research
+                and not request.enable_deep_research,
+            },
         )
 
         # Optional Stage 2a: external enrichment runs BEFORE Pass 1 so the
@@ -268,7 +284,10 @@ async def run_pipeline(
                 data={"enrichment": stats.to_dict()},
             )
 
-        yield ProgressEvent("research", "progress", "Pass 1/4 — Deep reading", 0.13)
+        if effective_deep_research:
+            yield ProgressEvent("research", "progress", "Pass 1/4 — Deep reading", 0.13)
+        else:
+            yield ProgressEvent("research", "progress", "Generating manuscript", 0.13)
 
         # Collect progress events from research_agent via queue for real-time yielding
         _research_progress_queue: asyncio.Queue[ProgressEvent | None] = asyncio.Queue()
@@ -289,7 +308,7 @@ async def run_pipeline(
                     language=request.language,
                     detail_level=request.detail_level,
                     research_context=research_ctx,
-                    enable_deep_research=request.enable_deep_research,
+                    enable_deep_research=effective_deep_research,
                     debug_dir=project_dir / "debug",
                     on_progress=_on_research_progress,
                 )
@@ -324,7 +343,7 @@ async def run_pipeline(
             "research",
             "complete",
             "Deep analysis complete (4-pass)"
-            if request.enable_deep_research
+            if effective_deep_research
             else "Paper analysis complete",
             0.30,
         )

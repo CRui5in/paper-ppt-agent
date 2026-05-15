@@ -1,13 +1,27 @@
 from __future__ import annotations
 
+import pytest
+
+from backend.llm import LLMResponse
 from backend.orchestrator.research_agent import (
     _extract_manuscript_from_review,
     _figure_token_inventory_block,
     _manuscript_structure_error,
     _manuscript_figure_token_error,
+    _run_single_pass_analysis,
     _target_slides_guidance,
 )
 from backend.parser.paper_model import PaperFigure, PaperSection, ParsedPaper
+
+
+class _FakeResearchLLM:
+    def __init__(self, response: str) -> None:
+        self.response = response
+        self.calls = 0
+
+    async def chat(self, *args, **kwargs) -> LLMResponse:
+        self.calls += 1
+        return LLMResponse(content=self.response)
 
 
 def test_extract_review_pass_keeps_original_manuscript_when_report_is_prepended():
@@ -138,6 +152,44 @@ def test_manuscript_structure_rejects_content_blocks_on_chapter_page():
     assert "bullet or numbered-list content" in error or "核心问题" in error
 
 
+def test_manuscript_structure_rejects_trailing_orphan_chapter():
+    parts = ["<!-- page_type: cover -->\n# Title"]
+    for chapter in range(1, 4):
+        parts.append(f"<!-- page_type: chapter -->\n# Chapter {chapter}")
+        for slide in range(1, 5):
+            parts.append(
+                f"<!-- page_type: content -->\n## {chapter}.{slide} Content\n\n- point"
+            )
+    parts.append("<!-- page_type: chapter -->\n# Chapter 4")
+    parts.append("<!-- page_type: ending -->\n# 谢谢聆听\n\nQ&A")
+
+    error = _manuscript_structure_error("\n\n---\n\n".join(parts), None)
+
+    assert error is not None
+    assert "chapter slide" in error
+    assert "introduces only 0" in error
+
+
+@pytest.mark.asyncio
+async def test_single_pass_invalid_manuscript_continues_after_retries():
+    parts = ["<!-- page_type: cover -->\n# Title"]
+    for chapter in range(1, 4):
+        parts.append(f"<!-- page_type: chapter -->\n# Chapter {chapter}")
+        for slide in range(1, 5):
+            parts.append(
+                f"<!-- page_type: content -->\n## {chapter}.{slide} Content\n\n- point"
+            )
+    parts.append("<!-- page_type: chapter -->\n# Chapter 4")
+    parts.append("<!-- page_type: ending -->\n# 谢谢聆听\n\nQ&A")
+    llm = _FakeResearchLLM("\n\n---\n\n".join(parts))
+    paper = ParsedPaper(title="Paper", abstract="Abstract")
+
+    manuscript = await _run_single_pass_analysis(paper, llm, "fake-model")
+
+    assert "Chapter 4" in manuscript
+    assert llm.calls == 3
+
+
 def test_manuscript_structure_rejects_bulleted_cover_page():
     parts = [
         "<!-- page_type: cover -->\n"
@@ -166,7 +218,7 @@ def test_target_slide_guidance_expands_for_very_high_detail():
     guidance = _target_slides_guidance(None, "very_high")
 
     assert "Choose 22-34 slides" in guidance
-    assert "chapter/transition 3-5" in guidance
+    assert "Do not force a fixed chapter count" in guidance
 
 
 def test_figure_token_inventory_lists_exact_valid_tokens(tmp_path):

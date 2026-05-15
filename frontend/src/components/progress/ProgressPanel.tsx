@@ -41,13 +41,16 @@ export function ProgressPanel({ job, connectionStatus, enrichmentStats, slideCou
   const { t, locale } = useLocale();
   const isConnected = connectionStatus === "connected";
   const isConnecting = connectionStatus === "connecting";
+  const jobStatus = job?.status ?? "idle";
+  const isActiveRun = Boolean(job && !["idle", "complete", "error", "cancelled"].includes(jobStatus));
+  const showConnectionRecovery = isActiveRun && !isConnected;
   const activeStatus = inferActiveStage(job, logs);
   const slidesMetric = slideMetric(job, slideCount);
   const activeStageIndex =
     activeStatus && STAGE_INDEX.has(activeStatus) ? STAGE_INDEX.get(activeStatus)! : -1;
-  const allComplete = job?.status === "complete";
-  const isStopped = job?.status === "error" || job?.status === "cancelled";
-  const statusLabel = translateStageStatus(job?.status ?? "idle", locale, "progress");
+  const allComplete = jobStatus === "complete";
+  const isStopped = jobStatus === "error" || jobStatus === "cancelled";
+  const statusLabel = translateStageStatus(jobStatus, locale, "progress");
   const activeMessage = translateJobMessage(job?.message, locale);
   const showEnrichment = !!enrichmentStats && (
     !!enrichmentStats.arxiv ||
@@ -76,6 +79,12 @@ export function ProgressPanel({ job, connectionStatus, enrichmentStats, slideCou
             </HoverTooltip>
           </div>
         </div>
+        {showConnectionRecovery ? (
+          <div className="monitor-connection-recovery">
+            <Loader2 size={13} className="spin" />
+            <span>{isConnecting ? t("progress.reconnecting") : t("progress.connectionPaused")}</span>
+          </div>
+        ) : null}
         <ol className="compact-stage-list">
           {PROGRESS_STAGES.map((stage, index) => {
             const Icon = stage.icon;
@@ -143,6 +152,12 @@ export function ProgressPanel({ job, connectionStatus, enrichmentStats, slideCou
       <div className="progress-bar">
         <div className="progress-fill" style={{ width: `${(job?.progress ?? 0) * 100}%` }} />
       </div>
+      {showConnectionRecovery ? (
+        <div className="monitor-connection-recovery">
+          <Loader2 size={13} className="spin" />
+          <span>{isConnecting ? t("progress.reconnecting") : t("progress.connectionPaused")}</span>
+        </div>
+      ) : null}
 
       <ul className="stage-list">
         {PROGRESS_STAGES.map((stage, index) => {

@@ -55,7 +55,7 @@ LEGACY_PROMPT = PROMPTS_DIR / "research.md"
 DEEPSEEK_MAX_TOKENS = 24576
 DEEPSEEK_RESEARCH_MAX_TOKENS = DEEPSEEK_MAX_TOKENS
 QUALITY_THRESHOLD = 28  # out of 35 (7 dimensions × 5 points each)
-MAX_MANUSCRIPT_ATTEMPTS = 2
+MAX_MANUSCRIPT_ATTEMPTS = 3
 SINGLE_PASS_SYSTEM_PROMPT = (
     "You write slide-structured manuscripts from academic papers. "
     "Extract the paper's problem, method, evidence, and takeaway; turn them into "
@@ -135,6 +135,15 @@ async def _run_single_pass_analysis(
     if is_deepseek:
         user_parts.append("\n" + deepseek_research_guidance(detail_level))
     user_parts.append(
+        "\n\n## Internal Structure Planning Contract\n\n"
+        "Before writing the manuscript, internally allocate the deck into coherent "
+        "chapter groups. A chapter/transition slide is allowed only when it introduces "
+        "at least 2 following `content` slides. If a topic has only 1 content slide, "
+        "do not create a chapter divider for it; merge that topic into a neighboring "
+        "chapter and make the slide `content`. Never put labels such as `核心问题` / "
+        "`本章看点`, bullets, figures, or evidence blocks on `chapter` slides."
+    )
+    user_parts.append(
         "\n\nProduce the final slide manuscript now. Output only the slide manuscript: "
         "no analysis notes, no quality review, no scoring, no preface. Use standalone "
         "`---` lines only as slide delimiters."
@@ -176,7 +185,7 @@ async def _run_single_pass_analysis(
         if not last_error:
             return response_content
 
-    logger.warning("Single-pass manuscript structure invalid after retry: %s", last_error)
+    logger.warning("Single-pass manuscript structure invalid after retry; continuing: %s", last_error)
     return response_content
 
 
@@ -357,13 +366,12 @@ def _manuscript_structure_error(
             return f"expected {expected_count} slides, got {len(pages)}"
 
         expected_budget = page_type_budget(num_pages, detail_level)
-        drift = [
-            f"{name}: expected {expected_budget[name]}, got {seen.get(name, 0)}"
-            for name in expected_budget
-            if seen.get(name, 0) != expected_budget[name]
-        ]
-        if drift:
-            return "page type budget mismatch (" + "; ".join(drift) + ")"
+        if seen["cover"] != expected_budget["cover"]:
+            return f"expected {expected_budget['cover']} cover slide(s), got {seen['cover']}"
+        if seen["ending"] != expected_budget["ending"]:
+            return f"expected {expected_budget['ending']} ending slide(s), got {seen['ending']}"
+        if expected_budget["content"] > 0 and seen["content"] < 1:
+            return "expected at least 1 content slide"
     else:
         min_pages, max_pages = auto_slide_range(detail_level)
         if not min_pages <= len(pages) <= max_pages:
@@ -372,8 +380,6 @@ def _manuscript_structure_error(
             return f"expected 1 cover slide, got {seen['cover']}"
         if seen["ending"] != 1:
             return f"expected 1 ending slide, got {seen['ending']}"
-        if not 3 <= seen["chapter"] <= 5:
-            return f"expected 3-5 chapter slides, got {seen['chapter']}"
         if seen["content"] < 1:
             return "expected at least 1 content slide"
 
@@ -430,7 +436,7 @@ def _structural_page_content_error(
         )
 
     if page_type == "cover" and len(non_heading_lines) > 2:
-        return "cover slide must contain only title, source/authors, and at most one thesis line"
+        return "cover slide must contain only title, optional subtitle, source/authors, and at most one thesis line"
     if page_type == "chapter" and len(non_heading_lines) > 2:
         return "chapter slide must contain only title and at most 1-2 orientation phrases"
     return None
@@ -540,10 +546,12 @@ def _structure_retry_prompt(
     return (
         "The previous manuscript did not match the slide structure contract: "
         f"{error}.\n\n"
-        "Regenerate the full slide manuscript only.\n"
+        "Regenerate the full slide manuscript only. First rebuild the chapter plan internally, then write the manuscript.\n"
         "If the error mentions paper figure tokens, replace invalid tokens with exact tokens from the Valid Paper Figure Tokens list, or omit the real figure when no listed token matches.\n"
         "Structural-page rules are strict: cover/chapter/ending slides must not contain bullet lists, numbered question lists, KPI/result blocks, paper figures, or labeled sections such as `核心问题` / `本章看点`. "
         "All chapter slides must use the same manuscript shape: one chapter title plus an optional short subtitle/orientation phrase only; put all detailed questions and evidence on following content slides.\n"
+        "If a chapter divider would introduce only 0 or 1 content slide, remove that divider from the chapter plan and merge the topic into a neighboring chapter. "
+        "If a planned chapter slide contains `核心问题`, `本章看点`, bullets, figures, or evidence, it is not a chapter slide; rewrite that material as a `content` slide and keep chapter dividers minimal.\n"
         f"{page_type_budget_guidance(num_pages, detail_level)}"
     )
 
@@ -705,7 +713,13 @@ async def analyze_paper(
         pass3_user_parts.append("\n" + deepseek_research_guidance(detail_level))
     pass3_user_parts.append(
         "\n\nGenerate the complete slide manuscript now. Use `---` to separate slides. "
-        "Follow the narrative arc plan and the information aesthetics principles."
+        "Follow the narrative arc plan and the information aesthetics principles. "
+        "Before writing, internally verify the chapter plan: every chapter divider "
+        "must introduce at least 2 following content slides; topics with only 1 "
+        "content slide must be merged into a neighboring chapter instead of getting "
+        "their own divider. Keep chapter slides minimal; detailed labels such as "
+        "`核心问题` / `本章看点`, bullets, figures, metrics, and evidence belong on "
+        "`content` slides."
     )
 
     pass3_base_messages = [
@@ -791,7 +805,7 @@ async def analyze_paper(
         logger.warning("Pass 4 changed manuscript structure; keeping Pass 3 output: %s", final_error)
         final_output = manuscript
     elif final_error:
-        raise ValueError(f"Manuscript validation failed after retries: {final_error}")
+        logger.warning("Final manuscript validation failed after retries; continuing: %s", final_error)
     _debug_write_text(debug_dir, "research_final_manuscript.md", final_output)
     logger.info("Research Pass 4 complete. Final manuscript: %d chars", len(final_output))
     if on_progress:

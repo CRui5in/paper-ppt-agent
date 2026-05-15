@@ -73,6 +73,14 @@ Every presentation needs:
 
 ### 2.3 Assign Content to Each Slide
 
+Before listing slides, internally group the deck into chapters. A `chapter` /
+transition slide is valid only when it introduces at least **two** following
+`content` slides. If a topic would have only one content slide, merge it into a
+neighboring chapter and mark that topic slide as `content` instead of creating a
+standalone divider. Chapter slides must stay minimal; bullets, figures, metrics,
+evidence, and labeled blocks such as `核心问题` / `本章看点` belong on `content`
+slides.
+
 For each slide, specify:
 - **Page type**: cover, chapter/transition, content, or ending. These are counted slides.
 - **Core insight**: The one thing the audience must remember from this slide.
@@ -142,7 +150,7 @@ For `cover`, `chapter/transition`, and `ending` slides, the Structural Page Boun
 
 ### 3.6 Structural Page Boundaries
 
-- `cover` is only a title slide: title, authors/source, and at most one short thesis line. It must not contain research-background bullet lists, contribution lists, metric/KPI blocks, charts, or paper figures.
+- `cover` is only a title slide: title, optional subtitle, authors/source, and at most one short thesis line. It must not contain research-background bullet lists, contribution lists, metric/KPI blocks, charts, or paper figures.
 - `chapter/transition` is only a divider: chapter title, optional short subtitle, and at most 1-2 brief orientation phrases. It must not contain detailed metrics, evidence bullets, numbered question lists, charts, diagrams, paper figures, or labeled content blocks such as `核心问题` / `本章看点`.
 - All `chapter/transition` slides must keep the same manuscript shape and visual intent across the deck: same title/subtitle pattern, no ad-hoc cards, no per-chapter mini-outline grids. Put detailed questions and preview bullets on the following `content` slides.
 - A chapter divider should normally introduce at least 2 following `content` slides. If a topic would have only 1 content slide, merge it into a neighboring chapter instead of creating a standalone divider.

@@ -24,6 +24,11 @@ from backend.config import settings
 from backend.generator.svg_critic import CriticConfig, CriticReport, Violation, check_svg
 from backend.generator.visual_critic import VisualCriticConfig, visual_check
 from backend.llm import LLMMessage, LLMProvider, LLMResponse
+from backend.orchestrator.deck_plan import (
+    build_deck_plan,
+    deck_plan_markdown,
+    slide_plan_markdown,
+)
 from backend.orchestrator.manuscript import (
     extract_page_type,
     split_manuscript_pages,
@@ -570,37 +575,115 @@ def _char_budget_block(manuscript_page: str) -> str:
 
 
 def _figure_layout_guidance(used_figures: list[dict]) -> str:
-    """For each paper figure, recommend layout based on its aspect ratio."""
+    """For each paper figure, recommend layout based on its aspect ratio.
+
+    When multiple images share a page, compute a height budget so the total
+    stays within the content area.
+    """
     if not used_figures:
         return ""
+    ca_y = _DEFAULT_CONTENT_AREA["y"]
     ca_w = _DEFAULT_CONTENT_AREA["width"]
     ca_h = _DEFAULT_CONTENT_AREA["height"]
+    ca_bottom = ca_y + ca_h
+
     lines = ["## Image Layout Recommendations"]
+
+    # Collect image metadata
+    fig_meta: list[dict] = []
     for fig in used_figures:
         path = fig.get("path") or ""
+        meta: dict = {"stem": Path(path).stem if path else "unknown"}
         try:
             img_path = Path(path)
             if img_path.exists():
                 with Image.open(img_path) as img:
                     w, h = img.size
-                    r = w / h
-                    if r > 1.2:
-                        layout = "top-bottom"
-                        img_w, img_h = ca_w, int(ca_w / r)
-                        txt_area = f"{ca_w}x{ca_h - img_h - 20}"
-                    else:
-                        layout = "left-right"
-                        img_h, img_w = ca_h, int(ca_h * r)
-                        txt_area = f"{ca_w - img_w - 20}x{ca_h}"
-                    lines.append(
-                        f"- {Path(path).stem}: ratio={r:.2f}, "
-                        f"recommended={layout}, "
-                        f"image={img_w}x{img_h}, text_area={txt_area}"
-                    )
-                    continue
+                    meta["w"], meta["h"], meta["ratio"] = w, h, w / h
         except Exception:
             pass
-        lines.append(f"- {Path(path).stem}: unable to read dimensions")
+        fig_meta.append(meta)
+
+    # Single image: original logic, capped to content area
+    if len(fig_meta) == 1:
+        m = fig_meta[0]
+        r = m.get("ratio")
+        if r is not None:
+            img_h_at_full_w = int(ca_w / r)
+            if r > 1.2 and img_h_at_full_w <= ca_h:
+                # Top-bottom: image fits at full width
+                img_w, img_h = ca_w, img_h_at_full_w
+                txt_h = ca_h - img_h - 20
+                lines.append(
+                    f"- {m['stem']}: ratio={r:.2f}, "
+                    f"recommended=top-bottom, "
+                    f"image={img_w}x{img_h}, text_area={ca_w}x{txt_h}"
+                )
+            else:
+                # Left-right: either ratio <= 1.2, or image too tall at full width
+                img_h, img_w = ca_h, int(ca_h * r)
+                txt_w = ca_w - img_w - 20
+                # If text area too narrow (<280px), cap image to 70% height
+                if txt_w < 280:
+                    img_h = int(ca_h * 0.7)
+                    img_w = int(img_h * r)
+                    txt_w = ca_w - img_w - 20
+                if r > 1.2:
+                    lines.append(
+                        f"- {m['stem']}: ratio={r:.2f}, "
+                        f"recommended=left-right (image too tall for top-bottom), "
+                        f"image={img_w}x{img_h}, text_area={txt_w}x{ca_h}"
+                    )
+                else:
+                    lines.append(
+                        f"- {m['stem']}: ratio={r:.2f}, "
+                        f"recommended=left-right, "
+                        f"image={img_w}x{img_h}, text_area={txt_w}x{ca_h}"
+                    )
+        else:
+            lines.append(f"- {m['stem']}: unable to read dimensions")
+
+    # Multiple images: compute shared height budget
+    else:
+        n = len(fig_meta)
+        text_reserve = 150
+        available = ca_h - text_reserve - 20 * n
+        per_img_max = max(80, available // n) if n > 0 else ca_h
+
+        lines.append(
+            f"Multi-image page ({n} images): "
+            f"each image max {per_img_max}px height, "
+            f"content area bottom = y{ca_bottom}. "
+            f"After images, reserve at least {text_reserve}px for text."
+        )
+
+        running_y = ca_y
+        for m in fig_meta:
+            r = m.get("ratio")
+            if r is not None:
+                if r > 1.2:
+                    img_w = ca_w
+                    img_h = min(int(ca_w / r), per_img_max)
+                else:
+                    img_h = min(ca_h, per_img_max)
+                    img_w = int(img_h * r)
+                lines.append(
+                    f"- {m['stem']}: ratio={r:.2f}, "
+                    f"image={img_w}x{img_h}, "
+                    f"y_start={running_y}, y_end={running_y + img_h}"
+                )
+                running_y += img_h + 20
+            else:
+                lines.append(f"- {m['stem']}: unable to read dimensions")
+                running_y += per_img_max + 20
+
+        remaining = ca_bottom - running_y
+        lines.append(
+            f"Text starts at y={running_y}, "
+            f"max height={remaining}px, "
+            f"must not exceed y={ca_bottom}"
+        )
+
     return "\n".join(lines)
 
 
@@ -990,6 +1073,16 @@ async def generate_svg_pages(
 
     pages = split_manuscript_pages(manuscript)
     template_vars = _template_vars_by_page(pages)
+    deck_plan = build_deck_plan(
+        manuscript,
+        design_spec,
+        detail_level=detail_level,
+    )
+    deck_plan_block = deck_plan_markdown(deck_plan)
+    try:
+        (project_dir / "deck_plan.md").write_text(deck_plan_block, encoding="utf-8")
+    except OSError:
+        pass
     svg_output_dir = project_dir / "svg_output"
     svg_output_dir.mkdir(parents=True, exist_ok=True)
     repair_archive_dir = project_dir / "svg_archive" / "repair"
@@ -1011,6 +1104,7 @@ async def generate_svg_pages(
         LLMMessage.system(system_prompt),
         LLMMessage.user(
             f"## Design Specification\n\n{design_spec}\n\n"
+            f"## Structured Deck Plan (authoritative)\n\n{deck_plan_block}\n\n"
             f"## SVG Technical Standards\n\n{standards}\n\n"
             f"## Fixed Runtime Configuration\n\n"
             f"- Selected style preset: {style}\n"
@@ -1128,14 +1222,18 @@ async def generate_svg_pages(
                 )
                 skeleton_block = (
                     f"\n\n## Template Skeleton ({page_type} page)\n"
-                    f"Use this SVG as your starting point. Replace {{{{PLACEHOLDER}}}} tokens "
-                    f"with actual content below. Preserve ALL decorative elements, gradients, "
-                    f"and structural chrome. Do NOT rewrite from scratch.\n\n"
+                    f"Use this SVG as your already data-bound starting point. If any "
+                    f"placeholder token remains, replace it with the current slide plan value. "
+                    f"Preserve ALL decorative elements, gradients, and structural chrome. "
+                    f"Do NOT rewrite from scratch. Do NOT recompute chapter/section numbers "
+                    f"from the page number.\n\n"
                     f"```svg\n{skeleton_svg}\n```"
                 )
 
+        slide_plan_block = slide_plan_markdown(deck_plan, page_num)
         conversation.append(
             LLMMessage.user(
+                f"## Current Structured Slide Plan\n\n{slide_plan_block}\n\n"
                 f"## Page {page_num}/{len(pages)}: {page_name}\n\n"
                 f"{rewritten_content}\n\n"
                 f"## Runtime Reminders\n"
@@ -1455,6 +1553,103 @@ def _clean_structural_phrase(text: str) -> str:
     return phrase
 
 
+def _structural_visible_phrases(page_content: str) -> list[str]:
+    visible = strip_page_type_metadata(page_content).strip()
+    phrases: list[str] = []
+    for line in visible.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("<!--"):
+            continue
+        heading = re.match(r"^#{1,6}\s+(.+?)\s*$", stripped)
+        candidate = heading.group(1) if heading else stripped
+        if STRUCTURAL_LIST_LINE_RE.match(stripped) or "[[FIG:" in stripped:
+            continue
+        cleaned = _clean_structural_phrase(candidate)
+        if cleaned:
+            phrases.append(cleaned)
+    return phrases
+
+
+def _looks_like_publication_source(text: str) -> bool:
+    lower = text.lower()
+    if re.search(r"\b(?:19|20)\d{2}\b", text) and re.search(r"\b(?:conference|journal|workshop|symposium|proceedings)\b", lower):
+        return True
+    source_tokens = (
+        "acm",
+        "ieee",
+        "cvpr",
+        "iccv",
+        "eccv",
+        "neurips",
+        "nips",
+        "iclr",
+        "icml",
+        "aaai",
+        "ijcai",
+        "acl",
+        "emnlp",
+        "naacl",
+        "siggraph",
+        "kdd",
+        "www",
+        "chi",
+        "uist",
+        "arxiv",
+        "journal",
+        "conference",
+        "transactions",
+        "proceedings",
+        "letters",
+    )
+    return any(token in lower for token in source_tokens)
+
+
+def _looks_like_author_line(text: str) -> bool:
+    lower = text.lower()
+    if any(token in lower for token in ("author", "anonymous", "anon.", "et al", "presenter", "speaker", "作者")):
+        return True
+    if "," in text or ";" in text or "，" in text or "、" in text or "等" in text or " and " in lower or " & " in text:
+        return True
+    return bool(re.search(r"\b[A-Z][A-Za-z.-]+(?:\s+[A-Z][A-Za-z.-]+){1,}\b", text))
+
+
+def _looks_like_date_line(text: str) -> bool:
+    return bool(re.fullmatch(r".*(?:19|20)\d{2}(?:[-/.年]\d{1,2}(?:[-/.月]\d{1,2}日?)?)?.*", text.strip()))
+
+
+def _extract_cover_metadata(page_content: str, title: str, subtitle: str) -> dict[str, str]:
+    phrases = _structural_visible_phrases(page_content)
+    source = subtitle if subtitle and _looks_like_publication_source(subtitle) else ""
+    author = ""
+    date = ""
+
+    for phrase in phrases[1:]:
+        if phrase in {title, subtitle}:
+            continue
+        if not date and _looks_like_date_line(phrase) and not _looks_like_publication_source(phrase):
+            date = phrase
+            continue
+        if not source and _looks_like_publication_source(phrase):
+            source = phrase
+            continue
+        if not author and _looks_like_author_line(phrase):
+            author = phrase
+
+    brand_label = source
+    return {
+        "AUTHOR": author,
+        "AUTHORS": author,
+        "PRESENTER": author,
+        "SOURCE": source,
+        "JOURNAL": source,
+        "VENUE": source,
+        "CONFERENCE": source,
+        "DATE": date,
+        "BRAND_LABEL": brand_label,
+        "COVER_QUOTE": "",
+    }
+
+
 def _minimal_structural_page_content(page_content: str, page_type: str) -> str:
     """Reduce structural manuscript pages to the text they are allowed to render."""
     visible = strip_page_type_metadata(page_content).strip()
@@ -1489,6 +1684,14 @@ def _minimal_structural_page_content(page_content: str, page_type: str) -> str:
     lines = [f"# {title or 'Untitled'}"]
     if subtitle and subtitle != title:
         lines.append(f"## {subtitle}")
+    if page_type == "cover":
+        cover_meta = _extract_cover_metadata(page_content, title, subtitle)
+        source = cover_meta.get("SOURCE", "")
+        author = cover_meta.get("AUTHOR", "")
+        if source and source not in {title, subtitle}:
+            lines.append(f"### {source}")
+        if author and author not in {title, subtitle, source}:
+            lines.append(f"### {author}")
     return "\n\n".join(lines)
 
 
@@ -1503,10 +1706,27 @@ def _sanitize_structural_page_design_block(
     if not first_line.startswith("#"):
         first_line = f"#### Structural {page_type.title()} Page"
 
-    title_match = re.search(r"(?im)^\s*-\s*\*\*Title\*\*\s*:\s*(.+?)\s*$", block)
-    title_line = ""
-    if title_match:
-        title_line = f"\n- **Title**: {title_match.group(1).strip()}"
+    preserved: list[str] = []
+    forbidden = re.compile(
+        r"(?i)(\[\[FIG:|paper figure|chart|table|metric|kpi|核心问题|本章看点|"
+        r"question list|mini-agenda|agenda grid|evidence|bullet grid)"
+    )
+    allowed_label = re.compile(
+        r"(?i)^\s*[-*]\s*(?:\*\*)?"
+        r"(page type|type|title|subtitle|layout|layout family|style family|"
+        r"visual family|visual treatment|background|composition|typography|"
+        r"color|palette|accent|motif|chrome|footer|spacing|template)"
+        r"(?:\*\*)?\s*[:：]"
+    )
+    for raw_line in block.splitlines()[1:]:
+        line = raw_line.rstrip()
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if forbidden.search(stripped):
+            continue
+        if allowed_label.search(stripped):
+            preserved.append(line)
 
     layout = (
         "Consistent minimal chapter divider; same layout across all chapter pages; "
@@ -1514,15 +1734,23 @@ def _sanitize_structural_page_design_block(
         if page_type == "chapter"
         else f"Minimal structural {page_type} page; title plus optional short subtitle/key phrase only."
     )
-    return (
-        f"{first_line}\n\n"
-        f"- **Page Type**: {page_type}\n"
-        f"- **Layout**: {layout}"
-        f"{title_line}\n"
-        "- **Content Elements**: title and at most one short subtitle/key phrase. "
-        "No cards, KPI strips, question lists, mini-agendas, paper figures, charts, "
-        "or labeled blocks such as `核心问题` / `本章看点`."
+    lines = [
+        first_line,
+        "",
+        f"- **Page Type**: {page_type}",
+        f"- **Structural Role**: {layout}",
+    ]
+    if preserved:
+        lines.extend(["", "### Preserved Planner Style Fields", *preserved])
+    lines.extend(
+        [
+            "",
+            "- **Content Boundary**: title and at most one short subtitle/key phrase. "
+            "No cards, KPI strips, question lists, mini-agendas, paper figures, charts, "
+            "or labeled blocks such as `核心问题` / `本章看点`.",
+        ]
     )
+    return "\n".join(lines)
 
 
 def _template_vars_by_page(pages: list[str]) -> dict[int, dict[str, str]]:
@@ -1541,7 +1769,7 @@ def _template_vars_by_page(pages: list[str]) -> dict[int, dict[str, str]]:
                 "desc": subtitle,
             }
 
-        result[page_num] = {
+        variables = {
             "PAGE_NUM": str(page_num),
             "PAGE_NUM_PADDED": f"{page_num:02d}",
             "TOTAL_PAGES": str(len(pages)),
@@ -1555,7 +1783,20 @@ def _template_vars_by_page(pages: list[str]) -> dict[int, dict[str, str]]:
             "CHAPTER_TITLE": current_chapter["title"],
             "CHAPTER_DESC": current_chapter["desc"],
             "CHAPTER_SUBTITLE": current_chapter["desc"],
+            "AUTHOR": "",
+            "AUTHORS": "",
+            "PRESENTER": "",
+            "SOURCE": "",
+            "JOURNAL": "",
+            "VENUE": "",
+            "CONFERENCE": "",
+            "DATE": "",
+            "BRAND_LABEL": "",
+            "COVER_QUOTE": "",
         }
+        if page_type == "cover":
+            variables.update(_extract_cover_metadata(page, title, subtitle))
+        result[page_num] = variables
     return result
 
 
@@ -1605,6 +1846,7 @@ def _build_parallel_context_document(
     language: str,
     detail_level: str,
     mode: str,
+    deck_plan_block: str = "",
 ) -> str:
     page_blocks = []
     for idx, _page in enumerate(pages, 1):
@@ -1627,6 +1869,8 @@ def _build_parallel_context_document(
         f"{_parallel_global_design_context(design_spec)}\n\n"
         "## Page Inventory\n\n"
         f"{_parallel_page_inventory(pages)}\n\n"
+        "## Structured Deck Plan\n\n"
+        f"{deck_plan_block}\n\n"
         "## Page Contracts\n\n"
         + "\n\n---\n\n".join(page_blocks)
     )
@@ -1749,6 +1993,7 @@ def _prepare_parallel_page_inputs(
     figure_inventory: list[dict] | None,
     claimed_paper_figures: set[str],
     template_vars: dict[str, str] | None = None,
+    slide_plan: str = "",
 ) -> dict:
     page_name = _make_page_name(page_num, page_content)
     page_type = _classify_page_type(page_content)
@@ -1822,6 +2067,7 @@ def _prepare_parallel_page_inputs(
         "figure_source": figure_source,
         "page_design_block": page_design_block,
         "template_vars": template_vars or {},
+        "slide_plan": slide_plan,
     }
 
 
@@ -1857,6 +2103,7 @@ async def _generate_parallel_page(
     figure_source = str(page_input["figure_source"])
     page_design_block = str(page_input["page_design_block"] or "")
     template_vars = dict(page_input.get("template_vars") or {})
+    slide_plan = str(page_input.get("slide_plan") or "").strip()
     previous_layout_style = str(page_input.get("previous_layout_style") or "").strip()
     is_structural_page = bool(page_input["is_structural_page"])
 
@@ -1898,12 +2145,19 @@ async def _generate_parallel_page(
             )
             skeleton_block = (
                 f"\n\n## Template Skeleton ({page_type} page)\n"
-                f"Use this SVG as your starting point. Replace {{{{PLACEHOLDER}}}} tokens "
-                f"with actual content below. Preserve ALL decorative elements, gradients, "
-                f"and structural chrome. Do NOT rewrite from scratch.\n\n"
+                f"Use this SVG as your already data-bound starting point. If any "
+                f"placeholder token remains, replace it with the current slide plan value. "
+                f"Preserve ALL decorative elements, gradients, and structural chrome. "
+                f"Do NOT rewrite from scratch. Do NOT recompute chapter/section numbers "
+                f"from the page number.\n\n"
                 f"```svg\n{skeleton_svg}\n```"
             )
 
+    slide_plan_section = (
+        f"\n\n## Current Structured Slide Plan\n\n{slide_plan}"
+        if slide_plan
+        else ""
+    )
     page_design_section = (
         f"\n\n## Page Design Contract\n\n{page_design_block}"
         if page_design_block
@@ -1932,6 +2186,7 @@ async def _generate_parallel_page(
             f"- All visible SVG text must follow the selected language unless a proper noun must stay in its original form.\n"
             f"- Use the Typography System from the global design contract as the single source of truth for fonts and size hierarchy."
             f"{extra_block}"
+            f"{slide_plan_section}"
             f"{page_design_section}\n\n"
             f"{previous_layout_section}\n\n"
             f"## Page {page_num}/{total_pages}: {page_name}\n\n"
@@ -1949,6 +2204,12 @@ async def _generate_parallel_page(
             f"{figure_guidance}\n\n"
             f"{icon_guidance}\n\n"
             f"{img_layout}\n\n"
+            f"## Pre-Generation Boundary Check\n"
+            f"Before writing SVG, mentally plan y-coordinates top to bottom:\n"
+            f"- Content area: y=100 to y=620 (520px). This is a hard limit.\n"
+            f"- Track cumulative height as you place each element.\n"
+            f"- If total exceeds 520px: shrink images, reduce font size, or cut content.\n"
+            f"- Footer (y=660+) is reserved for page number only -- no content there.\n\n"
             f"Generate the complete SVG code for this page. "
             f"Output ONLY the SVG code, wrapped in ```svg code block."
             f"{skeleton_block}"
@@ -2252,7 +2513,18 @@ async def generate_svg_pages_parallel(
 
     pages = split_manuscript_pages(manuscript)
     template_vars = _template_vars_by_page(pages)
+    deck_plan = build_deck_plan(
+        manuscript,
+        design_spec,
+        detail_level=detail_level,
+    )
+    deck_plan_block = deck_plan_markdown(deck_plan)
+    try:
+        (project_dir / "deck_plan.md").write_text(deck_plan_block, encoding="utf-8")
+    except OSError:
+        pass
     base_context = _parallel_global_design_context(design_spec)
+    base_context = f"{base_context}\n\n## Structured Deck Plan (authoritative)\n\n{deck_plan_block}"
     if template_context:
         base_context = f"{base_context}\n\n## Template Reference\n\n{template_context}"
     if is_deepseek_provider(llm, model):
@@ -2267,6 +2539,7 @@ async def generate_svg_pages_parallel(
                 language=language,
                 detail_level=detail_level,
                 mode=mode,
+                deck_plan_block=deck_plan_block,
             ),
             encoding="utf-8",
         )
@@ -2288,6 +2561,7 @@ async def generate_svg_pages_parallel(
                 figure_inventory=figure_inventory,
                 claimed_paper_figures=claimed_paper_figures,
                 template_vars=template_vars.get(page_num),
+                slide_plan=slide_plan_markdown(deck_plan, page_num),
             )
         )
 

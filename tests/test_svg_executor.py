@@ -105,6 +105,57 @@ def test_template_skeleton_placeholders_use_chapter_index_not_page_number() -> N
     assert "04" not in resolved
 
 
+def test_structural_design_sanitizer_preserves_planner_style_fields() -> None:
+    block = """
+#### Slide 02 - Chapter
+- **Page Type**: chapter
+- **Layout**: dark radial divider with centered title and thin gold accent
+- **Style Family**: structural.chapter-divider
+- **Typography**: large title, small subtitle
+- **Content Elements**: 核心问题 cards and paper figure
+"""
+
+    sanitized = svg_executor._sanitize_structural_page_design_block(block, "chapter")
+
+    assert "dark radial divider" in sanitized
+    assert "structural.chapter-divider" in sanitized
+    assert "large title" in sanitized
+    assert "cards and paper figure" not in sanitized
+    assert sanitized.count("核心问题") == 1
+
+
+def test_template_vars_extract_cover_author_and_venue() -> None:
+    pages = svg_executor.split_manuscript_pages(
+        "<!-- page_type: cover -->\n"
+        "# VFR: A Lightweight Visibility-aware Fine-grained Refinement\n\n"
+        "### ACM MM '26\n\n"
+        "#### Anonymous Author(s)"
+    )
+
+    variables = svg_executor._template_vars_by_page(pages)[1]
+
+    assert variables["SOURCE"] == "ACM MM '26"
+    assert variables["JOURNAL"] == "ACM MM '26"
+    assert variables["VENUE"] == "ACM MM '26"
+    assert variables["AUTHOR"] == "Anonymous Author(s)"
+    assert variables["AUTHORS"] == "Anonymous Author(s)"
+    assert variables["BRAND_LABEL"] == "ACM MM '26"
+
+
+def test_minimal_cover_content_preserves_author_metadata() -> None:
+    content = (
+        "<!-- page_type: cover -->\n"
+        "# VFR: A Lightweight Visibility-aware Fine-grained Refinement\n\n"
+        "### ACM MM '26\n\n"
+        "#### Anonymous Author(s)"
+    )
+
+    compact = svg_executor._minimal_structural_page_content(content, "cover")
+
+    assert "ACM MM '26" in compact
+    assert "Anonymous Author(s)" in compact
+
+
 @pytest.mark.asyncio
 async def test_generate_svg_pages_adds_deepseek_executor_guidance(
     workspace_tmp,
@@ -531,6 +582,38 @@ async def test_template_skeleton_uses_page_type_metadata_not_design_outline(
     prompt = llm.message_snapshots[0][-1].content
     assert "Template Skeleton (content page)" in prompt
     assert "Template Skeleton (chapter page)" not in prompt
+
+
+@pytest.mark.asyncio
+async def test_generate_svg_pages_includes_structured_deck_plan(
+    workspace_tmp,
+) -> None:
+    manuscript = (
+        "<!-- page_type: chapter -->\n"
+        "# 背景与动机\n\n"
+        "## 为什么需要新模型"
+    )
+    llm = _FakeLLM([_svg('<text x="100" y="100" font-size="24">ok</text>')])
+
+    pages = [
+        page_num
+        async for page_num, _ in generate_svg_pages(
+            "#### Slide 01\n- **Page Type**: chapter\n- **Layout**: dark divider",
+            manuscript,
+            workspace_tmp,
+            llm,
+            "fake-model",
+            template_skeletons={
+                "chapter": '<svg viewBox="0 0 1280 720"><text>01</text></svg>',
+            },
+        )
+    ]
+
+    assert pages == [1]
+    prompt = llm.message_snapshots[0][-1].content
+    assert "Current Structured Slide Plan" in prompt
+    assert "Current chapter index: 01" in prompt
+    assert "Do NOT recompute chapter/section numbers from the page number" in prompt
 
 
 @pytest.mark.asyncio

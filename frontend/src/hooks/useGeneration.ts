@@ -27,7 +27,7 @@ const GENERATION_STORAGE_KEY = "paper-ppt-agent-generation-v2";
 const PERSISTED_LOG_LIMIT = 80;
 const LIVE_JOB_STORAGE_PREFIX = "paper-ppt-live-job:";
 const HISTORY_STATUS_SYNC_TIMEOUT_MS = 4000;
-const BACKEND_HEALTH_TIMEOUT_MS = 2500;
+const BACKEND_HEALTH_TIMEOUT_MS = 6000;
 const PREVIEW_REFRESH_DEBOUNCE_MS = 500;
 const previewRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -89,6 +89,10 @@ interface RunSnapshot {
   // channel. Used by ProgressPanel to confirm to the user that the
   // toggles they enabled actually returned data (or to show why not).
   enrichmentStats?: ResearchEnrichmentStats;
+}
+
+function hasActiveRecoverableRun(runs: Record<string, RunSnapshot>): boolean {
+  return Object.values(runs).some((run) => run.job && !FINAL_JOB_STATUSES.has(run.job.status));
 }
 
 type StoredRunSnapshot = Partial<RunSnapshot> & { jobId: string };
@@ -522,9 +526,16 @@ export const useGeneration = create<GenerationState>()(
         }));
         try {
           const response = await fetchBackendHealthWithTimeout();
-          set({ backendStatus: response.status === "ok" ? "connected" : "disconnected" });
+          set({
+            backendStatus:
+              response.status === "ok"
+                ? "connected"
+                : hasActiveRecoverableRun(get().runs)
+                ? "connecting"
+                : "disconnected",
+          });
         } catch {
-          set({ backendStatus: "disconnected" });
+          set({ backendStatus: hasActiveRecoverableRun(get().runs) ? "connecting" : "disconnected" });
         }
       },
       async loadProviders() {

@@ -100,6 +100,8 @@ async def test_create_design_spec_adds_deepseek_strategy_guidance() -> None:
     user_prompt = llm.calls[0]["messages"][-1].content
     assert "Detail Level Guidelines" in user_prompt
     assert "preserve the manuscript's analytical depth" in user_prompt
+    assert "Style Family:" in user_prompt
+    assert "chapter index" in user_prompt
 
 
 @pytest.mark.asyncio
