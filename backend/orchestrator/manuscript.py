@@ -21,7 +21,40 @@ DETAIL_AUTO_SLIDE_RANGES = {
 
 def split_manuscript_pages(manuscript: str) -> list[str]:
     """Split manuscript Markdown on standalone slide delimiter lines only."""
-    return [page.strip() for page in _SLIDE_DELIMITER_RE.split(manuscript) if page.strip()]
+    normalized = normalize_manuscript_slide_delimiters(manuscript)
+    return [page.strip() for page in _SLIDE_DELIMITER_RE.split(normalized) if page.strip()]
+
+
+def normalize_manuscript_slide_delimiters(manuscript: str) -> str:
+    """Restore slide delimiters when page_type markers already define page starts.
+
+    Some OpenAI-compatible models occasionally keep the `<!-- page_type: ... -->`
+    markers but omit most `---` slide separators. In that case the manuscript is
+    semantically multi-page, but delimiter-only parsing collapses it into a few
+    giant pages. This repair is intentionally structural: it never edits slide
+    text, only inserts standard delimiters between page_type blocks.
+    """
+    text = manuscript.strip()
+    markers = list(_PAGE_TYPE_RE.finditer(text))
+    if len(markers) <= 1:
+        return text
+
+    delimiter_pages = [page.strip() for page in _SLIDE_DELIMITER_RE.split(text) if page.strip()]
+    if len(delimiter_pages) >= len(markers):
+        return text
+
+    prefix = text[: markers[0].start()].strip()
+    pages: list[str] = []
+    if prefix:
+        pages.append(prefix)
+    for index, marker in enumerate(markers):
+        start = marker.start()
+        end = markers[index + 1].start() if index + 1 < len(markers) else len(text)
+        page = text[start:end].strip()
+        page = _SLIDE_DELIMITER_RE.sub("", page).strip()
+        if page:
+            pages.append(page)
+    return "\n\n---\n\n".join(pages)
 
 
 def count_manuscript_pages(manuscript: str) -> int:

@@ -12,6 +12,10 @@ from backend.orchestrator.research_agent import (
     _run_single_pass_analysis,
     _target_slides_guidance,
 )
+from backend.orchestrator.manuscript import (
+    normalize_manuscript_slide_delimiters,
+    split_manuscript_pages,
+)
 from backend.parser.paper_model import PaperFigure, PaperSection, ParsedPaper
 
 
@@ -253,6 +257,30 @@ def test_manuscript_structure_requires_default_budget_and_closing_ending():
     parts.append("<!-- page_type: ending -->\n# 谢谢聆听\n\nQ&A")
 
     assert _manuscript_structure_error("\n\n---\n\n".join(parts), None) is None
+
+
+def test_page_type_markers_repair_missing_slide_delimiters():
+    parts = ["<!-- page_type: cover -->\n# Title"]
+    for chapter in range(1, 4):
+        parts.append(f"<!-- page_type: chapter -->\n# Chapter {chapter}")
+        for slide in range(1, 4):
+            parts.append(
+                f"<!-- page_type: content -->\n## {chapter}.{slide} Content\n\n- point"
+            )
+    parts.extend(
+        [
+            "<!-- page_type: content -->\n## Extra Content 1\n\n- point",
+            "<!-- page_type: content -->\n## Extra Content 2\n\n- point",
+            "<!-- page_type: ending -->\n# 谢谢聆听\n\nQ&A",
+        ]
+    )
+    manuscript_without_delimiters = "\n\n".join(parts)
+
+    normalized = normalize_manuscript_slide_delimiters(manuscript_without_delimiters)
+
+    assert len(split_manuscript_pages(normalized)) == len(parts)
+    assert normalized.count("\n---\n") == len(parts) - 1
+    assert _manuscript_structure_error(manuscript_without_delimiters, None) is None
 
 
 def test_manuscript_structure_rejects_summary_as_ending():

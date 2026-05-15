@@ -30,6 +30,7 @@ from backend.orchestrator.provider_guidance import (
 from backend.orchestrator.manuscript import (
     auto_slide_range,
     extract_page_type,
+    normalize_manuscript_slide_delimiters,
     page_type_budget,
     page_type_budget_guidance,
     strip_page_type_metadata,
@@ -263,14 +264,22 @@ async def _run_single_pass_analysis(
             temperature=0.35 if attempt > 1 else 0.45,
             max_tokens=DEEPSEEK_MAX_TOKENS if is_deepseek else None,
         )
-        response_content = response.content
+        response_content = normalize_manuscript_slide_delimiters(response.content)
         _debug_write_text(
             debug_dir,
             "research_single_pass_response.md"
             if attempt == 1
             else f"research_single_pass_response_attempt{attempt}.md",
-            response_content,
+            response.content,
         )
+        if response_content != response.content.strip():
+            _debug_write_text(
+                debug_dir,
+                "research_single_pass_response_normalized.md"
+                if attempt == 1
+                else f"research_single_pass_response_attempt{attempt}_normalized.md",
+                response_content,
+            )
         last_error = _manuscript_validation_error(
             response_content,
             paper,
@@ -302,8 +311,18 @@ async def _run_single_pass_analysis(
                 temperature=0.35,
                 max_tokens=DEEPSEEK_MAX_TOKENS if is_deepseek else None,
             )
-            revised = rewrite_response.content
-            _debug_write_text(debug_dir, "research_depth_rewrite_response.md", revised)
+            revised = normalize_manuscript_slide_delimiters(rewrite_response.content)
+            _debug_write_text(
+                debug_dir,
+                "research_depth_rewrite_response.md",
+                rewrite_response.content,
+            )
+            if revised != rewrite_response.content.strip():
+                _debug_write_text(
+                    debug_dir,
+                    "research_depth_rewrite_response_normalized.md",
+                    revised,
+                )
             revised_error = _manuscript_validation_error(
                 revised,
                 paper,
@@ -987,14 +1006,22 @@ async def analyze_paper(
             temperature=0.35 if attempt > 1 else 0.5,
             max_tokens=DEEPSEEK_MAX_TOKENS if is_deepseek else None,
         )
-        manuscript = pass3_response.content
+        manuscript = normalize_manuscript_slide_delimiters(pass3_response.content)
         _debug_write_text(
             debug_dir,
             "research_pass3_response.md"
             if attempt == 1
             else f"research_pass3_response_attempt{attempt}.md",
-            manuscript,
+            pass3_response.content,
         )
+        if manuscript != pass3_response.content.strip():
+            _debug_write_text(
+                debug_dir,
+                "research_pass3_response_normalized.md"
+                if attempt == 1
+                else f"research_pass3_response_attempt{attempt}_normalized.md",
+                manuscript,
+            )
         last_structure_error = _manuscript_validation_error(
             manuscript,
             paper,
@@ -1042,7 +1069,9 @@ async def analyze_paper(
         max_tokens=DEEPSEEK_MAX_TOKENS if is_deepseek else None,
     )
     _debug_write_text(debug_dir, "research_pass4_response.md", pass4_response.content)
-    final_output = _extract_manuscript_from_review(pass4_response.content, manuscript)
+    final_output = normalize_manuscript_slide_delimiters(
+        _extract_manuscript_from_review(pass4_response.content, manuscript)
+    )
     final_error = _manuscript_validation_error(final_output, paper, num_pages, detail_level)
     manuscript_error = _manuscript_validation_error(manuscript, paper, num_pages, detail_level)
     if final_error and not manuscript_error:
