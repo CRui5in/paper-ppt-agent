@@ -108,7 +108,7 @@ def test_pipeline_smoke(monkeypatch, workspace_tmp):
     assert Path(events[-1].data["output_path"]).exists()
 
 
-def test_effective_deep_research_auto_enables_for_parallel_and_very_high(workspace_tmp):
+def test_effective_deep_research_only_follows_user_toggle(workspace_tmp):
     base = dict(
         file_path=workspace_tmp / "paper.pdf",
         source_type="pdf",
@@ -118,11 +118,14 @@ def test_effective_deep_research_auto_enables_for_parallel_and_very_high(workspa
     )
 
     assert not pipeline_module._effective_deep_research(GenerationRequest(**base))
-    assert pipeline_module._effective_deep_research(
+    assert not pipeline_module._effective_deep_research(
         GenerationRequest(**base, generation_mode="page_parallel")
     )
-    assert pipeline_module._effective_deep_research(
+    assert not pipeline_module._effective_deep_research(
         GenerationRequest(**base, detail_level="very_high")
+    )
+    assert pipeline_module._effective_deep_research(
+        GenerationRequest(**base, enable_deep_research=True)
     )
 
 

@@ -142,12 +142,8 @@ class GenerationRequest:
 
 
 def _effective_deep_research(request: GenerationRequest) -> bool:
-    """Use multi-pass planning when the requested deck needs stable structure."""
-    if request.enable_deep_research:
-        return True
-    if request.detail_level == "very_high":
-        return True
-    return request.generation_mode != "sequential"
+    """Return whether the user explicitly requested multi-pass research."""
+    return bool(request.enable_deep_research)
 
 
 async def run_pipeline(
@@ -241,8 +237,6 @@ async def run_pipeline(
             else "Analyzing paper content...",
             data={
                 "effective_deep_research": effective_deep_research,
-                "auto_deep_research": effective_deep_research
-                and not request.enable_deep_research,
             },
         )
 
