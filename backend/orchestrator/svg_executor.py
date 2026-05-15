@@ -180,6 +180,16 @@ def _page_role_guidance(page_type: str) -> str:
 def _structural_page_override_block(page_type: str) -> str:
     if page_type not in STRUCTURAL_PAGE_TYPES:
         return ""
+    if page_type == "cover":
+        return (
+            "\n## Structural Page Override\n"
+            "- This override is stronger than any design-spec content-elements list for this page.\n"
+            "- Render the cover as a lightweight title/meta slide: title, optional subtitle, "
+            "available authors/source/venue/date, a few short context/thesis lines, "
+            "template chrome, and sparse background decoration.\n"
+            "- Do not render extracted paper figures or turn the cover into a detailed "
+            "background, contribution, metric, result, or evidence slide.\n"
+        )
     consistency = (
         "\n- For chapter pages, keep the same divider layout across all chapter "
         "slides. Vary only the section number, title, and optional subtitle/key phrase."
@@ -194,7 +204,7 @@ def _structural_page_override_block(page_type: str) -> str:
         "template chrome, and sparse background decoration.\n"
         "- Do not render content sections named `核心问题`, `本章看点`, `主要结果`, "
         "question lists, KPI strips, cards/panels, figures, charts, or mini-agendas "
-        "on cover/chapter/ending pages."
+        "on chapter/ending pages."
         f"{consistency}\n"
     )
 
@@ -1650,6 +1660,36 @@ def _extract_cover_metadata(page_content: str, title: str, subtitle: str) -> dic
     }
 
 
+def _cover_context_phrases(
+    page_content: str,
+    title: str,
+    subtitle: str,
+    metadata_values: set[str],
+    *,
+    max_lines: int = 3,
+) -> list[str]:
+    visible = strip_page_type_metadata(page_content).strip()
+    phrases: list[str] = []
+    seen = {value for value in {title, subtitle, *metadata_values} if value}
+    for line in visible.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("<!--"):
+            continue
+        if "[[FIG:" in stripped or "<image" in stripped.lower():
+            continue
+        heading = re.match(r"^#{1,6}\s+(.+?)\s*$", stripped)
+        candidate = heading.group(1) if heading else stripped
+        candidate = re.sub(r"^\s*(?:[-*•]|\d+[\.)、])\s+", "", candidate).strip()
+        candidate = _clean_structural_phrase(candidate)
+        if not candidate or candidate in seen or len(candidate) > 160:
+            continue
+        phrases.append(candidate)
+        seen.add(candidate)
+        if len(phrases) >= max_lines:
+            break
+    return phrases
+
+
 def _minimal_structural_page_content(page_content: str, page_type: str) -> str:
     """Reduce structural manuscript pages to the text they are allowed to render."""
     visible = strip_page_type_metadata(page_content).strip()
@@ -1688,10 +1728,20 @@ def _minimal_structural_page_content(page_content: str, page_type: str) -> str:
         cover_meta = _extract_cover_metadata(page_content, title, subtitle)
         source = cover_meta.get("SOURCE", "")
         author = cover_meta.get("AUTHOR", "")
+        date = cover_meta.get("DATE", "")
         if source and source not in {title, subtitle}:
             lines.append(f"### {source}")
         if author and author not in {title, subtitle, source}:
             lines.append(f"### {author}")
+        if date and date not in {title, subtitle, source, author}:
+            lines.append(f"### {date}")
+        for phrase in _cover_context_phrases(
+            page_content,
+            title,
+            subtitle,
+            {source, author, date},
+        ):
+            lines.append(phrase)
     return "\n\n".join(lines)
 
 
@@ -1707,15 +1757,23 @@ def _sanitize_structural_page_design_block(
         first_line = f"#### Structural {page_type.title()} Page"
 
     preserved: list[str] = []
-    forbidden = re.compile(
-        r"(?i)(\[\[FIG:|paper figure|chart|table|metric|kpi|核心问题|本章看点|"
-        r"question list|mini-agenda|agenda grid|evidence|bullet grid)"
+    forbidden = (
+        re.compile(
+            r"(?i)(\[\[FIG:|paper figure|extracted figure|dense article|"
+            r"detailed evidence|detailed result|multi-column evidence)"
+        )
+        if page_type == "cover"
+        else re.compile(
+            r"(?i)(\[\[FIG:|paper figure|chart|table|metric|kpi|核心问题|本章看点|"
+            r"question list|mini-agenda|agenda grid|evidence|bullet grid)"
+        )
     )
     allowed_label = re.compile(
         r"(?i)^\s*[-*]\s*(?:\*\*)?"
         r"(page type|type|title|subtitle|layout|layout family|style family|"
         r"visual family|visual treatment|background|composition|typography|"
-        r"color|palette|accent|motif|chrome|footer|spacing|template)"
+        r"color|palette|accent|motif|chrome|footer|spacing|template|"
+        r"metadata|authors|source|venue|date|context|ornament)"
         r"(?:\*\*)?\s*[:：]"
     )
     for raw_line in block.splitlines()[1:]:
@@ -1728,12 +1786,18 @@ def _sanitize_structural_page_design_block(
         if allowed_label.search(stripped):
             preserved.append(line)
 
-    layout = (
-        "Consistent minimal chapter divider; same layout across all chapter pages; "
-        "only chapter number, title, and optional subtitle/key phrase may change."
-        if page_type == "chapter"
-        else f"Minimal structural {page_type} page; title plus optional short subtitle/key phrase only."
-    )
+    if page_type == "chapter":
+        layout = (
+            "Consistent minimal chapter divider; same layout across all chapter pages; "
+            "only chapter number, title, and optional subtitle/key phrase may change."
+        )
+    elif page_type == "cover":
+        layout = (
+            "Lightweight cover page; title, optional subtitle, available metadata, "
+            "and a modest context/accent treatment."
+        )
+    else:
+        layout = f"Minimal structural {page_type} page; title plus optional short subtitle/key phrase only."
     lines = [
         first_line,
         "",
@@ -1745,9 +1809,15 @@ def _sanitize_structural_page_design_block(
     lines.extend(
         [
             "",
-            "- **Content Boundary**: title and at most one short subtitle/key phrase. "
-            "No cards, KPI strips, question lists, mini-agendas, paper figures, charts, "
-            "or labeled blocks such as `核心问题` / `本章看点`.",
+            (
+                "- **Content Boundary**: title, optional subtitle, paper metadata, and "
+                "a few short context/thesis lines. No extracted paper figures or dense "
+                "article-content sections."
+                if page_type == "cover"
+                else "- **Content Boundary**: title and at most one short subtitle/key phrase. "
+                "No cards, KPI strips, question lists, mini-agendas, paper figures, charts, "
+                "or labeled blocks such as `核心问题` / `本章看点`."
+            ),
         ]
     )
     return "\n".join(lines)

@@ -326,7 +326,7 @@ async def test_single_pass_invalid_manuscript_continues_after_retries():
     assert llm.calls == 3
 
 
-def test_manuscript_structure_rejects_bulleted_cover_page():
+def test_manuscript_structure_allows_lightweight_cover_context():
     parts = [
         "<!-- page_type: cover -->\n"
         "# VFR\n\n"
@@ -345,9 +345,36 @@ def test_manuscript_structure_rejects_bulleted_cover_page():
 
     error = _manuscript_structure_error("\n\n---\n\n".join(parts), None)
 
+    assert error is None
+
+
+def test_manuscript_structure_rejects_overfull_cover_page():
+    parts = [
+        "<!-- page_type: cover -->\n"
+        "# VFR\n\n"
+        "## 轻量级可见性感知精炼\n\n"
+        "- 任务：实时姿态估计\n"
+        "- 方法：可见性感知 refinement\n"
+        "- 机制：质量引导损失\n"
+        "- 数据：COCO val2017\n"
+        "- 结果：67.6% AP\n"
+        "- 消融：模块贡献\n"
+        "- 局限：遮挡场景"
+    ]
+    for chapter in range(1, 4):
+        parts.append(f"<!-- page_type: chapter -->\n# Chapter {chapter}")
+        for slide in range(1, 5):
+            parts.append(
+                f"<!-- page_type: content -->\n## {chapter}.{slide} Content\n\n- point"
+            )
+    parts.append("<!-- page_type: content -->\n## Extra Content\n\n- point")
+    parts.append("<!-- page_type: ending -->\n# 谢谢聆听\n\nQ&A")
+
+    error = _manuscript_structure_error("\n\n---\n\n".join(parts), None)
+
     assert error is not None
     assert "cover" in error
-    assert "bullet or numbered-list content" in error
+    assert "too much body content" in error
 
 
 def test_target_slide_guidance_expands_for_very_high_detail():

@@ -549,7 +549,7 @@ def _structural_page_content_error(
     if "[[FIG:" in visible:
         return f"slide {index} ({page_type}) is structural but contains a paper figure token"
 
-    if page_type in {"cover", "chapter"} and _STRUCTURAL_LIST_RE.search(visible):
+    if page_type == "chapter" and _STRUCTURAL_LIST_RE.search(visible):
         return (
             f"slide {index} ({page_type}) is structural but contains bullet or "
             "numbered-list content"
@@ -563,14 +563,17 @@ def _structural_page_content_error(
         and not line.strip().startswith("<!--")
     ]
     non_heading_text = "\n".join(non_heading_lines)
-    if page_type in {"cover", "chapter"} and _STRUCTURAL_LABEL_RE.search(non_heading_text):
+    if page_type == "chapter" and _STRUCTURAL_LABEL_RE.search(non_heading_text):
         return (
             f"slide {index} ({page_type}) is structural but contains content-block "
             "labels such as 核心问题/本章看点"
         )
 
-    if page_type == "cover" and len(non_heading_lines) > 2:
-        return "cover slide must contain only title, optional subtitle, source/authors, and at most one thesis line"
+    if page_type == "cover" and len(non_heading_lines) > 6:
+        return (
+            "cover slide has too much body content; keep it to title, metadata, "
+            "and a few short context lines"
+        )
     if page_type == "chapter" and len(non_heading_lines) > 2:
         return "chapter slide must contain only title and at most 1-2 orientation phrases"
     return None
@@ -754,7 +757,8 @@ def _depth_retry_prompt(
         "The manuscript structure is valid, but several content slides are too shallow:\n\n"
         f"{feedback}\n\n"
         "Rewrite the full slide manuscript once. Preserve slide count, slide order, "
-        "page_type metadata, cover/chapter/ending minimalism, and valid FIG tokens. "
+        "page_type metadata, the lightweight cover title/meta role, chapter/ending "
+        "minimalism, and valid FIG tokens. "
         "Only strengthen content slides: add paper-grounded claim/evidence/so-what "
         "substance from the Paper Brief and Paper Content. Do not invent metrics or "
         "figures. If a slide lacks numeric evidence, use concrete mechanism details, "
@@ -773,7 +777,7 @@ def _structure_retry_prompt(
         f"{error}.\n\n"
         "Regenerate the full slide manuscript only. First rebuild the chapter plan internally, then write the manuscript.\n"
         "If the error mentions paper figure tokens, replace invalid tokens with exact tokens from the Valid Paper Figure Tokens list, or omit the real figure when no listed token matches.\n"
-        "Structural-page rules are strict: cover/chapter/ending slides must not contain bullet lists, numbered question lists, KPI/result blocks, paper figures, or labeled sections such as `核心问题` / `本章看点`. "
+        "Structural-page rules are strict but page-specific: cover slides may include title, optional subtitle, paper metadata, and a few short context/thesis lines, but no paper figures or dense body content. Chapter/ending slides must not contain bullet lists, numbered question lists, KPI/result blocks, paper figures, or labeled sections such as `核心问题` / `本章看点`. "
         "All chapter slides must use the same manuscript shape: one chapter title plus an optional short subtitle/orientation phrase only; put all detailed questions and evidence on following content slides.\n"
         "If a chapter divider would introduce only 0 or 1 content slide, remove that divider from the chapter plan and merge the topic into a neighboring chapter. "
         "If a planned chapter slide contains `核心问题`, `本章看点`, bullets, figures, or evidence, it is not a chapter slide; rewrite that material as a `content` slide and keep chapter dividers minimal.\n"

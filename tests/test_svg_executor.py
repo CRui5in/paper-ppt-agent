@@ -147,13 +147,17 @@ def test_minimal_cover_content_preserves_author_metadata() -> None:
         "<!-- page_type: cover -->\n"
         "# VFR: A Lightweight Visibility-aware Fine-grained Refinement\n\n"
         "### ACM MM '26\n\n"
-        "#### Anonymous Author(s)"
+        "#### Anonymous Author(s)\n\n"
+        "2026\n\n"
+        "- 面向实时多人姿态估计的轻量化可见性 refinement"
     )
 
     compact = svg_executor._minimal_structural_page_content(content, "cover")
 
     assert "ACM MM '26" in compact
     assert "Anonymous Author(s)" in compact
+    assert "2026" in compact
+    assert "轻量化可见性 refinement" in compact
 
 
 @pytest.mark.asyncio

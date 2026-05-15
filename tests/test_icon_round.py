@@ -89,7 +89,7 @@ def test_parse_icon_assignments_allows_page_word_in_reason() -> None:
 
 
 @pytest.mark.asyncio
-async def test_icon_round_forces_structural_pages_to_none(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_icon_round_allows_cover_but_forces_other_structural_pages_to_none(monkeypatch: pytest.MonkeyPatch) -> None:
     llm = _FakeLLM(
         """| Page | Icon | Role | Anchor | Placement | Size | Reason |
 |------|------|------|--------|-----------|------|--------|
@@ -117,11 +117,12 @@ async def test_icon_round_forces_structural_pages_to_none(monkeypatch: pytest.Mo
     assert "| 02 | `chunk/target` | KPI/result anchor | result callout title | left of result label before metric text | 32x32px |" in updated
     assert "role: KPI/result anchor; anchor: result callout title; placement: left of result label before metric text; size: 32x32px" in updated
     assert "Decorative accent" not in updated
-    assert "chunk/alert-triangle" not in updated
+    assert "chunk/alert-triangle" in updated
     assert "chunk/lightbulb" not in updated
     assert "chunk/rocket" not in updated
 
     prompt = llm.calls[0]["messages"][0].content
     assert "Forbidden page types" in prompt
+    assert "Cover pages may use `None` or one subtle semantic icon" in prompt
     assert "Full Selectable Icon Catalog" in prompt
     assert "Reserve the icon's visual slot before text" in prompt

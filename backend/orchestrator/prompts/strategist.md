@@ -62,8 +62,9 @@ Follow this structure exactly:
 - Decide style consistency during this strategy phase. The SVG executor should execute the design_spec; do not rely on page-to-page memory or later hard-coded fixes to unify the deck.
 - Decide content density during this strategy phase. The SVG executor should not need to invent extra content just to fill space; the design_spec should already describe meaningful use of the content area.
 - Treat the manuscript page inventory as fixed. Structural pages are counted pages, not optional styling.
-- Keep structural pages and content pages visually distinct: cover/chapter/ending pages are minimal title/divider/closing slides; content pages carry figures, charts, evidence, and detailed bullets.
-- Do not assign paper figures, charts, dense bullet grids, or multi-column evidence layouts to cover/chapter/ending pages.
-- For cover/chapter/ending pages, compress any extra manuscript body text into at most one subtitle/key phrase. Do not plan cards, KPI strips, question lists, `核心问题` / `本章看点` blocks, or mini-agendas on structural pages.
+- Keep structural pages and content pages visually distinct: cover pages are lightweight title/meta slides, chapter pages are dividers, ending pages are closing slides; content pages carry figures, charts, evidence, and detailed bullets.
+- Do not assign paper figures, dense article-content blocks, or multi-column evidence layouts to cover/chapter/ending pages.
+- For cover pages, preserve useful title metadata and a modest subtitle/context treatment; do not plan extracted paper figures or detailed evidence/result sections.
+- For chapter/ending pages, compress any extra manuscript body text into at most one subtitle/key phrase. Do not plan cards, KPI strips, question lists, `核心问题` / `本章看点` blocks, or mini-agendas on those pages.
 - All chapter pages in one deck must share one consistent divider layout and visual rhythm; only chapter number, title, and optional subtitle/key phrase should change.
 - Do not use administrative header labels such as page numbers or section counters as decorative chrome. If page numbering is needed, keep it in the footer only.

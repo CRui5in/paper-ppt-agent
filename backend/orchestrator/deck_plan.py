@@ -118,7 +118,9 @@ def _density(page_type: str, block: str, detail_level: str) -> str:
     explicit = _field(block, "Density", "Content Density", "Information Density")
     if explicit:
         return explicit
-    if page_type in {"cover", "chapter", "toc", "ending"}:
+    if page_type == "cover":
+        return "light cover: title, metadata, and a modest context/accent treatment; avoid dense article content"
+    if page_type in {"chapter", "toc", "ending"}:
         return "minimal structural"
     if detail_level == "very_high":
         return "very_high: full but readable; use the content area with meaningful callouts, diagrams, annotations, or evidence blocks instead of leaving large unused regions"
