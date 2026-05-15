@@ -188,7 +188,48 @@ def test_preview_and_websocket_receive_slide_events(client, pdf_bytes: bytes, mo
     assert len(slides) == 1
 
 
-def test_preview_recovers_retained_slide_events_when_workspace_is_missing(client, workspace_tmp: Path):
+def test_preview_preserves_sparse_svg_file_indexes(client, workspace_tmp: Path):
+    file_path = workspace_tmp / "uploads" / "sparse" / "paper.pdf"
+    file_path.parent.mkdir(parents=True)
+    file_path.write_bytes(b"data")
+    session = session_manager.create_session(file_path, "pdf", "paper.pdf", 4, session_id="sparse")
+    job = session_manager.create_job(session.id)
+    project_dir = workspace_tmp / "parallel_workspace"
+    svg_dir = project_dir / "svg_output"
+    svg_dir.mkdir(parents=True)
+    svg_content = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text>Five</text></svg>'
+    (svg_dir / "05_results.svg").write_text(svg_content, encoding="utf-8")
+
+    session_manager.record_event(
+        job.id,
+        {
+            "type": "progress",
+            "job_id": job.id,
+            "stage": "generation",
+            "status": "progress",
+            "message": "Generated slide 5/8",
+            "progress": 0.5,
+            "slides_completed": 1,
+            "total_slides": 8,
+            "data": {"page": 5, "svg": svg_content, "completed_count": 1},
+        },
+        status="generation",
+        progress=0.5,
+        message="Generated slide 5/8",
+        slides_completed=1,
+        total_slides=8,
+        project_dir=str(project_dir),
+    )
+
+    preview_response = client.get(f"/api/preview/{job.id}")
+
+    assert preview_response.status_code == 200
+    payload = preview_response.json()
+    assert [slide["index"] for slide in payload["slides"]] == [5]
+    assert payload["slides"][0]["name"] == "05_results"
+
+
+def test_preview_does_not_depend_on_retained_svg_events_when_workspace_is_missing(client, workspace_tmp: Path):
     file_path = workspace_tmp / "uploads" / "abc123" / "paper.pdf"
     file_path.parent.mkdir(parents=True)
     file_path.write_bytes(b"data")
@@ -223,11 +264,4 @@ def test_preview_recovers_retained_slide_events_when_workspace_is_missing(client
     payload = preview_response.json()
     assert payload["status"] == "error"
     assert payload["project_dir"] is None
-    assert payload["slides"] == [
-        {
-            "index": 1,
-            "name": "slide_1",
-            "source": "event",
-            "content": svg_content,
-        }
-    ]
+    assert payload["slides"] == []

@@ -1245,6 +1245,12 @@ function ConfigViewer({
   if (options?.style) entries.push({ label: t("config.style"), value: options.style });
   if (options?.language) entries.push({ label: t("config.language"), value: options.language });
   if (options?.detail_level) entries.push({ label: t("config.detailLevel"), value: options.detail_level });
+  if (options?.generation_mode && options.generation_mode !== "sequential") {
+    entries.push({ label: t("options.parallelGeneration"), value: options.generation_mode });
+    if (options.generation_mode === "page_parallel" && options.parallel_concurrency) {
+      entries.push({ label: t("options.parallelPageConcurrency"), value: String(options.parallel_concurrency) });
+    }
+  }
   if (options?.canvas_format) entries.push({ label: t("config.canvasFormat"), value: options.canvas_format });
   if (options?.num_pages) entries.push({ label: t("config.numPages"), value: String(options.num_pages) });
   if (options?.max_critic_attempts) entries.push({ label: t("config.maxCriticAttempts"), value: String(options.max_critic_attempts) });

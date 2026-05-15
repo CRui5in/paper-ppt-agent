@@ -18,7 +18,7 @@ from fastapi import APIRouter, HTTPException, status
 from backend.api.schemas import GenerateRequest, GenerateResponse
 from backend.runtime.scheduler import QueueFull, SchedulerDraining, get_scheduler
 from backend.session.manager import session_manager
-from backend.session.progress import payloads_from_progress_event
+from backend.session.progress import describe_exception, payloads_from_progress_event
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +83,15 @@ async def _run_generation_job(job_id: str, request: Any) -> None:
         current_job = session_manager.get_job(job_id)
         if current_job is None:
             return
-        error_event = ProgressEvent("error", "error", str(exc), current_job.progress)
+        if current_job.status == "error" and current_job.error:
+            cleanup_needed = True
+            return
+        error_event = ProgressEvent(
+            "error",
+            "error",
+            describe_exception(exc, "Generation failed"),
+            current_job.progress,
+        )
         for payload, updates in payloads_from_progress_event(job_id, current_job, error_event):
             session_manager.record_event(job_id, payload, **updates)
         cleanup_needed = True
@@ -131,6 +139,8 @@ async def generate_presentation(request: GenerateRequest) -> GenerateResponse:
         instruction=request.instruction,
         language=request.options.language,
         detail_level=request.options.detail_level,
+        generation_mode=request.options.generation_mode,
+        parallel_concurrency=request.options.parallel_concurrency,
         timeout_seconds=request.options.timeout_seconds,
         max_critic_attempts=request.options.max_critic_attempts,
         style_overrides=(

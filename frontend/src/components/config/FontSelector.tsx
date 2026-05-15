@@ -2,6 +2,7 @@ import { ChevronDown, Plus, Settings2, X } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useLocale } from "../../i18n";
+import { FONT_CATEGORIES, fontPreviewFamily, joinFontStack, splitFontStack } from "../../lib/fontOptions";
 
 interface FontSelectorProps {
   /** Simple mode value — single CSS font-family stack */
@@ -16,59 +17,6 @@ interface FontSelectorProps {
   onCjkHeadingFontChange?: (value: string) => void;
   cjkBodyFont?: string;
   onCjkBodyFontChange?: (value: string) => void;
-}
-
-interface FontCategory {
-  label: string;
-  labelKey: string;
-  fonts: string[];
-}
-
-const FONT_CATEGORIES: FontCategory[] = [
-  {
-    label: "中文无衬线",
-    labelKey: "font.catZhSans",
-    fonts: ["Microsoft YaHei", "Noto Sans SC", "PingFang SC", "Source Han Sans SC", "DengXian", "STHeiti"],
-  },
-  {
-    label: "中文衬线",
-    labelKey: "font.catZhSerif",
-    fonts: ["SimSun", "KaiTi", "Noto Serif SC", "Source Han Serif SC", "STSong", "STKaiti", "FangSong"],
-  },
-  {
-    label: "英文无衬线",
-    labelKey: "font.catEnSans",
-    fonts: ["Arial", "Calibri", "Segoe UI", "Helvetica", "Helvetica Neue", "Inter", "Roboto", "SF Pro"],
-  },
-  {
-    label: "英文衬线",
-    labelKey: "font.catEnSerif",
-    fonts: ["Times New Roman", "Georgia", "Cambria", "Garamond", "Palatino"],
-  },
-  {
-    label: "代码",
-    labelKey: "font.catMono",
-    fonts: ["Consolas", "SF Mono", "Monaco", "Menlo", "Courier New", "Cascadia Code"],
-  },
-  {
-    label: "CSS Generic",
-    labelKey: "font.catGeneric",
-    fonts: ["sans-serif", "serif", "monospace"],
-  },
-];
-
-function splitFontStack(stack: string): string[] {
-  if (!stack.trim()) return [];
-  return stack
-    .split(",")
-    .map((f) => f.trim().replace(/^['"]|['"]$/g, ""))
-    .filter(Boolean);
-}
-
-function joinFontStack(fonts: string[]): string {
-  return fonts
-    .map((f) => (f.includes(" ") ? `"${f}"` : f))
-    .join(", ");
 }
 
 /** Single font stack picker (used for simple mode and each slot in advanced mode) */
@@ -152,6 +100,7 @@ function FontStackPicker({
               padding: "0.2rem 0.45rem", borderRadius: 999,
               border: "1px solid rgba(255,139,71,0.24)", background: "rgba(255,139,71,0.08)",
               fontSize: "0.75rem", fontWeight: 600, color: "var(--text)", whiteSpace: "nowrap",
+              fontFamily: fontPreviewFamily(font),
             }}
           >
             {font}
@@ -219,12 +168,12 @@ function FontStackPicker({
                   </button>
                   {expanded && (
                     <div style={{ display: "flex", flexWrap: "wrap", gap: "0.25rem", padding: "0.25rem 0.35rem 0.4rem 1.4rem" }}>
-                      {cat.fonts.map((font) => {
-                        const sel = selectedFonts.some((f) => f.toLowerCase() === font.toLowerCase());
+                      {cat.fonts.map((option) => {
+                        const sel = selectedFonts.some((f) => f.toLowerCase() === option.value.toLowerCase());
                         return (
                           <button
-                            key={font} type="button" disabled={sel}
-                            onClick={() => addFont(font)}
+                            key={option.value} type="button" disabled={sel}
+                            onClick={() => addFont(option.value)}
                             style={{
                               padding: "0.25rem 0.5rem", borderRadius: 6,
                               border: sel ? "1px solid rgba(255,139,71,0.12)" : "1px solid var(--line)",
@@ -232,9 +181,10 @@ function FontStackPicker({
                               color: sel ? "var(--muted)" : "var(--text)",
                               fontSize: "0.75rem", cursor: sel ? "default" : "pointer",
                               opacity: sel ? 0.5 : 1, whiteSpace: "nowrap",
+                              fontFamily: fontPreviewFamily(option.value),
                             }}
                           >
-                            {font}
+                            {option.label}
                           </button>
                         );
                       })}
@@ -278,7 +228,7 @@ function FontStackPicker({
 
       {/* Preview */}
       {selectedFonts.length > 0 && (
-        <span style={{ fontSize: "0.68rem", color: "var(--muted)", fontFamily: "var(--mono)", wordBreak: "break-all", opacity: 0.7 }}>
+        <span style={{ fontSize: "0.68rem", color: "var(--muted)", fontFamily: fontPreviewFamily(joinFontStack(selectedFonts)), wordBreak: "break-all", opacity: 0.7 }}>
           {joinFontStack(selectedFonts)}
         </span>
       )}

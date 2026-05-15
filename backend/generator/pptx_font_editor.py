@@ -238,11 +238,9 @@ def replace_fonts_in_pptx(
         # Repackage as PPTX
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zf:
-            for root_path, dirs, files in tmp_dir.walk():
-                for file in sorted(files):
-                    file_path = root_path / file
-                    arc_name = file_path.relative_to(tmp_dir)
-                    zf.write(file_path, arc_name)
+            for file_path in sorted(path for path in tmp_dir.rglob("*") if path.is_file()):
+                arc_name = file_path.relative_to(tmp_dir)
+                zf.write(file_path, arc_name)
 
     return output_path, result
 

@@ -62,4 +62,5 @@ async def delete_job(job_id: str) -> Response:
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Job not found.",
         )
+    await session_manager.flush_now()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

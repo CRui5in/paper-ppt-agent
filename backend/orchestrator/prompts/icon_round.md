@@ -13,7 +13,7 @@ without worrying about distracting the main layout/content planning step.
 
 ## Hard Rules
 
-- **Forbidden page types**: cover, chapter/transition, TOC/agenda, and ending pages must use `None`.
+- **Forbidden page types**: chapter/transition, TOC/agenda, and ending pages must use `None`. Cover pages may use `None` or one subtle semantic icon when it supports the title/meta treatment.
 - **Max 1 icon per page**.
 - **Use exact paths only** from the shortlist or full catalog below. Never invent icon names.
 - **Icons are layout anchors, not decoration**. Do not place a floating sticker in a random corner.
@@ -41,5 +41,5 @@ Return a markdown table only. Include every page exactly once.
 
 | Page | Icon | Role | Anchor | Placement | Size | Reason |
 |------|------|------|--------|-----------|------|--------|
-| 01 | None | forbidden | cover page | none | none | cover pages must be icon-free |
+| 01 | None | clean cover | title/meta treatment | none | none | no icon is needed on this cover |
 | 02 | chunk/target | KPI/result anchor | result callout title | left of callout label before the metric text | 32x32px | target icon directly labels objective/result |

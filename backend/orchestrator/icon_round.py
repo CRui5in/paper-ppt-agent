@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 PROMPT_PATH = Path(__file__).parent / "prompts" / "icon_round.md"
 ICON_ROUND_MAX_TOKENS = 4096
 ICON_RAG_CANDIDATES_PER_QUERY = 6
-FORBIDDEN_ICON_PAGE_TYPES = {"cover", "chapter", "toc", "ending"}
+FORBIDDEN_ICON_PAGE_TYPES = {"chapter", "toc", "ending"}
 MAX_PAGE_EXCERPT_CHARS = 700
 
 # ── Per-page icon search ────────────────────────────────────────────────────
@@ -471,7 +471,7 @@ def _merge_icon_results(
             f"### VI. Icon Usage Specification\n\n"
             f"- **Library**: `{icon_library}` (one library for entire deck)\n"
             f"- Icons are semantic layout anchors, not decorative accents.\n"
-            f"- Cover, chapter/transition, TOC, and ending pages must not use icons.\n"
+            f"- Chapter/transition, TOC, and ending pages must not use icons. Cover pages may use `None` or one subtle semantic icon if it supports the title/meta treatment.\n"
             f"- For assigned slides, reserve the icon slot first, then fit text and charts around it.\n"
             f"- Placement targets: process nodes, KPI/result callouts, warnings/limitations, key contribution cards.\n"
             f"- Placeholder: `<use data-icon=\"lib/name\" x=\"\" y=\"\" width=\"48\" height=\"48\" fill=\"\"/>`\n\n"
@@ -484,7 +484,7 @@ def _merge_icon_results(
         vi_content = (
             "### VI. Icon Usage Specification\n\n"
             "No icons assigned. Do not use `<use data-icon/>` in any slide.\n"
-            "Cover, chapter/transition, TOC, and ending pages are always icon-free.\n"
+            "Chapter/transition, TOC, and ending pages are always icon-free. Cover pages may stay icon-free or use one subtle semantic icon.\n"
         )
 
     # Replace existing Section VI or insert before Section VII

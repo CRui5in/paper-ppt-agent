@@ -100,6 +100,14 @@ class Settings(BaseSettings):
     # cairosvg, PIL) flow through this pool, so size it for IO concurrency
     # rather than core count.
     io_pool_workers: int = 16
+    # Cap expensive CPU stages across independent jobs. Jobs may run at the
+    # same time, but parsing/finalize/export should not all saturate the host
+    # and starve normal API requests.
+    heavy_stage_max_concurrent: int = 1
+    # Cap total in-flight LLM requests across all jobs. Per-job/page
+    # parallelism still exists; this prevents two active parallel jobs from
+    # multiplying into a provider/network storm.
+    llm_max_concurrent_requests: int = 4
 
     # ── Job scheduling ───────────────────────────────────────────────────
     # Backlog cap for queued jobs; a 16th queued job returns 429.

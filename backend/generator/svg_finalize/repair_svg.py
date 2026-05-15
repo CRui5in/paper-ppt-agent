@@ -10,11 +10,43 @@ from lxml import etree
 
 
 _AMP_RE = re.compile(r"&(?!#\d+;|#x[0-9A-Fa-f]+;|[A-Za-z_][\w.-]*;)")
+_COMMENT_RE = re.compile(r"<!--(.*?)-->", re.DOTALL)
 _TEXT_CLOSE_RE = re.compile(r"(<text\b[^>]*>[^<]*)</tspan>", re.IGNORECASE)
-_STRAY_TSPAN_CLOSE_RE = re.compile(r"</tspan>\s*</text>", re.IGNORECASE)
 _TEXT_BLOCK_RE = re.compile(r"(<text\b[^>]*>)(.*?)(</text\s*>)", re.IGNORECASE | re.DOTALL)
 _SPAN_OPEN_RE = re.compile(r"<span\b([^>]*)>", re.IGNORECASE)
 _SPAN_CLOSE_RE = re.compile(r"</span\s*>", re.IGNORECASE)
+_LINE_TAG_RE = re.compile(r"<line\b[^>]*>", re.IGNORECASE)
+_ATTR_NAME_RE = re.compile(r"\s+([A-Za-z_:][\w:.-]*)\s*=")
+_ANIMATION_ELEMENT_RE = re.compile(
+    r"<(?:[A-Za-z_][\w.-]*:)?(?:animate|animateMotion|animateTransform|set)\b"
+    r"[^>]*(?:/>\s*|>.*?</(?:[A-Za-z_][\w.-]*:)?"
+    r"(?:animate|animateMotion|animateTransform|set)\s*>)",
+    re.IGNORECASE | re.DOTALL,
+)
+_KEYFRAMES_RE = re.compile(
+    r"@(?:-[A-Za-z]+-)?keyframes\s+[^{]+\{(?:[^{}]|\{[^{}]*\})*\}",
+    re.IGNORECASE | re.DOTALL,
+)
+_CSS_ANIMATION_DECL_RE = re.compile(
+    r"\s*(?:-[A-Za-z]+-)?animation(?:-[A-Za-z-]+)?\s*:\s*[^;\"']+;?",
+    re.IGNORECASE,
+)
+_TEXT_ELEMENT_RE = re.compile(r"<text\b(?P<attrs>[^>]*)>(?P<body>.*?)</text\s*>", re.IGNORECASE | re.DOTALL)
+_TAG_RE = re.compile(r"<[^>]+>")
+_ATTR_RE_TEMPLATE = r"""\b{name}\s*=\s*["']([^"']+)["']"""
+_ADMIN_HEADER_RE = re.compile(
+    r"^(?:"
+    r"(?:part|section|chapter|slide|page)\s*[:#.-]?\s*\d{1,2}"
+    r"|第\s*\d{1,2}\s*(?:页|章|节)"
+    r"|(?:章节|部分)\s*\d{1,2}"
+    r")$",
+    re.IGNORECASE,
+)
+_FONT_FAMILY_ATTR_RE = re.compile(
+    r'font-family="([^<>]*?)"\s+(?=(?:x|y|dx|dy|font-size|font-weight|font-style|'
+    r'fill|stroke|text-anchor|letter-spacing|dominant-baseline|opacity|transform|class|id|style)=)',
+    re.IGNORECASE,
+)
 
 # SVG spec forbids nesting <text> inside <text> — LLMs sometimes emit it
 # anyway to fake inline emphasis. When that happens, lxml's recover mode
@@ -138,6 +170,136 @@ def _replace_html_spans_in_text(content: str) -> tuple[str, int]:
     return _TEXT_BLOCK_RE.sub(_rewrite_text_block, content), changes
 
 
+def _repair_quoted_font_family_attrs(content: str) -> tuple[str, int]:
+    """Remove CSS inner quotes from malformed SVG font-family attributes.
+
+    LLMs often emit XML-invalid stacks such as
+    ``font-family="SF Pro", "PingFang SC", sans-serif"``. Browsers recover,
+    but XML post-processing truncates the tag. Keep the font stack semantics
+    while making the attribute well-formed.
+    """
+    changes = 0
+
+    def _rewrite(match: re.Match[str]) -> str:
+        nonlocal changes
+        raw = match.group(1)
+        cleaned = raw.replace('"', "")
+        cleaned = re.sub(r"\s*,\s*", ", ", cleaned).strip()
+        if cleaned != raw:
+            changes += 1
+        return f'font-family="{cleaned}" '
+
+    return _FONT_FAMILY_ATTR_RE.sub(_rewrite, content), changes
+
+
+def _remove_svg_animation(content: str) -> tuple[str, int]:
+    """Strip SVG/CSS animation features that PPTX cannot reproduce."""
+    changes = 0
+    content, element_changes = _ANIMATION_ELEMENT_RE.subn("", content)
+    changes += element_changes
+    content, keyframe_changes = _KEYFRAMES_RE.subn("", content)
+    changes += keyframe_changes
+    content, declaration_changes = _CSS_ANIMATION_DECL_RE.subn("", content)
+    changes += declaration_changes
+    return content, changes
+
+
+def _sanitize_xml_comments(content: str) -> tuple[str, int]:
+    """Rewrite XML comments that contain forbidden ``--`` runs."""
+    changes = 0
+
+    def _rewrite(match: re.Match[str]) -> str:
+        nonlocal changes
+        body = match.group(1)
+        if "--" not in body and not body.rstrip().endswith("-"):
+            return match.group(0)
+        cleaned = re.sub(r"-{2,}", " - ", body)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip(" -")
+        if cleaned == body:
+            return match.group(0)
+        changes += 1
+        return f"<!-- {cleaned} -->" if cleaned else ""
+
+    return _COMMENT_RE.sub(_rewrite, content), changes
+
+
+def _repair_line_endpoint_attrs(content: str) -> tuple[str, int]:
+    """Repair common ``<line>`` endpoint typos before XML parsing.
+
+    LLMs often write ``x1 y1 x2 y1`` when drawing many edges. XML rejects this
+    as a redefined attribute, and recovery parsers may silently drop the second
+    endpoint. When a line has a duplicate start-coordinate attribute and the
+    corresponding end-coordinate is absent, treat the second copy as x2/y2.
+    """
+    changes = 0
+
+    def _rename_second(tag: str, attr: str, replacement: str) -> str:
+        nonlocal changes
+        seen = 0
+
+        def _rewrite(match: re.Match[str]) -> str:
+            nonlocal changes, seen
+            seen += 1
+            if seen == 2:
+                changes += 1
+                return f"{match.group(1)}{replacement}{match.group(2)}"
+            return match.group(0)
+
+        return re.sub(rf"(\s){re.escape(attr)}(\s*=)", _rewrite, tag)
+
+    def _rewrite_tag(match: re.Match[str]) -> str:
+        tag = match.group(0)
+        names = [m.group(1) for m in _ATTR_NAME_RE.finditer(tag)]
+        if names.count("x1") >= 2 and "x2" not in names:
+            tag = _rename_second(tag, "x1", "x2")
+            names = [m.group(1) for m in _ATTR_NAME_RE.finditer(tag)]
+        if names.count("y1") >= 2 and "y2" not in names:
+            tag = _rename_second(tag, "y1", "y2")
+        return tag
+
+    return _LINE_TAG_RE.sub(_rewrite_tag, content), changes
+
+
+def _float_attr(attrs: str, name: str) -> float | None:
+    match = re.search(_ATTR_RE_TEMPLATE.format(name=re.escape(name)), attrs, re.IGNORECASE)
+    if not match:
+        return None
+    try:
+        return float(match.group(1))
+    except ValueError:
+        return None
+
+
+def _plain_text(body: str) -> str:
+    text = _TAG_RE.sub("", body)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _remove_top_left_admin_labels(content: str) -> tuple[str, int]:
+    """Remove generated page/chapter chrome labels from the top-left header.
+
+    The footer may still contain a normal ``N / total`` page number. This only
+    targets non-semantic labels such as ``SECTION 03`` or ``第 7 页`` placed in
+    the header, which have been a common source of inconsistent deck chrome.
+    """
+    changes = 0
+
+    def _rewrite(match: re.Match[str]) -> str:
+        nonlocal changes
+        attrs = match.group("attrs")
+        x = _float_attr(attrs, "x")
+        y = _float_attr(attrs, "y")
+        if x is None or y is None or x > 280 or y > 95:
+            return match.group(0)
+        text = _plain_text(match.group("body"))
+        if _ADMIN_HEADER_RE.fullmatch(text):
+            changes += 1
+            return ""
+        return match.group(0)
+
+    return _TEXT_ELEMENT_RE.sub(_rewrite, content), changes
+
+
 def repair_svg_file(svg_path: Path) -> int:
     """Repair common malformed XML patterns in-place.
 
@@ -158,6 +320,11 @@ def repair_svg_file(svg_path: Path) -> int:
     # broken sibling runs or leaked HTML flow content.
     repaired, nested_fixes = _unnest_text(content)
     repaired, span_fixes = _replace_html_spans_in_text(repaired)
+    repaired, font_fixes = _repair_quoted_font_family_attrs(repaired)
+    repaired, animation_fixes = _remove_svg_animation(repaired)
+    repaired, comment_fixes = _sanitize_xml_comments(repaired)
+    repaired, line_attr_fixes = _repair_line_endpoint_attrs(repaired)
+    repaired, header_label_fixes = _remove_top_left_admin_labels(repaired)
     parses_now = True
     try:
         ET.fromstring(repaired)
@@ -177,7 +344,6 @@ def repair_svg_file(svg_path: Path) -> int:
     while previous != repaired:
         previous = repaired
         repaired = _TEXT_CLOSE_RE.sub(r"\1</text>", repaired)
-        repaired = _STRAY_TSPAN_CLOSE_RE.sub("</text>", repaired)
 
     try:
         ET.fromstring(repaired)

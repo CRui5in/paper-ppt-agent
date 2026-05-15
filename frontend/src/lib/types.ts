@@ -86,6 +86,8 @@ export interface GenerationOptions {
   num_pages?: number;
   language: string;
   detail_level: string;
+  generation_mode?: "sequential" | "chapter_parallel" | "page_parallel";
+  parallel_concurrency?: number;
   timeout_seconds?: number;
   max_critic_attempts?: number;
   style_overrides?: StyleOverridesPayload;
@@ -208,31 +210,6 @@ export interface SlideDocument {
   elements: SlideDocumentElement[];
 }
 
-export type SlideDocumentElementType = "text" | "rect" | "image" | "table";
-
-export interface SlideDocumentElement {
-  id: string;
-  type: SlideDocumentElementType;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  rotation?: number;
-  sourceTag?: string;
-  sourceIndex?: number;
-  committed?: boolean;
-  [key: string]: unknown;
-}
-
-export interface SlideDocument {
-  version: number;
-  width: number;
-  height: number;
-  backgroundSvg: string;
-  speakerNotes?: string;
-  elements: SlideDocumentElement[];
-}
-
 export interface PreviewSlide {
   index: number;
   name: string;
@@ -312,8 +289,16 @@ export interface CriticEvent {
   page: number;
   attempt: number;
   report: CriticReport;
+  source?: "static" | "visual";
+  rendered?: boolean;
+  media_type?: string | null;
+  rendered_image_path?: string | null;
+  skipped_reason?: string | null;
+  raw_response_excerpt?: string | null;
   repair_prompt?: string;
   archive_path?: string;
+  before_archive_path?: string;
+  after_archive_path?: string;
 }
 
 /** Heartbeat ping emitted by the server every ~20s of silence. */

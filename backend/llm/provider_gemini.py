@@ -10,6 +10,7 @@ from google import genai
 from google.genai import types as genai_types
 from pydantic import BaseModel
 
+from backend.runtime.resource_gates import llm_request_slot
 from backend.usage.tracker import current_usage_context, usage_tracker
 
 from .base import LLMProvider
@@ -92,13 +93,14 @@ class GeminiProvider(LLMProvider):
             config.system_instruction = system_text
 
         t0 = time.monotonic()
-        resp = await call_with_retry(
-            lambda: self._client.aio.models.generate_content(
-                model=model,
-                contents=contents,
-                config=config,
+        async with llm_request_slot():
+            resp = await call_with_retry(
+                lambda: self._client.aio.models.generate_content(
+                    model=model,
+                    contents=contents,
+                    config=config,
+                )
             )
-        )
         duration_ms = int((time.monotonic() - t0) * 1000)
 
         content = resp.text or ""
@@ -142,13 +144,14 @@ class GeminiProvider(LLMProvider):
         if system_text:
             config.system_instruction = system_text
 
-        async for chunk in await self._client.aio.models.generate_content_stream(
-            model=model,
-            contents=contents,
-            config=config,
-        ):
-            if chunk.text:
-                yield LLMStreamChunk(delta=chunk.text)
+        async with llm_request_slot():
+            async for chunk in await self._client.aio.models.generate_content_stream(
+                model=model,
+                contents=contents,
+                config=config,
+            ):
+                if chunk.text:
+                    yield LLMStreamChunk(delta=chunk.text)
 
     async def validate(self) -> bool:
         try:

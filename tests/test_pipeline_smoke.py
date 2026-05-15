@@ -108,6 +108,27 @@ def test_pipeline_smoke(monkeypatch, workspace_tmp):
     assert Path(events[-1].data["output_path"]).exists()
 
 
+def test_effective_deep_research_only_follows_user_toggle(workspace_tmp):
+    base = dict(
+        file_path=workspace_tmp / "paper.pdf",
+        source_type="pdf",
+        provider="openai",
+        model="gpt-4o",
+        api_key="key",
+    )
+
+    assert not pipeline_module._effective_deep_research(GenerationRequest(**base))
+    assert not pipeline_module._effective_deep_research(
+        GenerationRequest(**base, generation_mode="page_parallel")
+    )
+    assert not pipeline_module._effective_deep_research(
+        GenerationRequest(**base, detail_level="very_high")
+    )
+    assert pipeline_module._effective_deep_research(
+        GenerationRequest(**base, enable_deep_research=True)
+    )
+
+
 def test_svg_export_handles_percentage_lengths_and_opacity():
     class FakeElem:
         def __init__(self, attrib):

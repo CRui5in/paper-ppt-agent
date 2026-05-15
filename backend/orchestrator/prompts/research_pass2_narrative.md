@@ -51,6 +51,12 @@ Every presentation needs these narrative beats. Design each:
 
 ## Step 3: Assign Content per Slide
 
+Before listing slides, internally group the deck into chapters. A `chapter` /
+transition slide is only valid when it introduces at least **two** following
+`content` slides. If a topic would have only one content slide, merge it into a
+neighboring chapter and mark that topic slide as `content` instead of creating a
+standalone divider.
+
 For each slide, specify in this exact format:
 
 ```
@@ -69,6 +75,8 @@ Slide N: [Title]
 
 - **No filler slides**: Every slide must earn its place. If a slide doesn't advance understanding, merge it or cut it.
 - **Structural budget**: Cover, chapter/transition, content, and ending pages are counted slides. Keep the requested budget stable.
+- **Chapter grouping**: Do not create orphan or thin chapters. Every chapter divider must be followed by at least 2 content slides before the next chapter/ending page.
+- **Minimal dividers**: Chapter slides are only title/subtitle/orientation slides. Detailed labels such as `核心问题` / `本章看点`, bullets, figures, metrics, and evidence must be assigned to content slides.
 - **Ending page**: Use it as a closing/thanks page, not a final content summary.
 - **Narrative momentum**: Each slide should create anticipation for the next. The audience should always wonder "and then what?"
 - **Adapt to paper type**: A systems paper needs more mechanism slides; an empirical paper needs more evidence slides. Let the content dictate the structure, not a formula.

@@ -38,33 +38,7 @@ export function RecentTasksPanel({
   const recentTasks = typeof limit === "number" ? history.slice(0, limit) : history;
   const [historyPreviews, setHistoryPreviews] = useState<Record<string, PreviewSlide | null | undefined>>({});
   const [hoveredTask, setHoveredTask] = useState<{ task: GenerationHistoryItem; rect: DOMRect } | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    recentTasks.forEach((task) => {
-      if (!task.projectDir || task.jobId in historyPreviews) {
-        return;
-      }
-      fetchProjectPreview(task.projectDir)
-        .then((preview) => {
-          if (cancelled) return;
-          setHistoryPreviews((current) => ({
-            ...current,
-            [task.jobId]: preview.slides[preview.slides.length - 1] ?? null,
-          }));
-        })
-        .catch(() => {
-          if (cancelled) return;
-          setHistoryPreviews((current) => ({
-            ...current,
-            [task.jobId]: null,
-          }));
-        });
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [historyPreviews, recentTasks]);
+  const previewRequestsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     const validIds = new Set(recentTasks.map((task) => task.jobId));
@@ -76,6 +50,34 @@ export function RecentTasksPanel({
       return next;
     });
   }, [recentTasks]);
+
+  const ensurePreview = (task: GenerationHistoryItem) => {
+    if (!task.projectDir || task.jobId in historyPreviews || previewRequestsRef.current.has(task.jobId)) {
+      return;
+    }
+    previewRequestsRef.current.add(task.jobId);
+    fetchProjectPreview(task.projectDir, { lastSlideOnly: true })
+      .then((preview) => {
+        setHistoryPreviews((current) => ({
+          ...current,
+          [task.jobId]: preview.slides[preview.slides.length - 1] ?? null,
+        }));
+      })
+      .catch(() => {
+        setHistoryPreviews((current) => ({
+          ...current,
+          [task.jobId]: null,
+        }));
+      })
+      .finally(() => {
+        previewRequestsRef.current.delete(task.jobId);
+      });
+  };
+
+  const showTaskPreview = (task: GenerationHistoryItem, rect: DOMRect) => {
+    ensurePreview(task);
+    setHoveredTask({ task, rect });
+  };
 
   const toggleSelectedTask = (jobId: string) => {
     setSelectionMode(true);
@@ -151,9 +153,9 @@ export function RecentTasksPanel({
                 }
                 setNavigatingJobId(task.jobId);
               }}
-              onMouseEnter={(event) => setHoveredTask({ task, rect: event.currentTarget.getBoundingClientRect() })}
+              onMouseEnter={(event) => showTaskPreview(task, event.currentTarget.getBoundingClientRect())}
               onMouseLeave={() => setHoveredTask(null)}
-              onFocus={(event) => setHoveredTask({ task, rect: event.currentTarget.getBoundingClientRect() })}
+              onFocus={(event) => showTaskPreview(task, event.currentTarget.getBoundingClientRect())}
               onBlur={() => setHoveredTask(null)}
             >
               <span>

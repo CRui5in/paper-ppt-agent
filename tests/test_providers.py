@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
+import httpx
 import pytest
 
 from backend.llm import registry as registry_module
@@ -287,3 +289,242 @@ async def test_openai_provider_respects_configured_deepseek_thinking(monkeypatch
     assert captured["extra_body"] == {"thinking": {"type": "disabled"}}
     assert "reasoning_effort" not in captured
     assert captured["temperature"] == 0.2
+
+
+@pytest.mark.asyncio
+async def test_custom_openai_proxy_uses_sdk_when_compatible(monkeypatch):
+    captured: dict[str, object] = {}
+
+    async def fake_create(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="sdk ok"))],
+            usage=None,
+        )
+
+    class FakeAsyncOpenAI:
+        def __init__(self, api_key: str, base_url: str | None = None) -> None:
+            captured["base_url"] = base_url
+            self.chat = SimpleNamespace(
+                completions=SimpleNamespace(create=fake_create),
+            )
+            self.beta = SimpleNamespace(
+                chat=SimpleNamespace(
+                    completions=SimpleNamespace(parse=fake_create),
+                ),
+            )
+            self.models = SimpleNamespace(list=lambda: fake_create())
+
+    async def forbidden_raw_completion(self, kwargs):
+        raise AssertionError("raw fallback should not be used")
+
+    async def passthrough_retry(func):
+        return await func()
+
+    monkeypatch.setattr("backend.llm.provider_openai.AsyncOpenAI", FakeAsyncOpenAI)
+    monkeypatch.setattr("backend.llm.provider_openai.call_with_retry", passthrough_retry)
+    monkeypatch.setattr(
+        "backend.llm.provider_openai.OpenAIProvider._create_raw_chat_completion",
+        forbidden_raw_completion,
+    )
+
+    provider = OpenAIProvider(
+        api_key="sk-test",
+        base_url="https://proxy.example.com/v1",
+        provider_name="openai",
+    )
+    response = await provider.chat(messages=[], model="gpt-5.5", max_tokens=2048)
+
+    assert response.content == "sdk ok"
+    assert captured["base_url"] == "https://proxy.example.com/v1"
+    assert captured["max_tokens"] == 2048
+
+
+@pytest.mark.asyncio
+async def test_custom_openai_proxy_falls_back_to_raw_when_sdk_is_blocked(monkeypatch):
+    captured_posts: list[dict[str, object]] = []
+
+    class BlockedRequestError(Exception):
+        status_code = 403
+
+    async def blocked_create(**kwargs):
+        raise BlockedRequestError("Your request was blocked.")
+
+    class FakeAsyncOpenAI:
+        def __init__(self, api_key: str, base_url: str | None = None) -> None:
+            self.chat = SimpleNamespace(
+                completions=SimpleNamespace(create=blocked_create),
+            )
+            self.beta = SimpleNamespace(
+                chat=SimpleNamespace(
+                    completions=SimpleNamespace(parse=blocked_create),
+                ),
+            )
+            self.models = SimpleNamespace(list=lambda: blocked_create())
+
+    class FakeResponse:
+        def __init__(self, payload: dict) -> None:
+            self.status_code = 200
+            self.text = "{}"
+            self._payload = payload
+
+        def json(self):
+            if "max_tokens" in self._payload:
+                return {
+                    "choices": [{"message": {"role": "assistant"}}],
+                    "usage": {"prompt_tokens": 5, "completion_tokens": 1},
+                }
+            return {
+                "choices": [
+                    {"message": {"role": "assistant", "content": "raw ok"}}
+                ],
+                "usage": {"prompt_tokens": 5, "completion_tokens": 2},
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        async def post(self, url: str, *, headers: dict, json: dict):
+            captured_posts.append({"url": url, "headers": headers, "json": json})
+            return FakeResponse(json)
+
+    async def passthrough_retry(func):
+        return await func()
+
+    monkeypatch.setattr("backend.llm.provider_openai.AsyncOpenAI", FakeAsyncOpenAI)
+    monkeypatch.setattr("backend.llm.provider_openai.httpx.AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr("backend.llm.provider_openai.call_with_retry", passthrough_retry)
+
+    provider = OpenAIProvider(
+        api_key="sk-test",
+        base_url="https://proxy.example.com",
+        provider_name="openai",
+    )
+    response = await provider.chat(messages=[], model="gpt-5.5", max_tokens=2048)
+
+    assert response.content == "raw ok"
+    assert response.usage is not None
+    assert response.usage.prompt_tokens == 5
+    assert response.usage.completion_tokens == 2
+    assert captured_posts[0]["url"] == "https://proxy.example.com/v1/chat/completions"
+    assert captured_posts[0]["json"]["max_tokens"] == 2048
+    assert "max_tokens" not in captured_posts[1]["json"]
+    assert captured_posts[1]["headers"]["Authorization"] == "Bearer sk-test"
+
+
+@pytest.mark.asyncio
+async def test_custom_openai_proxy_does_not_mask_v1_error_with_html_dashboard(monkeypatch):
+    class BlockedRequestError(Exception):
+        status_code = 403
+
+    async def blocked_create(**kwargs):
+        raise BlockedRequestError("Your request was blocked.")
+
+    class FakeAsyncOpenAI:
+        def __init__(self, api_key: str, base_url: str | None = None) -> None:
+            self.chat = SimpleNamespace(
+                completions=SimpleNamespace(create=blocked_create),
+            )
+            self.beta = SimpleNamespace(
+                chat=SimpleNamespace(
+                    completions=SimpleNamespace(parse=blocked_create),
+                ),
+            )
+            self.models = SimpleNamespace(list=lambda: blocked_create())
+
+    class FakeResponse:
+        def __init__(self, url: str) -> None:
+            self.status_code = 200
+            self.text = "<!doctype html><html><title>Gateway UI</title></html>"
+            self._url = url
+
+        def json(self):
+            if self._url.endswith("/v1/chat/completions"):
+                return {"choices": [{"message": {"role": "assistant"}}]}
+            raise json.JSONDecodeError("Expecting value", "", 0)
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        async def post(self, url: str, *, headers: dict, json: dict):
+            return FakeResponse(url)
+
+    async def passthrough_retry(func):
+        return await func()
+
+    monkeypatch.setattr("backend.llm.provider_openai.AsyncOpenAI", FakeAsyncOpenAI)
+    monkeypatch.setattr("backend.llm.provider_openai.httpx.AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr("backend.llm.provider_openai.call_with_retry", passthrough_retry)
+
+    provider = OpenAIProvider(
+        api_key="sk-test",
+        base_url="https://proxy.example.com",
+        provider_name="openai",
+    )
+
+    with pytest.raises(RuntimeError, match="no message content from https://proxy.example.com/v1/chat/completions"):
+        await provider.chat(messages=[], model="gpt-5.5", max_tokens=2048)
+
+
+@pytest.mark.asyncio
+async def test_custom_openai_proxy_reports_raw_timeout(monkeypatch):
+    class BlockedRequestError(Exception):
+        status_code = 403
+
+    async def blocked_create(**kwargs):
+        raise BlockedRequestError("Your request was blocked.")
+
+    class FakeAsyncOpenAI:
+        def __init__(self, api_key: str, base_url: str | None = None) -> None:
+            self.chat = SimpleNamespace(
+                completions=SimpleNamespace(create=blocked_create),
+            )
+            self.beta = SimpleNamespace(
+                chat=SimpleNamespace(
+                    completions=SimpleNamespace(parse=blocked_create),
+                ),
+            )
+            self.models = SimpleNamespace(list=lambda: blocked_create())
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        async def post(self, url: str, *, headers: dict, json: dict):
+            raise httpx.ReadTimeout("timed out")
+
+    async def passthrough_retry(func):
+        return await func()
+
+    monkeypatch.setattr("backend.llm.provider_openai.AsyncOpenAI", FakeAsyncOpenAI)
+    monkeypatch.setattr("backend.llm.provider_openai.httpx.AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr("backend.llm.provider_openai.call_with_retry", passthrough_retry)
+
+    provider = OpenAIProvider(
+        api_key="sk-test",
+        base_url="https://proxy.example.com",
+        provider_name="openai",
+    )
+
+    with pytest.raises(RuntimeError, match="timed out after 120s from https://proxy.example.com/v1/chat/completions"):
+        await provider.chat(messages=[], model="gpt-5.5", max_tokens=2048)

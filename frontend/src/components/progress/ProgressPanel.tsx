@@ -18,6 +18,7 @@ interface ProgressPanelProps {
   job?: JobStatus;
   connectionStatus: string;
   enrichmentStats?: ResearchEnrichmentStats;
+  slideCount?: number;
   hideHeader?: boolean;
   compact?: boolean;
   logs?: string[];
@@ -25,16 +26,31 @@ interface ProgressPanelProps {
 
 const STAGE_INDEX = new Map(PROGRESS_STAGES.map((stage, index) => [stage.id, index]));
 
-export function ProgressPanel({ job, connectionStatus, enrichmentStats, hideHeader = false, compact = false, logs = [] }: ProgressPanelProps) {
+function slideMetric(job?: JobStatus, slideCount = 0): { completed: number; total: number; label: string } {
+  const total = Math.max(job?.total_slides ?? 0, 0);
+  const rawCompleted = Math.max(job?.slides_completed ?? 0, slideCount);
+  const completed = total > 0 ? Math.min(rawCompleted, total) : rawCompleted;
+  return {
+    completed,
+    total,
+    label: total > 0 ? `${completed} / ${total}` : String(completed),
+  };
+}
+
+export function ProgressPanel({ job, connectionStatus, enrichmentStats, slideCount = 0, hideHeader = false, compact = false, logs = [] }: ProgressPanelProps) {
   const { t, locale } = useLocale();
   const isConnected = connectionStatus === "connected";
   const isConnecting = connectionStatus === "connecting";
+  const jobStatus = job?.status ?? "idle";
+  const isActiveRun = Boolean(job && !["idle", "complete", "error", "cancelled"].includes(jobStatus));
+  const showConnectionRecovery = isActiveRun && !isConnected;
   const activeStatus = inferActiveStage(job, logs);
+  const slidesMetric = slideMetric(job, slideCount);
   const activeStageIndex =
     activeStatus && STAGE_INDEX.has(activeStatus) ? STAGE_INDEX.get(activeStatus)! : -1;
-  const allComplete = job?.status === "complete";
-  const isStopped = job?.status === "error" || job?.status === "cancelled";
-  const statusLabel = translateStageStatus(job?.status ?? "idle", locale, "progress");
+  const allComplete = jobStatus === "complete";
+  const isStopped = jobStatus === "error" || jobStatus === "cancelled";
+  const statusLabel = translateStageStatus(jobStatus, locale, "progress");
   const activeMessage = translateJobMessage(job?.message, locale);
   const showEnrichment = !!enrichmentStats && (
     !!enrichmentStats.arxiv ||
@@ -63,6 +79,12 @@ export function ProgressPanel({ job, connectionStatus, enrichmentStats, hideHead
             </HoverTooltip>
           </div>
         </div>
+        {showConnectionRecovery ? (
+          <div className="monitor-connection-recovery">
+            <Loader2 size={13} className="spin" />
+            <span>{isConnecting ? t("progress.reconnecting") : t("progress.connectionPaused")}</span>
+          </div>
+        ) : null}
         <ol className="compact-stage-list">
           {PROGRESS_STAGES.map((stage, index) => {
             const Icon = stage.icon;
@@ -117,7 +139,7 @@ export function ProgressPanel({ job, connectionStatus, enrichmentStats, hideHead
         </div>
         <div>
           <span>{t("progress.metricSlides")}</span>
-          <strong>{job?.slides_completed ?? 0}</strong>
+          <strong>{slidesMetric.label}</strong>
         </div>
         <div className="monitor-metric-status">
           <span>{t("progress.metricStatus")}</span>
@@ -130,6 +152,12 @@ export function ProgressPanel({ job, connectionStatus, enrichmentStats, hideHead
       <div className="progress-bar">
         <div className="progress-fill" style={{ width: `${(job?.progress ?? 0) * 100}%` }} />
       </div>
+      {showConnectionRecovery ? (
+        <div className="monitor-connection-recovery">
+          <Loader2 size={13} className="spin" />
+          <span>{isConnecting ? t("progress.reconnecting") : t("progress.connectionPaused")}</span>
+        </div>
+      ) : null}
 
       <ul className="stage-list">
         {PROGRESS_STAGES.map((stage, index) => {
