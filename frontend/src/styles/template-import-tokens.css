@@ -1,0 +1,1851 @@
+/*
+ * Template Import design tokens (per design.md §Design Tokens).
+ *
+ * NOTE: We intentionally namespace every variable with the `--ti-*` prefix.
+ * `frontend/src/styles/globals.css` already defines `--accent`, `--success`,
+ * `--surface`, `--line`, `--muted`, etc. as shadcn-style HSL *triplets*
+ * (e.g. `--accent: 220 78% 47%`) which are consumed via `hsl(var(--accent))`
+ * — including in `tailwind.config.ts`. Re-declaring those names with full
+ * `hsl(...)` colors would break every shadcn component (`hsl(hsl(...))` is
+ * invalid). The `--ti-*` prefix is the convention the rest of the
+ * template-import surface (Req 2.6) uses to opt into the new palette
+ * without polluting the global theme. The HSL values exactly match the
+ * design.md token table.
+ */
+
+/* ── Light theme (default) ─────────────────────────────────────────────── */
+:root,
+:root[data-theme="light"] {
+  --ti-accent: hsl(222 90% 56%);
+  --ti-accent-fg: hsl(0 0% 100%);
+  --ti-success: hsl(145 60% 38%);
+  --ti-warning: hsl(38 92% 50%);
+  --ti-danger: hsl(0 70% 50%);
+  --ti-muted: hsl(220 10% 50%);
+  --ti-surface: hsl(0 0% 100%);
+  --ti-surface-inset: hsl(220 16% 96%);
+  --ti-line: hsl(220 12% 86%);
+
+  --ti-text: hsl(220 15% 18%);
+  --ti-text-on-accent: hsl(0 0% 100%);
+
+  --ti-radius-sm: 6px;
+  --ti-radius-md: 10px;
+  --ti-radius-lg: 14px;
+  --ti-spacing: 14px;
+
+  --ti-focus-ring: 0 0 0 3px hsl(222 90% 56% / 0.35);
+}
+
+/* ── Dark theme (matches globals.css `[data-theme="dark"]` toggle) ─────── */
+:root[data-theme="dark"],
+[data-theme="dark"],
+.dark {
+  --ti-accent: hsl(222 95% 70%);
+  --ti-accent-fg: hsl(220 14% 14%);
+  --ti-success: hsl(145 55% 60%);
+  --ti-warning: hsl(42 95% 60%);
+  --ti-danger: hsl(0 75% 65%);
+  --ti-muted: hsl(220 10% 65%);
+  --ti-surface: hsl(220 14% 14%);
+  --ti-surface-inset: hsl(220 12% 18%);
+  --ti-line: hsl(220 12% 26%);
+
+  --ti-text: hsl(220 15% 92%);
+  --ti-text-on-accent: hsl(220 14% 14%);
+
+  --ti-focus-ring: 0 0 0 3px hsl(222 95% 70% / 0.45);
+}
+
+/* Honour OS preference only when the app hasn't picked a theme explicitly. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --ti-accent: hsl(222 95% 70%);
+    --ti-accent-fg: hsl(220 14% 14%);
+    --ti-success: hsl(145 55% 60%);
+    --ti-warning: hsl(42 95% 60%);
+    --ti-danger: hsl(0 75% 65%);
+    --ti-muted: hsl(220 10% 65%);
+    --ti-surface: hsl(220 14% 14%);
+    --ti-surface-inset: hsl(220 12% 18%);
+    --ti-line: hsl(220 12% 26%);
+
+    --ti-text: hsl(220 15% 92%);
+    --ti-text-on-accent: hsl(220 14% 14%);
+
+    --ti-focus-ring: 0 0 0 3px hsl(222 95% 70% / 0.45);
+  }
+}
+
+/* Status semantic helpers — every chip / banner / button can compose these. */
+.ti-status-info { color: var(--ti-accent); }
+.ti-status-success { color: var(--ti-success); }
+.ti-status-warning { color: var(--ti-warning); }
+.ti-status-danger { color: var(--ti-danger); }
+.ti-status-muted { color: var(--ti-muted); }
+
+.ti-bg-info { background: hsl(from var(--ti-accent) h s l / 0.12); }
+.ti-bg-success { background: hsl(from var(--ti-success) h s l / 0.12); }
+.ti-bg-warning { background: hsl(from var(--ti-warning) h s l / 0.12); }
+.ti-bg-danger { background: hsl(from var(--ti-danger) h s l / 0.12); }
+
+/*
+ * Universal focus ring for the template-import surface (Req 2.7).
+ *
+ * Applied to every interactive descendant of `.ti-surface` so individual
+ * components don't have to opt in per element. We avoid `:focus-visible`
+ * at the document root to not stomp on shadcn's existing focus styles
+ * outside of the template-import workspace.
+ */
+.ti-surface :is(button, a, input, select, textarea, summary, [role="button"], [role="tab"], [tabindex]):focus-visible,
+.ti-focusable:focus-visible {
+  outline: none;
+  box-shadow: var(--ti-focus-ring);
+  border-radius: var(--ti-radius-sm);
+}
+
+
+/* ─── SlideStage / annotation overlay (Template Import overhaul) ─────── */
+
+/*
+ * The SlideStage container holds the big preview at a strict 16:9 aspect
+ * ratio. The background SVG and the annotation overlay are stacked
+ * absolutely on top of each other so the overlay's viewBox (1280×720)
+ * lines up exactly with the background regardless of the container's
+ * actual rendered size.
+ */
+.ti-stage-container {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  width: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  margin: 0 auto;
+  overflow: hidden;
+  border-radius: var(--ti-radius-md, 10px);
+  border: 1px solid var(--ti-line);
+  background: var(--ti-surface);
+}
+
+.ti-stage-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  /* pointer-events is overridden inline based on stage mode. */
+}
+
+/*
+ * Persisted annotation rectangle. Default fill is the warning hue at low
+ * opacity; resolved annotations switch to success and dim further.
+ */
+.ti-annotation-rect {
+  fill: color-mix(in srgb, var(--ti-warning) 18%, transparent);
+  stroke: var(--ti-warning);
+  stroke-width: 1.5;
+  transition: opacity 120ms ease;
+}
+
+.ti-annotation-rect.is-resolved {
+  fill: color-mix(in srgb, var(--ti-success) 14%, transparent);
+  stroke: var(--ti-success);
+  opacity: 0.6;
+}
+
+/*
+ * Suggestion card — used by CollabPanel. Mirrors `.ti-surface` styling
+ * so the card always reads as part of the template-import surface.
+ */
+.ti-suggestion-card {
+  background: var(--ti-surface);
+  border: 1px solid var(--ti-line);
+  border-radius: var(--ti-radius-md, 10px);
+}
+
+
+/* ─── ImportFlowVertical (right column flow checklist) ───────────────── */
+
+.ti-flow-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px;
+  border-top: 1px solid var(--ti-line);
+}
+
+.ti-flow-section:first-child {
+  border-top: 0;
+}
+
+.ti-flow-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--ti-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.ti-flow-subtitle {
+  margin: 0 0 4px;
+  font-size: 11px;
+  color: var(--ti-muted);
+}
+
+.ti-flow-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ti-flow-item {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  min-height: 28px;
+  padding: 4px 0;
+}
+
+.ti-flow-rail {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 100%;
+}
+
+.ti-flow-line {
+  position: absolute;
+  left: 50%;
+  width: 2px;
+  background: var(--ti-line);
+  transform: translateX(-50%);
+  transition: background 240ms ease;
+}
+
+.ti-flow-line:not(.ti-flow-line-after) {
+  top: 0;
+  height: calc(50% - 7px);
+}
+
+.ti-flow-line-after {
+  bottom: 0;
+  height: calc(50% - 7px);
+}
+
+.ti-flow-line[data-state="done"] {
+  background: var(--ti-success);
+}
+
+.ti-flow-dot {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  color: var(--ti-text-on-accent, #fff);
+  background: transparent;
+  border: 2px solid var(--ti-line);
+  transition: background 200ms ease, border-color 200ms ease;
+}
+
+.ti-flow-dot[data-state="active"] {
+  background: var(--ti-accent);
+  border-color: var(--ti-accent);
+  animation: ti-pulse-dot 1.6s ease-in-out infinite;
+}
+
+.ti-flow-dot[data-state="done"] {
+  background: var(--ti-success);
+  border-color: var(--ti-success);
+  color: #fff;
+}
+
+.ti-flow-dot[data-state="pending"] {
+  background: transparent;
+  border-color: var(--ti-line);
+}
+
+.ti-flow-dot[data-state="error"] {
+  background: var(--ti-danger);
+  border-color: var(--ti-danger);
+  color: #fff;
+}
+
+@keyframes ti-pulse-dot {
+  0%, 100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--ti-accent) 40%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 6px color-mix(in srgb, var(--ti-accent) 0%, transparent);
+  }
+}
+
+.ti-flow-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.ti-flow-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ti-text);
+}
+
+.ti-flow-item[data-state="pending"] .ti-flow-label {
+  color: var(--ti-muted);
+  font-weight: 500;
+}
+
+.ti-flow-item[data-state="active"] .ti-flow-label {
+  color: var(--ti-accent);
+}
+
+.ti-flow-item[data-state="error"] .ti-flow-label {
+  color: var(--ti-danger);
+}
+
+.ti-flow-detail {
+  font-size: 11px;
+  color: var(--ti-muted);
+  margin-top: 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ti-flow-spinner {
+  color: var(--ti-accent);
+  flex-shrink: 0;
+}
+
+/* ─── AgentActivityStream ─────────────────────────────────────────────── */
+
+.ti-activity-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px;
+  border-top: 1px solid var(--ti-line);
+  min-height: 0;
+}
+
+.ti-activity-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ti-activity-header-icon {
+  color: var(--ti-accent);
+  flex-shrink: 0;
+}
+
+.ti-activity-heading {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--ti-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 0;
+}
+
+.ti-activity-count {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--ti-muted);
+  background: var(--ti-surface-inset);
+  padding: 1px 6px;
+  border-radius: 999px;
+}
+
+.ti-activity-empty {
+  margin: 0;
+  font-size: 11px;
+  color: var(--ti-muted);
+  font-style: italic;
+}
+
+.ti-activity-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.ti-activity-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 3px 14px minmax(0, auto) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px 4px 0;
+  border-radius: var(--ti-radius-sm);
+  font-family: ui-monospace, "SFMono-Regular", "Cascadia Code", Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--ti-text);
+  animation: ti-activity-slide-in 220ms ease-out both;
+}
+
+@keyframes ti-activity-slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.ti-activity-bar {
+  align-self: stretch;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--ti-muted);
+}
+
+.ti-activity-row[data-state="active"] .ti-activity-bar {
+  background: var(--ti-accent);
+}
+
+.ti-activity-row[data-state="active"] {
+  background: color-mix(in srgb, var(--ti-accent) 6%, transparent);
+}
+
+.ti-activity-row[data-state="done"] .ti-activity-bar {
+  background: var(--ti-success);
+}
+
+.ti-activity-row[data-state="warning"] .ti-activity-bar {
+  background: var(--ti-warning);
+}
+
+.ti-activity-row[data-state="error"] .ti-activity-bar {
+  background: var(--ti-danger);
+}
+
+.ti-activity-row[data-state="error"] {
+  background: color-mix(in srgb, var(--ti-danger) 8%, transparent);
+}
+
+.ti-activity-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ti-muted);
+  flex-shrink: 0;
+}
+
+.ti-activity-row[data-state="active"] .ti-activity-icon {
+  color: var(--ti-accent);
+}
+
+.ti-activity-row[data-state="done"] .ti-activity-icon {
+  color: var(--ti-success);
+}
+
+.ti-activity-row[data-state="warning"] .ti-activity-icon {
+  color: var(--ti-warning);
+}
+
+.ti-activity-row[data-state="error"] .ti-activity-icon {
+  color: var(--ti-danger);
+}
+
+.ti-activity-row[data-kind="user"] .ti-activity-icon {
+  color: var(--ti-accent);
+}
+
+.ti-activity-label {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ti-activity-detail {
+  color: var(--ti-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ti-activity-spinner {
+  color: var(--ti-accent);
+  flex-shrink: 0;
+}
+
+/* ─── Integrated collaboration stream (activity + conversation) ───────── */
+
+.ti-console-panel {
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.ti-console-panel > section {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.ti-console-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+}
+
+.ti-console-count {
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--ti-surface-inset);
+  color: var(--ti-muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.ti-console-timeline {
+  display: flex;
+  flex: 1 1 0;
+  min-height: 0;
+  height: 0;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+  border: 1px solid var(--ti-line);
+  border-radius: var(--ti-radius-sm);
+  background: color-mix(in srgb, var(--ti-surface-inset) 78%, var(--ti-surface));
+  padding: 10px 10px 18px;
+  scroll-padding-bottom: 18px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  isolation: isolate;
+  overscroll-behavior: contain;
+}
+
+.ti-console-activity {
+  position: relative;
+  display: grid;
+  grid-template-columns: 15px auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 6px;
+  min-height: 21px;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: var(--ti-text);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ti-console-activity {
+    animation: ti-activity-fade-in 140ms ease-out both;
+  }
+}
+
+@keyframes ti-activity-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.ti-console-activity[data-state="active"] {
+  color: color-mix(in srgb, var(--ti-accent) 70%, var(--ti-text));
+}
+
+.ti-console-activity[data-state="error"] {
+  color: var(--ti-danger);
+}
+
+.ti-console-activity[data-state="warning"] {
+  color: var(--ti-warning);
+}
+
+.ti-console-activity-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ti-muted);
+  margin-top: 2px;
+}
+
+.ti-console-activity[data-state="active"] .ti-console-activity-icon {
+  color: var(--ti-accent);
+}
+
+.ti-console-activity[data-state="done"] .ti-console-activity-icon {
+  color: var(--ti-success);
+}
+
+.ti-console-activity[data-state="error"] .ti-console-activity-icon {
+  color: var(--ti-danger);
+}
+
+.ti-console-activity-label {
+  min-width: 0;
+  color: var(--ti-text);
+  font-weight: 700;
+  white-space: nowrap;
+  padding-top: 1px;
+}
+
+.ti-console-activity-copy {
+  display: block;
+  min-width: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.ti-console-activity-copy em {
+  color: var(--ti-muted);
+  font-style: normal;
+}
+
+/* ─── Chat bubbles (User / Agent) ────────────────────────────────────── */
+
+.ti-bubble-row {
+  display: flex;
+  width: 100%;
+}
+
+.ti-bubble-row[data-role="user"] {
+  justify-content: flex-end;
+}
+
+.ti-bubble-row[data-role="assistant"] {
+  justify-content: flex-start;
+}
+
+.ti-bubble {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 92%;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--ti-line) 60%, transparent);
+  background: var(--ti-surface);
+  color: var(--ti-text);
+  font-size: 12px;
+  line-height: 1.55;
+  transform-origin: top var(--ti-bubble-origin-x, left);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--ti-line) 35%, transparent);
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.ti-bubble pre {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.ti-bubble table {
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.ti-bubble-row[data-role="user"] .ti-bubble {
+  background: color-mix(in srgb, var(--ti-accent) 14%, var(--ti-surface));
+  border-color: color-mix(in srgb, var(--ti-accent) 35%, var(--ti-line));
+  border-bottom-right-radius: 3px;
+  --ti-bubble-origin-x: right;
+}
+
+.ti-bubble-row[data-role="assistant"] .ti-bubble {
+  background: color-mix(in srgb, var(--ti-surface) 90%, transparent);
+  border-bottom-left-radius: 3px;
+  --ti-bubble-origin-x: left;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ti-bubble {
+    animation: ti-bubble-pop 220ms cubic-bezier(0.34, 1.4, 0.64, 1) both;
+  }
+}
+
+@keyframes ti-bubble-pop {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.ti-bubble-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--ti-muted);
+  text-transform: uppercase;
+}
+
+.ti-bubble-row[data-role="user"] .ti-bubble-header {
+  color: var(--ti-accent);
+}
+
+.ti-bubble-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--ti-line) 35%, var(--ti-surface));
+  color: var(--ti-muted);
+}
+
+.ti-bubble-row[data-role="user"] .ti-bubble-avatar {
+  background: color-mix(in srgb, var(--ti-accent) 18%, var(--ti-surface));
+  color: var(--ti-accent);
+}
+
+.ti-bubble-name {
+  letter-spacing: 0.04em;
+}
+
+.ti-bubble-content {
+  margin: 0;
+  min-width: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.55;
+  font-family: var(--ti-font-sans, system-ui, sans-serif);
+}
+
+.ti-bubble-content.ti-markdown {
+  font-family: var(--ti-font-sans, system-ui, sans-serif);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+/* Legacy class kept as alias so existing hooks don't break.            */
+.ti-console-message {
+  display: contents;
+}
+
+/* Markdown body for assistant / Agent messages. */
+.ti-markdown {
+  white-space: normal;
+  font-family: var(--ti-font-sans, system-ui, sans-serif);
+  color: var(--ti-text);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.ti-markdown > :first-child {
+  margin-top: 0;
+}
+
+.ti-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.ti-markdown p {
+  margin: 4px 0;
+}
+
+.ti-markdown ul,
+.ti-markdown ol {
+  margin: 4px 0 4px 18px;
+  padding: 0;
+}
+
+.ti-markdown li {
+  margin: 2px 0;
+}
+
+.ti-markdown li > ul,
+.ti-markdown li > ol {
+  margin: 2px 0 2px 14px;
+}
+
+.ti-markdown strong {
+  font-weight: 700;
+  color: var(--ti-text);
+}
+
+.ti-markdown em {
+  font-style: italic;
+}
+
+.ti-markdown code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--ti-line) 35%, var(--ti-surface));
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  word-break: break-word;
+}
+
+.ti-markdown pre {
+  margin: 6px 0;
+  padding: 8px 10px;
+  border-radius: var(--ti-radius-sm, 6px);
+  background: color-mix(in srgb, var(--ti-line) 35%, var(--ti-surface));
+  overflow-x: auto;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.ti-markdown pre code {
+  padding: 0;
+  background: transparent;
+}
+
+.ti-markdown a {
+  color: var(--ti-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.ti-markdown blockquote {
+  margin: 4px 0;
+  padding: 2px 8px;
+  border-left: 2px solid color-mix(in srgb, var(--ti-line) 70%, transparent);
+  color: var(--ti-muted);
+}
+
+.ti-markdown table {
+  border-collapse: collapse;
+  margin: 4px 0;
+  font-size: 11px;
+}
+
+.ti-markdown th,
+.ti-markdown td {
+  border: 1px solid var(--ti-line);
+  padding: 3px 6px;
+  text-align: left;
+}
+
+/* Collapsible group of secondary Agent steps (tool calls, system frames). */
+.ti-console-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border: 1px solid color-mix(in srgb, var(--ti-line) 60%, transparent);
+  border-radius: var(--ti-radius-sm, 6px);
+  background: color-mix(in srgb, var(--ti-surface-inset) 50%, transparent);
+  overflow: hidden;
+}
+
+.ti-console-group-summary {
+  display: grid;
+  grid-template-columns: 14px auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 8px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  color: var(--ti-text);
+  font-size: 11px;
+  line-height: 1.45;
+  font-family: inherit;
+}
+
+.ti-console-group-summary:hover {
+  background: color-mix(in srgb, var(--ti-line) 18%, transparent);
+}
+
+.ti-console-group-summary[data-state="active"] .ti-console-activity-label {
+  color: color-mix(in srgb, var(--ti-accent) 70%, var(--ti-text));
+}
+
+.ti-console-group-summary[data-state="error"] .ti-console-activity-label {
+  color: var(--ti-danger);
+}
+
+.ti-console-group-summary[data-state="done"] .ti-console-activity-label,
+.ti-console-group-summary[data-state="done"] > svg {
+  color: var(--ti-success);
+}
+
+.ti-console-group-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ti-muted);
+}
+
+.ti-console-group-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 8px 6px 28px;
+  border-top: 1px solid color-mix(in srgb, var(--ti-line) 50%, transparent);
+  background: color-mix(in srgb, var(--ti-surface) 70%, transparent);
+}
+
+/* Composer: 2-layer (textarea + footer with status & send button). */
+.ti-console-composer {
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  gap: 0;
+  padding: 0;
+  border: 1px solid var(--ti-line);
+  border-radius: var(--ti-radius-sm, 6px);
+  transition: border-color 120ms ease;
+  background: var(--ti-surface);
+  overflow: hidden;
+}
+
+.ti-console-composer:focus-within {
+  border-color: color-mix(in srgb, var(--ti-accent) 60%, var(--ti-line));
+}
+
+.ti-console-composer-textarea {
+  flex: 1;
+  min-width: 0;
+  resize: none;
+  border: 0;
+  outline: none;
+  background: transparent;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  font-family: var(--ti-font-sans, system-ui, sans-serif);
+  min-height: 60px;
+}
+
+.ti-console-composer-textarea:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.ti-console-composer-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 4px 6px 4px 8px;
+  border-top: 1px solid color-mix(in srgb, var(--ti-line) 60%, transparent);
+  background: color-mix(in srgb, var(--ti-surface-inset) 60%, var(--ti-surface));
+  min-height: 30px;
+}
+
+.ti-console-composer-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 10.5px;
+  color: var(--ti-muted);
+}
+
+.ti-console-meta-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ti-line) 25%, var(--ti-surface));
+  color: var(--ti-muted);
+  white-space: nowrap;
+}
+
+.ti-console-meta-text {
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ti-console-meta-language {
+  margin-left: 2px;
+  font-size: 10px;
+  color: color-mix(in srgb, var(--ti-muted) 70%, var(--ti-text));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ti-console-composer-send {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 4px 12px;
+  height: 26px;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Thinking indicator inside an assistant bubble. */
+.ti-bubble[data-thinking="true"] {
+  background: color-mix(in srgb, var(--ti-surface) 95%, transparent);
+}
+
+.ti-thinking {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  color: var(--ti-muted);
+  font-style: italic;
+}
+
+.ti-thinking-dots {
+  display: inline-flex;
+  gap: 3px;
+  align-items: end;
+}
+
+.ti-thinking-dots > i {
+  display: inline-block;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--ti-muted);
+  animation: ti-thinking-blink 1.2s ease-in-out infinite both;
+}
+
+.ti-thinking-dots > i:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.ti-thinking-dots > i:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes ti-thinking-blink {
+  0%, 80%, 100% {
+    opacity: 0.25;
+    transform: translateY(0);
+  }
+  40% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+
+.ti-upload-mode-switch {
+  display: grid;
+  width: min(100%, 210px);
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+  border: 1px solid var(--ti-line);
+  border-radius: var(--ti-radius-sm);
+  background: var(--ti-surface);
+  padding: 2px;
+}
+
+.ti-upload-mode-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 0;
+  border-radius: 4px;
+  padding: 4px 6px;
+  color: var(--ti-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.ti-upload-mode-button[data-active="true"] {
+  background: color-mix(in srgb, var(--ti-accent) 12%, var(--ti-surface));
+  color: var(--ti-accent);
+}
+
+.template-edit-toolbar {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  flex-wrap: wrap;
+  padding-left: 4px;
+}
+
+.template-edit-toolbar button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 26px;
+  border: 1px solid var(--ti-line);
+  border-radius: var(--ti-radius-sm, 6px);
+  background: var(--ti-surface);
+  color: var(--ti-text);
+  padding: 4px 7px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.template-edit-toolbar button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+/* ─── Templates page workspace grid + middle column ──────────────────── */
+
+.templates-workspace {
+  display: grid;
+  grid-template-columns: minmax(270px, 300px) minmax(0, 1fr) minmax(360px, 400px);
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-areas: "sources slides config";
+  gap: 14px;
+  height: calc(100vh - 64px);
+  min-height: 720px;
+  padding: 14px;
+  overflow: hidden;
+}
+
+@media (max-width: 1320px) {
+  .templates-workspace {
+    grid-template-columns: 280px minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(280px, 40vh);
+    grid-template-areas:
+      "sources slides"
+      "config slides";
+  }
+}
+
+@media (max-width: 980px) {
+  .templates-workspace {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto auto;
+    grid-template-areas:
+      "sources"
+      "slides"
+      "config";
+    height: auto;
+    min-height: 0;
+  }
+}
+
+/* The slide-workspace-panel inherits flex column layout from globals.css.
+ * Templates page just needs its own background/border treatment so it
+ * matches the rest of the .ti-surface palette. The layout (header on
+ * top, slide-stage in the middle, bottom rail at the bottom) is the
+ * same flex stacking as `.slide-workspace-panel` already provides. */
+.templates-slide-panel {
+  background: var(--ti-surface);
+  border: 1px solid var(--ti-line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.templates-slide-panel > .slide-workspace-header {
+  flex-shrink: 0;
+}
+
+.templates-slide-panel > .slide-stage,
+.templates-slide-panel > .templates-slide-stage-grid {
+  flex: 1;
+  min-height: 0;
+}
+
+.templates-slide-panel > .templates-bottom-rail {
+  flex-shrink: 0;
+}
+
+/* Slide-stage grid override: keep the workspace's column proportions
+ * (clamp(220px, 14vw, 320px) | minmax(0, 1fr)) and ensure the rail and
+ * canvas can both share the height of the panel. The toolbar row spans
+ * both columns (matches the workspace), and the right column stacks
+ * canvas + 5-page rail. */
+.templates-slide-stage-grid {
+  display: grid;
+  grid-template-columns: clamp(220px, 14vw, 320px) minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  align-items: stretch;
+  overflow: hidden;
+}
+
+.templates-slide-stage-grid > .templates-slide-toolbar {
+  grid-column: 1 / -1;
+  grid-row: 1;
+}
+
+.templates-slide-stage-grid > .templates-vertical-rail {
+  grid-column: 1;
+  grid-row: 1 / -1;
+}
+
+.templates-slide-stage-grid > .templates-right-column {
+  grid-column: 2;
+  grid-row: 1 / -1;
+}
+
+.templates-slide-stage-grid:has(.templates-slide-toolbar) > .templates-vertical-rail,
+.templates-slide-stage-grid:has(.templates-slide-toolbar) > .templates-right-column {
+  grid-row: 2 / -1;
+}
+
+.templates-right-column {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  height: 100%;
+}
+
+.templates-right-column > .slide-canvas-area {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.templates-right-column > .templates-bottom-rail {
+  flex-shrink: 0;
+}
+
+/* ─── Vertical thumbnail rail (left of slide-stage) ───────────────────── */
+
+/* Inherits .thumbnail-rail (column flex) from globals.css; we just
+ * adjust the surface, padding, and tile metrics for the templates page. */
+.templates-vertical-rail {
+  padding: 12px 10px;
+  gap: 8px;
+  background: var(--ti-surface);
+  border-right: 1px solid var(--ti-line);
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-width: 0;
+}
+
+.templates-vertical-rail .templates-rail-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  color: var(--ti-text);
+  font: inherit;
+  text-align: left;
+}
+
+.templates-vertical-rail .templates-rail-thumb {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border: 1px solid var(--ti-line);
+  border-radius: 5px;
+  overflow: hidden;
+  background: var(--ti-surface-inset);
+  transition: border-color 180ms ease, box-shadow 180ms ease;
+}
+
+.templates-vertical-rail .templates-rail-tile-active .templates-rail-thumb {
+  border: 2px solid var(--ti-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ti-accent) 18%, transparent);
+}
+
+.templates-vertical-rail .templates-rail-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--ti-muted);
+  text-transform: none;
+  letter-spacing: 0;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.templates-vertical-rail .templates-rail-tile-active .templates-rail-label {
+  color: var(--ti-accent);
+  font-weight: 600;
+}
+
+.templates-vertical-rail .templates-rail-index {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  background: var(--ti-surface-inset);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--ti-muted);
+}
+
+.templates-vertical-rail .templates-rail-tile-active .templates-rail-index {
+  background: color-mix(in srgb, var(--ti-accent) 18%, transparent);
+  color: var(--ti-accent);
+}
+
+.templates-vertical-rail .templates-rail-meta {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ti-muted);
+  text-transform: none;
+  letter-spacing: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.templates-rail-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 8px;
+  font-size: 11px;
+  color: var(--ti-muted);
+  text-align: center;
+}
+
+/* ─── Big preview area (right of slide-stage) ─────────────────────────── */
+
+/* Inherits .slide-canvas-area (flex column with padding) from globals.css.
+ * We swap to the templates surface palette and ensure children fill the
+ * available height like the workspace canvas does. */
+.templates-canvas-area {
+  background: var(--ti-surface-inset);
+  padding: 0;
+  overflow: hidden;
+  gap: 0;
+}
+
+.templates-canvas-area > * {
+  flex: 1;
+  min-height: 0;
+}
+
+.templates-canvas-area > .ti-slide-stage,
+.templates-canvas-area > .templates-slide-stage {
+  flex: 1;
+  min-height: 0;
+  background: var(--ti-surface);
+}
+
+/* Importing centered progress wrapper */
+.templates-stage-importing {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  min-height: 0;
+}
+
+.templates-stage-importing > div {
+  width: 100%;
+  max-width: 560px;
+}
+
+.templates-vertical-rail .rail-slide-empty {
+  cursor: default;
+}
+
+.templates-vertical-rail .rail-slide-empty > span {
+  color: var(--ti-muted);
+}
+
+.templates-vertical-rail .rail-empty-frame {
+  border-style: solid;
+  background: var(--ti-surface);
+}
+
+/* ─── Bottom rail (5 page-type tiles) ─────────────────────────────────── */
+
+/* Sits below .slide-stage inside .slide-workspace-panel — replaces the
+ * workspace's .agent-monitor-panel slot in this layout. Five equal cells
+ * are laid out via grid so each page-type tile keeps its native 16:9
+ * thumbnail size while the row is evenly distributed. */
+.templates-bottom-rail {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  justify-items: center;
+  align-items: start;
+  gap: 12px;
+  padding: 14px 18px;
+  border-top: 1px solid var(--ti-line);
+  background: var(--ti-surface);
+  flex-shrink: 0;
+  min-height: 124px;
+  max-height: 148px;
+  overflow-x: hidden;
+  overflow-y: hidden;
+}
+
+.templates-bottom-rail .templates-bottom-tile {
+  width: 100%;
+  max-width: 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  color: var(--ti-text);
+}
+
+.templates-bottom-rail .templates-bottom-tile:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.templates-bottom-rail .templates-bottom-thumb {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border: 1px solid var(--ti-line);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--ti-surface-inset);
+  transition: border-color 180ms ease, box-shadow 180ms ease;
+}
+
+.templates-bottom-rail .templates-bottom-thumb > svg,
+.templates-bottom-rail .templates-bottom-thumb > div > svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.templates-bottom-rail .templates-bottom-tile-active .templates-bottom-thumb {
+  border: 2px solid var(--ti-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ti-accent) 18%, transparent);
+}
+
+.templates-bottom-rail .templates-bottom-tile-empty .templates-bottom-thumb {
+  border-style: dashed;
+  background: repeating-linear-gradient(
+    45deg,
+    var(--ti-surface-inset),
+    var(--ti-surface-inset) 6px,
+    var(--ti-surface) 6px,
+    var(--ti-surface) 12px
+  );
+}
+
+.templates-bottom-rail .templates-bottom-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--ti-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 700;
+}
+
+.templates-bottom-rail .templates-bottom-tile-active .templates-bottom-label {
+  color: var(--ti-accent);
+}
+
+.templates-bottom-rail .templates-bottom-mapped {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--ti-muted);
+  background: var(--ti-surface-inset);
+  border-radius: 999px;
+  padding: 1px 6px;
+  text-transform: none;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+.templates-bottom-rail .templates-bottom-tile-active .templates-bottom-mapped {
+  color: var(--ti-accent-fg);
+  background: var(--ti-accent);
+}
+
+/* Big preview frame for the browsing state. */
+.templates-big-preview {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  min-height: 0;
+}
+
+.templates-big-preview-frame {
+  position: relative;
+  width: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  aspect-ratio: 16 / 9;
+  border: 1px solid var(--ti-line);
+  border-radius: var(--ti-radius-md);
+  background: var(--ti-surface);
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.05);
+}
+
+.templates-big-preview-svg {
+  width: 100%;
+  height: 100%;
+}
+
+.templates-big-preview-svg > svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.templates-big-preview-empty {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  color: var(--ti-muted);
+  background:
+    repeating-linear-gradient(
+      45deg,
+      var(--ti-surface-inset),
+      var(--ti-surface-inset) 8px,
+      var(--ti-surface) 8px,
+      var(--ti-surface) 16px
+    );
+}
+
+.templates-big-preview-chip {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ti-accent) 14%, var(--ti-surface));
+  color: var(--ti-accent);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.templates-middle-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 32px;
+  text-align: center;
+}
+
+.templates-canvas-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  padding: 0;
+  background: var(--ti-surface-inset);
+  color: var(--ti-muted);
+  font-size: 13px;
+}
+
+.templates-canvas-empty-text {
+  font-size: 13px;
+  color: var(--ti-muted);
+}
+
+.templates-middle-empty-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 80px;
+  height: 80px;
+  border-radius: 999px;
+  color: var(--ti-accent);
+  background: color-mix(in srgb, var(--ti-accent) 12%, transparent);
+}
+
+.templates-middle-empty-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--ti-text);
+}
+
+.templates-middle-empty-hint {
+  font-size: 13px;
+  color: var(--ti-muted);
+  max-width: 320px;
+}
+
+/* Confirm-import button at the right end of slide-workspace-header. */
+.templates-export-menu {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.templates-export-menu .templates-confirm-hint {
+  font-size: 11px;
+  color: var(--ti-muted);
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The "result-export-main"-styled confirm button needs a working
+ * disabled appearance and our accent palette (.result-export-main is
+ * defined against `hsl(var(--primary))` which is a different palette).
+ * Override it to use the template-import accent when used inside the
+ * templates page. */
+.templates-export-menu .result-export-main {
+  background: var(--ti-accent);
+  color: var(--ti-accent-fg);
+  border-radius: 6px;
+  min-height: 34px;
+  padding: 0 14px;
+  gap: 8px;
+}
+
+.templates-export-menu .result-export-main:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--ti-accent) 90%, black);
+}
+
+.templates-export-menu .result-export-main:disabled {
+  background: var(--ti-surface-inset);
+  color: var(--ti-muted);
+  cursor: not-allowed;
+}
+
+/* ─── Templates page thumbnail rail tiles (shared base) ───────────────── */
+
+.templates-rail-thumb {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  width: 100%;
+  border: 1px solid var(--ti-line);
+  border-radius: 5px;
+  overflow: hidden;
+  background: var(--ti-surface-inset);
+  transition:
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    transform 180ms ease;
+}
+
+.templates-rail-thumb > svg,
+.templates-rail-thumb > div > svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.templates-rail-tile-active .templates-rail-thumb {
+  border: 2px solid var(--ti-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ti-accent) 18%, transparent);
+  transform: translateY(-1px);
+}
+
+.templates-rail-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--ti-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.templates-rail-tile-active .templates-rail-label {
+  color: var(--ti-accent);
+}
+
+.templates-rail-index {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--ti-muted);
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  background: var(--ti-surface-inset);
+}
+
+.templates-rail-tile-active .templates-rail-index {
+  background: color-mix(in srgb, var(--ti-accent) 18%, transparent);
+  color: var(--ti-accent);
+}
+
+/* ─── Templates page configuration (right column) ─────────────────────── */
+
+.templates-config-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--ti-surface);
+  border: 1px solid var(--ti-line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.templates-config-panel > .workspace-panel-header,
+.templates-config-panel > .templates-config-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--ti-line);
+  flex-shrink: 0;
+}
+
+.templates-config-header-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ti-text);
+}
+
+.templates-config-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.templates-config-collab {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.templates-config-collab > aside {
+  flex: 1;
+  min-height: 0;
+}
+
+/* Sources panel inside templates-workspace — reuse styling but need our
+ * own background/borders since we're not inside scholarly-workspace. */
+.templates-workspace .sources-panel {
+  background: var(--ti-surface);
+  border: 1px solid var(--ti-line);
+  border-radius: 8px;
+}
+
+
+/* Agent-mode importing view (replaces ProgressView when collab=agent). */
+.ti-agent-importing {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  padding: 18px 18px;
+  border: 1px solid color-mix(in srgb, var(--ti-accent) 25%, var(--ti-line));
+  background: color-mix(in srgb, var(--ti-accent) 5%, var(--ti-surface));
+  border-radius: var(--ti-radius-md, 10px);
+}
+
+.ti-agent-importing-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--ti-accent) 15%, var(--ti-surface));
+  color: var(--ti-accent);
+}
+
+.ti-agent-importing-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ti-agent-importing-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ti-text);
+}
+
+.ti-agent-importing-model {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ti-accent) 15%, var(--ti-surface));
+  color: var(--ti-accent);
+  letter-spacing: 0.02em;
+}
+
+.ti-agent-importing-message {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ti-text);
+}
+
+.ti-agent-importing-hint {
+  margin: 0;
+  font-size: 11px;
+  color: var(--ti-muted);
+}
+
+.ti-agent-importing-cancel {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  border-radius: var(--ti-radius-sm, 6px);
+  border: 1px solid var(--ti-line);
+  background: var(--ti-surface);
+  color: var(--ti-text);
+  font-size: 12px;
+  cursor: pointer;
+}
