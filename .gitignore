@@ -40,6 +40,7 @@ workspaces/
 .tmp/
 .omc/
 .claude/
+.kiro/
 frontend/.omc/
 Starting
 Syncing

@@ -2,26 +2,33 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   AlertTriangle,
   ArrowUpDown,
+  AtSign,
   Bookmark,
   Bot,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
   CircleDot,
+  File as FileIcon,
+  Folder,
   KeyRound,
   Loader2,
   MessageSquareText,
   Send,
+  Square,
   User,
+  X,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { useLocale } from "../../i18n";
+import { fetchTemplateImportFiles } from "../../lib/api";
 import type {
   TemplateAgentConfig,
   TemplateAgentEvent,
   TemplateAgentStatus,
+  TemplateImportFileItem,
 } from "../../lib/types";
 import type { AgentActivity } from "./agentActivity";
 
@@ -45,7 +52,11 @@ export interface CollabPanelProps {
   agentConfig: TemplateAgentConfig;
   onAgentConfigChange: (config: TemplateAgentConfig) => void;
   agentStatus?: TemplateAgentStatus | null;
+  agentCancelPending?: boolean;
   onSendFeedback: (text: string) => Promise<void> | void;
+  onStopAgent?: () => Promise<void> | void;
+  importId?: string | null;
+  contextAttachments?: Array<{ id: string; label: string; detail?: string }>;
   modelConfigured: boolean;
   className?: string;
   /** Number of user-drawn annotations on the active import. */
@@ -71,7 +82,11 @@ export function CollabPanel({
   agentConfig,
   onAgentConfigChange,
   agentStatus,
+  agentCancelPending = false,
   onSendFeedback,
+  onStopAgent,
+  importId,
+  contextAttachments = [],
   modelConfigured,
   className,
   annotationCount = 0,
@@ -79,6 +94,8 @@ export function CollabPanel({
 }: CollabPanelProps) {
   const { t } = useLocale();
   const [draft, setDraft] = useState("");
+  const [mentions, setMentions] = useState<Array<{ label: string; path: string }>>([]);
+  const [mentionOpen, setMentionOpen] = useState(false);
   const [pendingUser, setPendingUser] = useState<ChatMessage | null>(null);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
 
@@ -111,6 +128,7 @@ export function CollabPanel({
   // the model is between tool calls/messages; hide it only when a secondary
   // tool row is actively executing.
   const agentRunning = agentStatus?.status === "running" || agentStatus?.status === "queued";
+  const canStopAgent = mode === "agent" && (loading || agentRunning || agentCancelPending) && Boolean(onStopAgent);
   const visibleActivityEvents = useMemo(() => {
     if (mode !== "agent" || (!loading && !agentRunning)) return activityEvents;
     return activityEvents;
@@ -127,7 +145,7 @@ export function CollabPanel({
   useEffect(() => {
     if (!pendingUser) return;
     const matched = conversation.some(
-      (msg) => msg.role === "user" && msg.content === pendingUser.content,
+      (msg) => msg.role === "user" && stripReferencedFiles(msg.content) === pendingUser.content,
     );
     if (matched) setPendingUser(null);
   }, [conversation, pendingUser]);
@@ -256,19 +274,37 @@ export function CollabPanel({
   }, [timeline.length, loading]);
 
   const send = async () => {
-    if (!draft.trim() || loading || !modelConfigured) return;
+    if (canStopAgent) {
+      await onStopAgent?.();
+      return;
+    }
+    if (!draft.trim() && mentions.length === 0 && contextAttachments.length === 0) return;
+    if (!modelConfigured) return;
     const text = draft.trim();
+    const uniqueMentions = mentions.filter(
+      (mention, index, arr) => arr.findIndex((item) => item.path === mention.path) === index,
+    );
+    const mentionBlock = uniqueMentions.length > 0
+      ? `Referenced files:\n${uniqueMentions.map((item) => `- ${item.label}: ${item.path}`).join("\n")}`
+      : "";
+    const contextText = contextAttachments.map((item) => item.label).join(" ");
+    const displayText = text || uniqueMentions.map((item) => item.label).join(" ") || contextText;
+    const agentText =
+      mode === "agent" && mentionBlock
+        ? [displayText, mentionBlock].filter(Boolean).join("\n\n")
+        : text;
     setDraft("");
+    setMentions([]);
     // Optimistic user bubble: surface the message immediately and clear it
     // automatically once the saved conversation contains the same content.
     setPendingUser({
       role: "user",
-      content: text,
+      content: displayText,
       created_at: Date.now() / 1000,
       meta: { mode },
     });
     try {
-      await onSendFeedback(text);
+      await onSendFeedback(agentText);
     } catch {
       // Drop the optimistic copy if the call fails; the parent will surface
       // the error separately.
@@ -319,6 +355,29 @@ export function CollabPanel({
           className="ti-console-composer"
           style={{ borderColor: "var(--ti-line)", background: "var(--ti-surface)" }}
         >
+          {mentions.length > 0 || contextAttachments.length > 0 ? (
+            <div className="ti-console-mentions">
+              {contextAttachments.map((item) => (
+                <span className="ti-console-mention-chip ti-console-context-chip" key={item.id} title={item.detail ?? item.label}>
+                  <ArrowUpDown size={11} />
+                  {item.label}
+                </span>
+              ))}
+              {mentions.map((mention) => (
+                <span className="ti-console-mention-chip" key={mention.path} title={mention.path}>
+                  <FileIcon size={11} />
+                  {mention.label}
+                  <button
+                    type="button"
+                    onClick={() => setMentions((prev) => prev.filter((item) => item.path !== mention.path))}
+                    aria-label={t("template.collab.removeMention")}
+                  >
+                    <X size={10} />
+                  </button>
+                </span>
+              ))}
+            </div>
+          ) : null}
           <textarea
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
@@ -330,7 +389,7 @@ export function CollabPanel({
             }}
             placeholder={t("template.feedbackPlaceholder")}
             rows={3}
-            disabled={loading || !modelConfigured}
+            disabled={!modelConfigured}
             className="ti-focusable ti-console-composer-textarea"
             style={{ color: "var(--ti-text)" }}
           />
@@ -340,6 +399,33 @@ export function CollabPanel({
                 <Bookmark size={10} />
                 <span>{annotationCount}</span>
               </span>
+              {mode === "agent" && importId ? (
+                <div className="ti-console-mention-wrap">
+                  <button
+                    type="button"
+                    className="ti-console-mention-button"
+                    onClick={() => setMentionOpen((open) => !open)}
+                    title={t("template.collab.attachFile")}
+                    aria-expanded={mentionOpen}
+                  >
+                    <AtSign size={11} />
+                  </button>
+                  {mentionOpen ? (
+                    <FileMentionPopover
+                      importId={importId}
+                      onSelect={(file) => {
+                        const label = `@${file.name}`;
+                        setMentions((prev) =>
+                          prev.some((item) => item.path === file.path)
+                            ? prev
+                            : [...prev, { label, path: file.path }],
+                        );
+                        setMentionOpen(false);
+                      }}
+                    />
+                  ) : null}
+                </div>
+              ) : null}
               {resolvedModelLabel ? (
                 <span
                   className="ti-console-meta-pill"
@@ -349,14 +435,14 @@ export function CollabPanel({
                   <span className="ti-console-meta-text">{resolvedModelLabel}</span>
                 </span>
               ) : null}
-              {mode === "agent" && usage && (usage.input_tokens > 0 || usage.output_tokens > 0) ? (
+              {mode === "agent" ? (
                 <span
                   className="ti-console-meta-pill"
                   title={tokensTooltip(t, usage)}
                 >
                   <ArrowUpDown size={10} />
                   <span>
-                    {formatTokens(usage.input_tokens)} / {formatTokens(usage.output_tokens)}
+                    {formatTokens(usage?.input_tokens ?? 0)} / {formatTokens(usage?.output_tokens ?? 0)}
                   </span>
                 </span>
               ) : null}
@@ -364,21 +450,121 @@ export function CollabPanel({
             <button
               type="button"
               onClick={() => void send()}
-              disabled={loading || !modelConfigured || !draft.trim()}
+              disabled={!modelConfigured || (!canStopAgent && !draft.trim() && mentions.length === 0 && contextAttachments.length === 0)}
               className="ti-console-composer-send disabled:cursor-not-allowed disabled:opacity-50"
+              data-busy={canStopAgent ? "true" : "false"}
               style={{ background: "var(--ti-accent)", color: "var(--ti-accent-fg)" }}
             >
-              {loading ? (
+              {canStopAgent ? (
+                agentCancelPending ? (
+                  <Loader2 size={12} className="animate-spin" />
+                ) : (
+                  <Square size={12} fill="currentColor" />
+                )
+              ) : loading ? (
                 <Loader2 size={12} className="animate-spin" />
               ) : (
                 <Send size={12} />
               )}
-              <span>{t("template.collab.send")}</span>
+              <span>{agentCancelPending ? t("template.collab.stopping") : canStopAgent ? t("template.collab.stop") : t("template.collab.send")}</span>
             </button>
           </div>
         </div>
       </section>
     </aside>
+  );
+}
+
+function FileMentionPopover({
+  importId,
+  onSelect,
+}: {
+  importId: string;
+  onSelect: (file: TemplateImportFileItem) => void;
+}) {
+  const { t } = useLocale();
+  const [cwd, setCwd] = useState("");
+  const [parent, setParent] = useState<string | null>(null);
+  const [items, setItems] = useState<TemplateImportFileItem[]>([]);
+  const [hoveredPreview, setHoveredPreview] = useState<TemplateImportFileItem | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    fetchTemplateImportFiles(importId, cwd)
+      .then((list) => {
+        if (cancelled) return;
+        setItems(list.items);
+        setParent(list.parent ?? null);
+        setHoveredPreview(null);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setItems([]);
+        setParent(null);
+        setHoveredPreview(null);
+        setError(err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [cwd, importId]);
+
+  return (
+    <div className="ti-file-popover" role="dialog" aria-label={t("template.collab.fileBrowser")}>
+      <div className="ti-file-popover-head">
+        <span title={cwd || "."}>{cwd || "."}</span>
+        {parent !== null ? (
+          <button type="button" onClick={() => setCwd(parent)}>{t("template.collab.upDir")}</button>
+        ) : null}
+      </div>
+      <div className="ti-file-list">
+        {loading ? (
+          <div className="ti-file-empty"><Loader2 size={12} className="animate-spin" /> {t("template.collab.loadingFiles")}</div>
+        ) : error ? (
+          <div className="ti-file-empty">{error}</div>
+        ) : items.length === 0 ? (
+          <div className="ti-file-empty">{t("template.collab.noFiles")}</div>
+        ) : (
+          items.map((item) => (
+            <button
+              type="button"
+              key={item.path}
+              className="ti-file-item"
+              onClick={() => {
+                if (item.type === "directory") setCwd(item.path);
+                else onSelect(item);
+              }}
+              onMouseEnter={() => setHoveredPreview(item.image && item.preview_url ? item : null)}
+              onFocus={() => setHoveredPreview(item.image && item.preview_url ? item : null)}
+              title={item.path}
+            >
+              {item.type === "directory" ? <Folder size={12} /> : <FileIcon size={12} />}
+              <span>{item.name}</span>
+              {item.type === "file" && item.size != null ? (
+                <em>{formatFileSize(item.size)}</em>
+              ) : null}
+            </button>
+          ))
+        )}
+      </div>
+      <div className="ti-file-preview-pane" data-empty={hoveredPreview?.preview_url ? "false" : "true"}>
+        {hoveredPreview?.preview_url ? (
+          <>
+            <img src={hoveredPreview.preview_url} alt="" />
+            <span>{hoveredPreview.name}</span>
+          </>
+        ) : (
+          <span>{t("template.collab.previewEmpty")}</span>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -582,25 +768,30 @@ function ActivityLine({ event }: { event: AgentActivity }) {
 
 function ActivityGroup({ events }: { events: AgentActivity[] }) {
   const { t } = useLocale();
+  // Always default to collapsed — show a single summary row ("正在执行
+  // Read xxx" / "已执行 Edit yyy"). User can click to expand the full list.
   const [open, setOpen] = useState(false);
   if (events.length === 0) return null;
   const last = events[events.length - 1];
   const isActive = events.some((e) => e.state === "active");
   const hasError = events.some((e) => e.state === "error");
   const summaryState = hasError ? "error" : isActive ? "active" : "done";
-  const summaryLabel =
-    hasError && events.length === 1
-      ? last.label
-      : isActive
-        ? t("template.collab.steps")
-        : t("template.collab.stepsDone");
-  const recentOperation = formatActivitySummary(
-    [...events].reverse().find((event) => event.kind !== "assistant" && event.detail) ?? last,
-  );
+  // Summary surfaces the most recent tool call: "正在执行 Read xxx" while
+  // running, "已执行 Read xxx" once that tool finishes. Falls back to the
+  // generic group label only when no tool row has any detail to show.
+  const recent =
+    [...events].reverse().find((event) => event.kind === "pipeline") ??
+    [...events].reverse().find((event) => event.kind !== "assistant" && event.detail) ??
+    last;
+  const summaryLabel = hasError && events.length === 1
+    ? last.label
+    : recent.label || (isActive ? t("template.collab.steps") : t("template.collab.stepsDone"));
   const summaryDetail =
     hasError && events.length === 1 && last.detail && !last.detail.startsWith("{")
       ? last.detail
-      : recentOperation;
+      : recent.detail && !recent.detail.startsWith("{")
+        ? recent.detail
+        : "";
   return (
     <div className="ti-console-group" data-open={open ? "true" : "false"}>
       <button
@@ -662,7 +853,7 @@ function ChatBubble({ message }: { message: ChatMessage }) {
           </span>
         </div>
         {isUser ? (
-          <p className="ti-bubble-content">{message.content}</p>
+          <p className="ti-bubble-content">{stripReferencedFiles(message.content)}</p>
         ) : (
           <div className="ti-bubble-content ti-markdown">
             <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
@@ -727,6 +918,17 @@ function formatTokens(value: number): string {
   return value.toLocaleString();
 }
 
+function stripReferencedFiles(value: string): string {
+  return value.replace(/\n\nReferenced files:\n[\s\S]*$/u, "").trim();
+}
+
+function formatFileSize(value: number): string {
+  if (!Number.isFinite(value) || value < 0) return "";
+  if (value >= 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+  if (value >= 1024) return `${Math.ceil(value / 1024)} KB`;
+  return `${value} B`;
+}
+
 function tokensTooltip(
   t: (key: string) => string,
   usage: {
@@ -734,9 +936,11 @@ function tokensTooltip(
     output_tokens: number;
     cache_read_input_tokens: number;
     cache_creation_input_tokens: number;
-  },
+  } | null,
 ): string {
+  if (!usage) return t("template.collab.tokensThisTask");
   const lines = [
+    t("template.collab.tokensThisTask"),
     `${t("template.collab.tokensInput")}: ${usage.input_tokens.toLocaleString()}`,
     `${t("template.collab.tokensOutput")}: ${usage.output_tokens.toLocaleString()}`,
   ];

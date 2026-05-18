@@ -4,6 +4,7 @@ import {
   ApiError,
   addAnnotation as addAnnotationApi,
   assistTemplateImport,
+  cancelTemplateImportAgent,
   confirmTemplateImport,
   fetchImportStatus,
   fetchTemplateReview,
@@ -91,9 +92,12 @@ export interface UseTemplateImportReturn {
     config: TemplateAgentConfig,
     options?: { silent?: boolean; preview?: boolean; planning?: boolean },
   ): Promise<void>;
+  /** Stop the currently running Template Agent job, if any. */
+  cancelAgent(): Promise<void>;
   llmEvents: TemplateAgentEvent[];
   agentEvents: TemplateAgentEvent[];
   agentStatus: TemplateAgentStatus | null;
+  agentCancelPending: boolean;
 }
 
 const DEFAULT_POLL_MS = 1500;
@@ -185,9 +189,11 @@ export function useTemplateImport(
   const [llmEvents, setLlmEvents] = useState<TemplateAgentEvent[]>([]);
   const [agentEvents, setAgentEvents] = useState<TemplateAgentEvent[]>([]);
   const [agentStatus, setAgentStatus] = useState<TemplateAgentStatus | null>(null);
+  const [agentCancelPending, setAgentCancelPending] = useState(false);
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const agentSocketRef = useRef<ReconnectingSocket | null>(null);
+  const agentJobIdRef = useRef<string | null>(null);
   const localEventSeqRef = useRef(0);
   const idRef = useRef<string | undefined>(importId);
   idRef.current = importId;
@@ -325,6 +331,7 @@ export function useTemplateImport(
       setLlmEvents([]);
       setAgentEvents([]);
       setAgentStatus(null);
+      setAgentCancelPending(false);
       closeAgentSocket();
       reviewLoadedForRef.current = null;
       return;
@@ -338,6 +345,7 @@ export function useTemplateImport(
       setLlmEvents([]);
       setAgentEvents([]);
       setAgentStatus(null);
+      setAgentCancelPending(false);
       closeAgentSocket();
       reviewLoadedForRef.current = null;
     }
@@ -584,6 +592,7 @@ export function useTemplateImport(
       setError(null);
       setAgentEvents([]);
       setAgentStatus(null);
+      setAgentCancelPending(false);
       closeAgentSocket();
       agentPreviewEnabledRef.current = options?.preview !== false;
       try {
@@ -600,6 +609,7 @@ export function useTemplateImport(
           import_id: start.import_id,
           status: start.status,
         });
+        agentJobIdRef.current = start.agent_job_id;
         await new Promise<void>((resolve, reject) => {
           let socket: ReconnectingSocket | null = null;
           let lastPreviewRefresh = 0;
@@ -631,10 +641,13 @@ export function useTemplateImport(
                   updated_at: event.ts ?? prev?.updated_at,
                 }));
               }
+              if (event.type === "complete" || event.type === "error" || event.type === "cancelled") {
+                setAgentCancelPending(false);
+              }
               if (event.type === "result" || event.type === "complete") {
                 refreshPreviewSoon(true);
               }
-              if (event.type === "complete") {
+              if (event.type === "complete" || event.type === "cancelled") {
                 socket?.close();
                 resolve();
               }
@@ -654,11 +667,28 @@ export function useTemplateImport(
         setError(describeError(e));
       } finally {
         setLoading(false);
+        setAgentCancelPending(false);
         closeAgentSocket();
+        agentJobIdRef.current = null;
       }
     },
     [flushDraft, refreshReview],
   );
+
+  const cancelAgent = useCallback(async () => {
+    const id = idRef.current;
+    const agentJobId = agentStatus?.agent_job_id ?? agentJobIdRef.current;
+    if (!id || !agentJobId) return;
+    setAgentCancelPending(true);
+    try {
+      const next = await cancelTemplateImportAgent(id, agentJobId);
+      setAgentStatus(next);
+    } catch (e) {
+      setAgentCancelPending(false);
+      setError(describeError(e));
+      throw e;
+    }
+  }, [agentStatus?.agent_job_id]);
 
   // Cleanup any pending debounce on unmount.
   useEffect(() => {
@@ -689,9 +719,11 @@ export function useTemplateImport(
       retryStep,
       saveAgentTemplateSvg,
       runAgent,
+      cancelAgent,
       llmEvents,
       agentEvents,
       agentStatus,
+      agentCancelPending,
     }),
     [
       status,
@@ -710,9 +742,11 @@ export function useTemplateImport(
       retryStep,
       saveAgentTemplateSvg,
       runAgent,
+      cancelAgent,
       llmEvents,
       agentEvents,
       agentStatus,
+      agentCancelPending,
     ],
   );
 }

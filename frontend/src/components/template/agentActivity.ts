@@ -77,15 +77,6 @@ function trimText(value: string, max = 80): string {
   return cleaned.length > max ? `${cleaned.slice(0, max - 1)}…` : cleaned;
 }
 
-function isAgentLifecycleEvent(event: TemplateAgentEvent): boolean {
-  return (
-    event.type === "snapshot" ||
-    event.type === "status" ||
-    event.type === "complete" ||
-    event.type === "error"
-  );
-}
-
 function agentEventState(event: TemplateAgentEvent): AgentActivity["state"] {
   if (event.type === "error" || event.status === "error") return "error";
   if (event.type === "complete" || event.status === "complete") return "done";
@@ -93,14 +84,6 @@ function agentEventState(event: TemplateAgentEvent): AgentActivity["state"] {
     return "active";
   }
   return "info";
-}
-
-function agentStatusLabel(event: TemplateAgentEvent): string {
-  if (event.type === "error" || event.status === "error") return "Agent 失败";
-  if (event.type === "complete" || event.status === "complete") return "Agent 已完成";
-  if (event.stage === "queued" || event.status === "queued") return "Agent 已排队";
-  if (event.stage === "starting") return "Agent 启动中";
-  return "Agent 运行中";
 }
 
 function agentEventLabel(event: TemplateAgentEvent): string {
@@ -115,9 +98,10 @@ function agentEventLabel(event: TemplateAgentEvent): string {
   return "Agent";
 }
 
-function isShellTool(tool: string): boolean {
-  return ["Bash", "Shell", "Run", "PowerShell"].includes(tool);
+function isShellTool(_tool: string): boolean {
+  return false;
 }
+void isShellTool;
 
 /** Pretty-print a tool call's input so the row is readable instead of dumping raw JSON. */
 function describeToolInput(input: unknown): string {
@@ -165,6 +149,13 @@ function describeToolInput(input: unknown): string {
 /** Hide low-signal SDK events that mostly clutter the feed. */
 function isNoiseAgentEvent(event: TemplateAgentEvent): boolean {
   if (event.type === "usage") return true;
+  if (["snapshot", "status", "complete", "cancelled"].includes(event.type)) return true;
+  // ``result`` is the SDK's terminal envelope: it carries the full assistant
+  // text again (already rendered as a primary message bubble) plus duration /
+  // turn metadata. If we let it flow into the activity stream the group
+  // summary picks it up and shows ``已执行 Agent 结果<huge markdown>`` instead
+  // of the actual most-recent tool call.
+  if (event.type === "result") return true;
   if (event.type === "system") {
     const message = (event.message ?? "").trim().toLowerCase();
     // Bare lifecycle echoes ("status", "running", "init", etc.) carry no info.
@@ -345,43 +336,53 @@ export function buildAgentActivityEvents(
     const visibleAgentEvents = agentEvents.filter(
       (event) => event.type !== "ping" && !isNoiseAgentEvent(event),
     );
-    const latestLifecycle = [...visibleAgentEvents].reverse().find(isAgentLifecycleEvent);
-    if (latestLifecycle) {
-      const message =
-        latestLifecycle.message ||
-        latestLifecycle.error ||
-        latestLifecycle.status ||
-        latestLifecycle.type;
-      events.push({
-        id: `agent:status:${latestLifecycle.agent_job_id ?? "current"}`,
-        kind: "llm",
-        state: agentEventState(latestLifecycle),
-        label: agentStatusLabel(latestLifecycle),
-        detail:
-          latestLifecycle.type === "error" || latestLifecycle.status === "error"
-            ? trimText(message, 140)
-            : undefined,
-        timestamp: tsFromSec(latestLifecycle.ts) || now,
-      });
+    // Pre-pass: collect tool_use_ids whose ToolResult has arrived so we can
+    // mark the corresponding running rows as complete / errored. Without
+    // this every Read / Edit stays "正在执行" until the whole agent run
+    // finishes, which doesn't match Claude Code's per-tool feedback.
+    const toolStatusById = new Map<string, "complete" | "error">();
+    for (const event of visibleAgentEvents) {
+      if (event.type !== "tool") continue;
+      if (event.status !== "complete" && event.status !== "error") continue;
+      const data = event.data as Record<string, unknown> | undefined;
+      const id = typeof data?.tool_use_id === "string" ? data.tool_use_id : "";
+      if (id) {
+        toolStatusById.set(id, event.status as "complete" | "error");
+      }
     }
 
     // Build rows for non-lifecycle events, then collapse consecutive duplicates
     // (same kind + same label + same detail) so the feed doesn't stack.
     const rawRows: AgentActivity[] = [];
     visibleAgentEvents
-      .filter((event) => !isAgentLifecycleEvent(event))
+      .filter((event) => {
+        // Skip ToolResult-style frames: they only carry status updates that
+        // we already folded into ``toolStatusById`` above.
+        if (event.type !== "tool") return true;
+        return event.status !== "complete" && event.status !== "error";
+      })
       .slice(-40)
       .forEach((event) => {
         let detail = "";
         const isPrimary = event.type === "message";
         let label = agentEventLabel(event);
+        let state = agentEventState(event);
         if (event.type === "tool") {
           const data = event.data as Record<string, unknown> | undefined;
           const tool = typeof data?.tool === "string" ? data.tool : "";
-          detail = describeToolInput(data?.input);
-          if (tool && isShellTool(tool)) {
-            label = event.status === "complete" ? `已执行 ${tool}` : `正在执行 ${tool}`;
+          const input = describeToolInput(data?.input);
+          const toolUseId = typeof data?.tool_use_id === "string" ? data.tool_use_id : "";
+          const matchedStatus = toolUseId ? toolStatusById.get(toolUseId) : undefined;
+          if (matchedStatus === "complete") {
+            state = "done";
+            label = "已执行";
+          } else if (matchedStatus === "error") {
+            state = "error";
+            label = "执行失败";
+          } else {
+            label = "正在执行";
           }
+          detail = [tool, input].filter(Boolean).join(" ");
         } else if (isPrimary) {
           // Don't trim the primary Agent message — the UI renders it as a
           // full markdown bubble.
@@ -393,7 +394,7 @@ export function buildAgentActivityEvents(
         rawRows.push({
           id: `agent:${event.seq ?? event.ts ?? `${event.type}:${detail}`}`,
           kind: isPrimary ? "assistant" : event.type === "tool" ? "pipeline" : "llm",
-          state: agentEventState(event),
+          state,
           label,
           detail: detail || undefined,
           timestamp: tsFromSec(event.ts) || now,
@@ -424,22 +425,6 @@ export function buildAgentActivityEvents(
     // When the agent run is finished (complete/error/cancelled), no more
     // tool frames will arrive — flip any still-spinning rows to done so the
     // UI doesn't keep ticking forever.
-    const agentFinished = !!latestLifecycle &&
-      (latestLifecycle.type === "complete" ||
-        latestLifecycle.type === "error" ||
-        latestLifecycle.status === "complete" ||
-        latestLifecycle.status === "cancelled" ||
-        latestLifecycle.status === "error");
-    if (agentFinished) {
-      tail.forEach((row) => {
-        if (row.state === "active") {
-          row.state = "done";
-          if (row.label.startsWith("正在执行 ")) {
-            row.label = row.label.replace("正在执行 ", "已执行 ");
-          }
-        }
-      });
-    }
     tail.forEach((row) => events.push(row));
   }
 

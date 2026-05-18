@@ -59,6 +59,7 @@ import {
   Undo2,
 } from "lucide-react";
 
+import { HoverTooltip } from "../common/HoverTooltip";
 import { useLocale } from "../../i18n";
 import type { TemplateImportSlide, UserAnnotation } from "../../lib/types";
 import type { EditorCommandType, EditorState } from "../preview/KonvaSlideEditor";
@@ -108,6 +109,7 @@ export interface SlideStageToolbarProps {
   unfilledPlaceholders?: string[];
   editorState?: EditorState;
   onEditorCommand?: (command: EditorCommandType) => void;
+  editorActive?: boolean;
   className?: string;
 }
 
@@ -159,7 +161,7 @@ export function SlideStage(props: SlideStageProps) {
   const backgroundRef = useRef<HTMLDivElement | null>(null);
 
   const slideAnnotations = useMemo(
-    () => annotations.filter((a) => a.slide_index === (slide?.index ?? -1)),
+    () => annotations.filter((a) => !a.resolved && a.slide_index === (slide?.index ?? -1)),
     [annotations, slide?.index],
   );
 
@@ -350,17 +352,18 @@ export function SlideStageToolbar({
   unfilledPlaceholders,
   editorState,
   onEditorCommand,
+  editorActive,
   className,
 }: SlideStageToolbarProps) {
   const { t } = useLocale();
   const [showUnfilled, setShowUnfilled] = useState(false);
   return (
     <div
-      className={`flex flex-wrap items-center gap-2 border-b px-3 py-2 ${className ?? ""}`}
+      className={`slide-toolbar template-slide-toolbar flex flex-wrap items-center gap-2 border-b px-3 py-2 ${className ?? ""}`}
       style={{ borderColor: "var(--ti-line)", background: "var(--ti-surface)" }}
     >
       <ModeToggle mode={mode} onChange={onModeChange} />
-      {mode === "edit" && editorState && onEditorCommand ? (
+      {(mode === "edit" || editorActive) && editorState && onEditorCommand ? (
         <TemplateEditToolbar editorState={editorState} onCommand={onEditorCommand} />
       ) : null}
       <button
@@ -476,26 +479,27 @@ function TemplateEditToolbar({
   const run = (command: EditorCommandType) => onCommand(command);
   return (
     <div className="template-edit-toolbar" aria-label={t("template.toolbar.edit")}>
-      <button type="button" title={t("editor.textTool")} onClick={() => run("addText")}><Type size={13} /></button>
-      <button type="button" title={t("editor.shapeTool")} onClick={() => run("addRect")}><Square size={13} /></button>
-      <button type="button" title={t("editor.pictureTool")} onClick={() => run("addImage")}><ImageIcon size={13} /></button>
-      <button type="button" title={t("editor.tableTool")} onClick={() => run("addTable")}><Table2 size={13} /></button>
+      <HoverTooltip content={t("editor.textTool")}><button type="button" onClick={() => run("addText")}><Type size={15} /></button></HoverTooltip>
+      <HoverTooltip content={t("editor.shapeTool")}><button type="button" onClick={() => run("addRect")}><Square size={15} /></button></HoverTooltip>
+      <HoverTooltip content={t("editor.pictureTool")}><button type="button" onClick={() => run("addImage")}><ImageIcon size={15} /></button></HoverTooltip>
+      <HoverTooltip content={t("editor.tableTool")}><button type="button" onClick={() => run("addTable")}><Table2 size={15} /></button></HoverTooltip>
       <span className="toolbar-divider" />
-      <button type="button" title={t("editor.undo")} disabled={!editorState.canUndo} onClick={() => run("undo")}><Undo2 size={13} /></button>
-      <button type="button" title={t("editor.redo")} disabled={!editorState.canRedo} onClick={() => run("redo")}><Redo2 size={13} /></button>
-      <button type="button" title={t("editor.duplicate")} disabled={!editorState.selectedType} onClick={() => run("duplicate")}><Copy size={13} /></button>
-      <button type="button" title={t("editor.delete")} disabled={!editorState.selectedType} onClick={() => run("delete")}><Trash2 size={13} /></button>
+      <HoverTooltip content={t("editor.undo")}><button type="button" disabled={!editorState.canUndo} onClick={() => run("undo")}><Undo2 size={15} /></button></HoverTooltip>
+      <HoverTooltip content={t("editor.redo")}><button type="button" disabled={!editorState.canRedo} onClick={() => run("redo")}><Redo2 size={15} /></button></HoverTooltip>
+      <HoverTooltip content={t("editor.duplicate")}><button type="button" disabled={!editorState.selectedType} onClick={() => run("duplicate")}><Copy size={15} /></button></HoverTooltip>
+      <HoverTooltip content={t("editor.delete")}><button type="button" disabled={!editorState.selectedType} onClick={() => run("delete")}><Trash2 size={15} /></button></HoverTooltip>
       <span className="toolbar-divider" />
-      <button type="button" title={t("editor.sendBackward")} disabled={!editorState.selectedType} onClick={() => run("backward")}><SendToBack size={13} /></button>
-      <button type="button" title={t("editor.bringForward")} disabled={!editorState.selectedType} onClick={() => run("forward")}><BringToFront size={13} /></button>
-      <button type="button" title={t("editor.autosave")} onClick={() => run("toggleAutosave")}>
-        <Layers size={13} />
+      <HoverTooltip content={t("editor.sendBackward")}><button type="button" disabled={!editorState.selectedType} onClick={() => run("backward")}><SendToBack size={15} /></button></HoverTooltip>
+      <HoverTooltip content={t("editor.bringForward")}><button type="button" disabled={!editorState.selectedType} onClick={() => run("forward")}><BringToFront size={15} /></button></HoverTooltip>
+      <span className="toolbar-divider" />
+      <HoverTooltip content={t("editor.autosave")}><button type="button" onClick={() => run("toggleAutosave")}>
+        <Layers size={15} />
         <span>{editorState.autoSave ? t("editor.autosave") : t("editor.manual")}</span>
-      </button>
-      <button type="button" title={t("editor.saveEdits")} disabled={editorState.saveState === "saving"} onClick={() => run("save")}>
-        <Save size={13} />
+      </button></HoverTooltip>
+      <HoverTooltip content={t("editor.saveEdits")}><button type="button" disabled={editorState.saveState === "saving"} onClick={() => run("save")}>
+        <Save size={15} />
         <span>{editorState.saveState === "saving" ? t("editor.saving") : editorState.saveState === "saved" ? t("editor.saved") : t("editor.save")}</span>
-      </button>
+      </button></HoverTooltip>
     </div>
   );
 }
@@ -742,14 +746,21 @@ function pickElementRectAtPoint(
 ): { x: number; y: number; width: number; height: number; linkedElementId?: string | null } | null {
   if (!background || !overlay) return null;
   const overlayRect = overlay.getBoundingClientRect();
-  const picked = document
+  const candidates = document
     .elementsFromPoint(clientX, clientY)
-    .find((element) => background.contains(element) && isAnnotatableSvgElement(element));
+    .filter((element) => background.contains(element) && isAnnotatableSvgElement(element))
+    .map((element) => {
+      const rect = element.getBoundingClientRect();
+      const areaRatio = (rect.width * rect.height) / Math.max(1, overlayRect.width * overlayRect.height);
+      return { element, rect, areaRatio };
+    })
+    // Click-pick is for precise elements. Large panels should be selected by
+    // dragging so a click inside a content area does not annotate half a page.
+    .filter(({ rect, areaRatio }) => rect.width >= 4 && rect.height >= 4 && areaRatio <= 0.35)
+    .sort((a, b) => a.areaRatio - b.areaRatio);
+  const picked = candidates[0];
   if (!picked) return null;
-  const rect = picked.getBoundingClientRect();
-  if (rect.width < 4 || rect.height < 4) return null;
-  const areaRatio = (rect.width * rect.height) / Math.max(1, overlayRect.width * overlayRect.height);
-  if (areaRatio > 0.92) return null;
+  const { element, rect } = picked;
   const x = clamp(((rect.left - overlayRect.left) / overlayRect.width) * VIEWBOX_W, 0, VIEWBOX_W);
   const y = clamp(((rect.top - overlayRect.top) / overlayRect.height) * VIEWBOX_H, 0, VIEWBOX_H);
   const right = clamp(((rect.right - overlayRect.left) / overlayRect.width) * VIEWBOX_W, 0, VIEWBOX_W);
@@ -762,9 +773,9 @@ function pickElementRectAtPoint(
     width,
     height,
     linkedElementId:
-      picked.getAttribute("data-element-id") ||
-      picked.getAttribute("id") ||
-      picked.tagName.toLowerCase(),
+      element.getAttribute("data-element-id") ||
+      element.getAttribute("id") ||
+      element.tagName.toLowerCase(),
   };
 }
 

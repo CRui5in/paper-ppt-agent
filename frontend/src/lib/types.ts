@@ -344,6 +344,7 @@ export interface TemplateAgentEvent {
     | "usage"
     | "llm_step"
     | "complete"
+    | "cancelled"
     | "error"
     | "ping";
   agent_job_id?: string;
@@ -356,6 +357,21 @@ export interface TemplateAgentEvent {
   seq?: number;
   ts?: number;
   last_seq?: number;
+}
+
+export interface TemplateImportFileItem {
+  name: string;
+  path: string;
+  type: "file" | "directory";
+  size?: number | null;
+  image?: boolean;
+  preview_url?: string | null;
+}
+
+export interface TemplateImportFileList {
+  cwd: string;
+  parent?: string | null;
+  items: TemplateImportFileItem[];
 }
 
 /** Aggregated cost / usage snapshot derived from agent ``usage`` events. */
@@ -399,7 +415,7 @@ export interface ReexportResponse {
   warnings?: string[];
 }
 
-export type SlideDocumentElementType = "text" | "rect" | "image" | "table";
+export type SlideDocumentElementType = "text" | "rect" | "image" | "path" | "table";
 
 export interface SlideDocumentElement {
   id: string;

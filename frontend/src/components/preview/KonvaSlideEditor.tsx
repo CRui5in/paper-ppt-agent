@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { AlignCenter, AlignLeft, AlignRight, Bold, Italic } from "lucide-react";
 import Konva from "konva";
 import { Group, Image as KonvaImage, Layer, Rect, Stage, Text, Transformer } from "react-konva";
@@ -42,7 +43,7 @@ interface KonvaSlideEditorProps {
   onSave: (slide: PreviewSlide, content: string, document: SlideDocument) => Promise<void>;
 }
 
-type NodeKind = "text" | "rect" | "image" | "table";
+type NodeKind = "text" | "rect" | "image" | "path" | "table";
 
 interface BaseNode {
   id: string;
@@ -82,6 +83,18 @@ interface ImageNode extends BaseNode {
   src: string;
 }
 
+interface PathNode extends BaseNode {
+  type: "path";
+  fill: string;
+  stroke: string;
+  strokeWidth: number;
+  sourceTransform?: string;
+  baseX?: number;
+  baseY?: number;
+  baseWidth?: number;
+  baseHeight?: number;
+}
+
 interface TableNode extends BaseNode {
   type: "table";
   rows: number;
@@ -93,7 +106,7 @@ interface TableNode extends BaseNode {
   cells: string[][];
 }
 
-type EditorNode = TextNode | RectNode | ImageNode | TableNode;
+type EditorNode = TextNode | RectNode | ImageNode | PathNode | TableNode;
 
 interface ParsedSlide {
   backgroundSvg: string;
@@ -145,6 +158,7 @@ export function KonvaSlideEditor({ slide, editable, command, onStateChange, onSa
   const redoStackRef = useRef<EditorNode[][]>([]);
   const dragStateRef = useRef<{ id: string; startX: number; startY: number; snapshot: EditorNode[] } | null>(null);
   const [containerWidth, setContainerWidth] = useState(1200);
+  const [containerHeight, setContainerHeight] = useState(720);
   const [parsed, setParsed] = useState<ParsedSlide>(() => parseSlide(""));
   const [nodes, setNodes] = useState<EditorNode[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -158,21 +172,26 @@ export function KonvaSlideEditor({ slide, editable, command, onStateChange, onSa
   const selectionRectRef = useRef<SelectionRectState | null>(null);
   const [, bumpHistoryVersion] = useState(0);
 
-  const scale = Math.min(containerWidth / parsed.width, 1.15);
+  const scale = Math.min(containerWidth / parsed.width, containerHeight / parsed.height, 1.15);
   const stageWidth = parsed.width * scale;
   const stageHeight = parsed.height * scale;
   const selectedNodes = nodes.filter((node) => selectedIds.includes(node.id) && !node.deleted);
   const selectedNode = selectedIds.length === 1 ? selectedNodes[0] : undefined;
   const selectedType = selectedNodes[0]?.type;
   const selectedSourceKey = selectedNodes.map((node) => `${node.sourceTag ?? ""}:${node.sourceIndex ?? ""}`).join("|");
-  const backgroundSvgForRender = useMemo(() => hideSourceNodes(composeBackgroundSvg(parsed.backgroundSvg, nodes), selectedNodes.filter((node) => node.sourceTag !== "text")), [parsed.backgroundSvg, nodes, selectedSourceKey]);
+  const backgroundSvgForRender = useMemo(() => hideSourceNodes(
+    composeBackgroundSvg(parsed.backgroundSvg, nodes),
+    selectedNodes.filter((node) => node.sourceTag !== "text" && node.sourceTag !== "path"),
+  ), [parsed.backgroundSvg, nodes, selectedSourceKey]);
 
   useEffect(() => {
     const element = containerRef.current;
     if (!element) return undefined;
     const observer = new ResizeObserver((entries) => {
       const width = entries[0]?.contentRect.width;
+      const height = entries[0]?.contentRect.height;
       if (width) setContainerWidth(Math.max(360, width));
+      if (height) setContainerHeight(Math.max(240, height));
     });
     observer.observe(element);
     return () => observer.disconnect();
@@ -657,12 +676,11 @@ export function KonvaSlideEditor({ slide, editable, command, onStateChange, onSa
           onContextMenu={(event) => {
             event.evt.preventDefault();
             const stage = event.target.getStage();
-            const pointer = stage?.getPointerPosition();
             const target = event.target;
             if (target !== stage && target.id()) {
               selectNode(target.id(), event.evt.ctrlKey || event.evt.metaKey || event.evt.shiftKey);
             }
-            if (pointer) setContextMenu({ left: pointer.x, top: pointer.y });
+            setContextMenu(clampContextMenuPosition(event.evt.clientX, event.evt.clientY));
           }}
         >
           <Layer listening={false}>
@@ -678,7 +696,7 @@ export function KonvaSlideEditor({ slide, editable, command, onStateChange, onSa
                   width={textRenderWidth(node)}
                   height={textRenderHeight(node)}
                   wrap="none"
-                  opacity={node.sourceTag === "text" ? 0.01 : editingText?.id === node.id ? 0 : 1}
+                  opacity={editingText?.id === node.id ? 0 : node.sourceTag === "text" && !node.modified && !selectedIds.includes(node.id) ? 0.01 : 1}
                   draggable={editable}
                   onClick={(event) => { event.cancelBubble = true; selectNode(node.id, event.evt.ctrlKey || event.evt.metaKey || event.evt.shiftKey); }}
                   onTap={(event) => { event.cancelBubble = true; selectNode(node.id); }}
@@ -715,6 +733,28 @@ export function KonvaSlideEditor({ slide, editable, command, onStateChange, onSa
                   onDragMove={(target) => handleDragMove(node.id, target)}
                   onDragEnd={(target) => handleDragEnd(node.id, target)}
                   onTransformEnd={(target) => handleTransformEnd(node.id, target)}
+                />
+              );
+              if (node.type === "path") return (
+                <Rect
+                  key={node.id}
+                  id={node.id}
+                  x={node.x}
+                  y={node.y}
+                  width={node.width}
+                  height={node.height}
+                  rotation={node.rotation}
+                  fill="rgba(37, 99, 235, 0.01)"
+                  stroke={selectedIds.includes(node.id) ? "#2563eb" : "rgba(37, 99, 235, 0.01)"}
+                  strokeWidth={selectedIds.includes(node.id) ? 1 : 0}
+                  dash={selectedIds.includes(node.id) ? [6, 4] : undefined}
+                  draggable={editable}
+                  onClick={(event) => { event.cancelBubble = true; selectNode(node.id, event.evt.ctrlKey || event.evt.metaKey || event.evt.shiftKey); }}
+                  onTap={(event) => { event.cancelBubble = true; selectNode(node.id); }}
+                  onDragStart={(event) => handleDragStart(node.id, event.target)}
+                  onDragMove={(event) => handleDragMove(node.id, event.target)}
+                  onDragEnd={(event) => handleDragEnd(node.id, event.target)}
+                  onTransformEnd={(event) => handleTransformEnd(node.id, event.target)}
                 />
               );
               return (
@@ -790,7 +830,7 @@ export function KonvaSlideEditor({ slide, editable, command, onStateChange, onSa
             }}
           />
         ) : null}
-        {contextMenu ? (
+        {contextMenu ? createPortal(
           <div className="konva-context-menu" style={{ left: contextMenu.left, top: contextMenu.top }}>
             {selectedNode ? (
               <ContextMenuItems
@@ -818,7 +858,8 @@ export function KonvaSlideEditor({ slide, editable, command, onStateChange, onSa
                 <span className="konva-menu-shortcut">{t("editor.shortcutSlide")}</span>
               </>
             )}
-          </div>
+          </div>,
+          document.body,
         ) : null}
       </div>
     </div>
@@ -837,7 +878,7 @@ function FloatingTextTools({
   const { t } = useLocale();
   const left = Math.max(8, node.x * scale);
   const top = Math.max(8, node.y * scale - 46);
-  if (node.type === "rect") {
+  if (node.type === "rect" || node.type === "path") {
     return (
       <div className="konva-floating-tools" style={{ left, top }}>
         <input title={t("editor.fill")} type="color" value={normalizeColor(node.fill)} onChange={(event) => onChange({ fill: event.target.value } as Partial<EditorNode>)} />
@@ -905,7 +946,7 @@ function ContextMenuItems({
   onReplaceImage: () => void;
   t: (key: string) => string;
 }) {
-  const label = node.type === "text" ? t("editor.text") : node.type === "rect" ? t("editor.shape") : node.type === "image" ? t("editor.picture") : t("editor.table");
+  const label = node.type === "text" ? t("editor.text") : node.type === "rect" || node.type === "path" ? t("editor.shape") : node.type === "image" ? t("editor.picture") : t("editor.table");
   return (
     <>
       <strong>{label}</strong>
@@ -1036,6 +1077,7 @@ function parseSlide(content: string): ParsedSlide {
     const originalTextIndex = new Map<Element, number>();
     const originalRectIndex = new Map<Element, number>();
     const originalImageIndex = new Map<Element, number>();
+    const originalPathIndex = new Map<Element, number>();
     Array.from(root.querySelectorAll("text")).filter((element) => element.getAttribute("data-paper-editor") !== "text").forEach((element, index) => {
       originalTextIndex.set(element, index);
     });
@@ -1045,7 +1087,10 @@ function parseSlide(content: string): ParsedSlide {
     Array.from(root.querySelectorAll("image")).filter((element) => element.getAttribute("data-paper-editor") !== "image").forEach((element, index) => {
       originalImageIndex.set(element, index);
     });
-    Array.from(root.querySelectorAll("text, rect, image, g[data-paper-editor='table']")).forEach((element, index) => {
+    Array.from(root.querySelectorAll("path")).forEach((element, index) => {
+      originalPathIndex.set(element, index);
+    });
+    Array.from(root.querySelectorAll("text, rect, image, path, g[data-paper-editor='table']")).forEach((element, index) => {
       if (element.closest("g[data-paper-editor='table']") && element.getAttribute("data-paper-editor") !== "table") return;
       if (element.tagName.toLowerCase() === "text") {
         if (!isVisibleElement(element)) return;
@@ -1079,6 +1124,14 @@ function parseSlide(content: string): ParsedSlide {
           sourceIndex: inserted ? undefined : originalImageIndex.get(element),
         }));
         if (inserted) element.remove();
+        return;
+      }
+      if (element.tagName.toLowerCase() === "path") {
+        if (!isEditablePath(element as SVGPathElement, root)) return;
+        nodes.push(pathFromElement(element as SVGPathElement, index, {
+          sourceTag: "path",
+          sourceIndex: originalPathIndex.get(element),
+        }, root));
         return;
       }
       nodes.push(tableFromElement(element as SVGGElement, index));
@@ -1166,6 +1219,20 @@ function normalizeDocumentNode(raw: unknown): EditorNode | null {
       committed: true,
     };
   }
+  if (node.type === "path") {
+    return {
+      ...base,
+      type: "path",
+      fill: normalizeColor(typeof node.fill === "string" ? node.fill : "#0f172a"),
+      stroke: normalizeColor(typeof node.stroke === "string" ? node.stroke : "#0f172a"),
+      strokeWidth: nonNegativeNumber(node.strokeWidth, 0),
+      sourceTransform: typeof node.sourceTransform === "string" ? node.sourceTransform : undefined,
+      baseX: typeof node.baseX === "number" ? node.baseX : base.x,
+      baseY: typeof node.baseY === "number" ? node.baseY : base.y,
+      baseWidth: positiveNumber(node.baseWidth, base.width),
+      baseHeight: positiveNumber(node.baseHeight, base.height),
+    };
+  }
   if (node.type === "table") {
     const rows = positiveNumber(node.rows, 3);
     const cols = positiveNumber(node.cols, 3);
@@ -1192,8 +1259,8 @@ function composeBackgroundSvg(backgroundSvg: string, nodes: EditorNode[]): strin
 
 function hideSourceNodes(backgroundSvg: string, nodes: EditorNode[]): string {
   const sources = nodes
-    .filter((node) => (node.sourceTag === "text" || node.sourceTag === "rect" || node.sourceTag === "image") && typeof node.sourceIndex === "number")
-    .map((node) => ({ tag: node.sourceTag as "text" | "rect" | "image", index: node.sourceIndex as number }));
+    .filter((node) => (node.sourceTag === "text" || node.sourceTag === "rect" || node.sourceTag === "image" || node.sourceTag === "path") && typeof node.sourceIndex === "number")
+    .map((node) => ({ tag: node.sourceTag as "text" | "rect" | "image" | "path", index: node.sourceIndex as number }));
   if (!sources.length) return backgroundSvg;
   try {
     const document = new DOMParser().parseFromString(backgroundSvg, "image/svg+xml");
@@ -1226,6 +1293,8 @@ function composeSvgFromNodes(backgroundSvg: string, nodes: EditorNode[], appendC
       }
       if (!node.modified) return;
       if (source && node.type === "text") {
+        source.remove();
+        root.appendChild(source);
         source.setAttribute("x", String(round(textAnchorX(node))));
         source.setAttribute("y", String(round(node.y + node.fontSize)));
         source.setAttribute("data-width", String(round(node.width)));
@@ -1236,6 +1305,8 @@ function composeSvgFromNodes(backgroundSvg: string, nodes: EditorNode[], appendC
         source.setAttribute("font-style", node.fontStyle.includes("italic") ? "italic" : "normal");
         source.setAttribute("font-weight", node.fontStyle.includes("bold") ? "700" : "400");
         source.setAttribute("text-anchor", node.align === "center" ? "middle" : node.align === "right" ? "end" : "start");
+        if (node.rotation) source.setAttribute("transform", `rotate(${round(node.rotation)} ${round(node.x)} ${round(node.y)})`);
+        else source.removeAttribute("transform");
         source.removeAttribute("visibility");
         source.removeAttribute("opacity");
         setSvgTextContent(document, source, node);
@@ -1250,6 +1321,8 @@ function composeSvgFromNodes(backgroundSvg: string, nodes: EditorNode[], appendC
       }
       if (!node.modified) return;
       if (source && node.type === "rect") {
+        source.remove();
+        root.appendChild(source);
         source.setAttribute("x", String(round(node.x)));
         source.setAttribute("y", String(round(node.y)));
         source.setAttribute("width", String(round(node.width)));
@@ -1258,6 +1331,8 @@ function composeSvgFromNodes(backgroundSvg: string, nodes: EditorNode[], appendC
         source.setAttribute("stroke", node.stroke);
         source.setAttribute("stroke-width", String(round(node.strokeWidth)));
         source.setAttribute("rx", String(round(node.cornerRadius)));
+        if (node.rotation) source.setAttribute("transform", `rotate(${round(node.rotation)} ${round(node.x)} ${round(node.y)})`);
+        else source.removeAttribute("transform");
         source.removeAttribute("visibility");
         source.removeAttribute("opacity");
       }
@@ -1271,6 +1346,8 @@ function composeSvgFromNodes(backgroundSvg: string, nodes: EditorNode[], appendC
       }
       if (!node.modified) return;
       if (source && node.type === "image") {
+        source.remove();
+        root.appendChild(source);
         source.setAttribute("href", node.src);
         source.setAttribute("x", String(round(node.x)));
         source.setAttribute("y", String(round(node.y)));
@@ -1278,6 +1355,25 @@ function composeSvgFromNodes(backgroundSvg: string, nodes: EditorNode[], appendC
         source.setAttribute("height", String(round(node.height)));
         if (node.rotation) source.setAttribute("transform", `rotate(${round(node.rotation)} ${round(node.x)} ${round(node.y)})`);
         else source.removeAttribute("transform");
+        source.removeAttribute("visibility");
+        source.removeAttribute("opacity");
+      }
+      return;
+    }
+    if (node.sourceTag === "path" && typeof node.sourceIndex === "number") {
+      const source = root.querySelectorAll("path")[node.sourceIndex];
+      if (node.deleted) {
+        source?.remove();
+        return;
+      }
+      if (!node.modified) return;
+      if (source && node.type === "path") {
+        source.remove();
+        root.appendChild(source);
+        source.setAttribute("fill", node.fill);
+        source.setAttribute("stroke", node.stroke);
+        source.setAttribute("stroke-width", String(round(node.strokeWidth)));
+        source.setAttribute("transform", pathTransform(node));
         source.removeAttribute("visibility");
         source.removeAttribute("opacity");
       }
@@ -1324,6 +1420,18 @@ function composeSvgFromNodes(backgroundSvg: string, nodes: EditorNode[], appendC
       image.setAttribute("height", String(round(node.height)));
       if (node.rotation) image.setAttribute("transform", `rotate(${round(node.rotation)} ${round(node.x)} ${round(node.y)})`);
       root.appendChild(image);
+    } else if (node.type === "path") {
+      const rect = document.createElementNS(SVG_NS, "rect");
+      rect.setAttribute("data-paper-editor", "rect");
+      rect.setAttribute("x", String(round(node.x)));
+      rect.setAttribute("y", String(round(node.y)));
+      rect.setAttribute("width", String(round(node.width)));
+      rect.setAttribute("height", String(round(node.height)));
+      rect.setAttribute("fill", node.fill);
+      rect.setAttribute("stroke", node.stroke);
+      rect.setAttribute("stroke-width", String(round(node.strokeWidth)));
+      if (node.rotation) rect.setAttribute("transform", `rotate(${round(node.rotation)} ${round(node.x)} ${round(node.y)})`);
+      root.appendChild(rect);
     } else {
       const group = document.createElementNS(SVG_NS, "g");
       group.setAttribute("data-paper-editor", "table");
@@ -1433,6 +1541,34 @@ function imageFromElement(element: SVGImageElement, index: number, overrides: Pa
     height: numberAttr(element, "height", 160) * matrix.scale,
     rotation: 0,
     src: element.getAttribute("href") || element.getAttributeNS("http://www.w3.org/1999/xlink", "href") || "",
+  };
+}
+
+function pathFromElement(element: SVGPathElement, index: number, overrides: Partial<BaseNode> = {}, root: Element): PathNode {
+  const pathIndex = typeof overrides.sourceIndex === "number" ? overrides.sourceIndex : index;
+  const bounds = measureSvgElementBounds(root, "path", pathIndex) ?? { x: 0, y: 0, width: 80, height: 80 };
+  const rawFill = element.getAttribute("fill") || inheritedAttr(element, "fill") || "#0f172a";
+  const rawStroke = element.getAttribute("stroke") || inheritedAttr(element, "stroke") || rawFill;
+  const strokeWidth = numberAttr(element, "stroke-width", inheritedNumberAttr(element, "stroke-width", 0));
+  return {
+    id: createId(`path-${index}`),
+    type: "path",
+    sourceTag: overrides.sourceTag,
+    sourceIndex: overrides.sourceIndex,
+    committed: overrides.committed ?? false,
+    x: bounds.x,
+    y: bounds.y,
+    width: Math.max(4, bounds.width),
+    height: Math.max(4, bounds.height),
+    rotation: 0,
+    fill: normalizeColor(rawFill),
+    stroke: normalizeColor(rawStroke),
+    strokeWidth,
+    sourceTransform: element.getAttribute("transform") || "",
+    baseX: bounds.x,
+    baseY: bounds.y,
+    baseWidth: Math.max(4, bounds.width),
+    baseHeight: Math.max(4, bounds.height),
   };
 }
 
@@ -1549,6 +1685,49 @@ function isEditableRect(element: SVGRectElement, root: Element) {
   const fill = element.getAttribute("fill");
   const stroke = element.getAttribute("stroke");
   return Boolean(fill && fill !== "none") || Boolean(stroke && stroke !== "none");
+}
+
+function isEditablePath(element: SVGPathElement, root: Element) {
+  if (!element.getAttribute("d")) return false;
+  if (element.getAttribute("display") === "none" || element.getAttribute("visibility") === "hidden") return false;
+  const fill = element.getAttribute("fill") || inheritedAttr(element, "fill");
+  const stroke = element.getAttribute("stroke") || inheritedAttr(element, "stroke");
+  if ((!fill || fill === "none") && (!stroke || stroke === "none")) return false;
+  const paths = Array.from(root.querySelectorAll("path"));
+  const index = paths.indexOf(element);
+  const bounds = measureSvgElementBounds(root, "path", index);
+  if (!bounds) return false;
+  const canvas = readCanvas(root);
+  if (bounds.width < 4 || bounds.height < 4) return false;
+  if (bounds.width >= canvas.width * 0.96 && bounds.height >= canvas.height * 0.96) return false;
+  return (bounds.width * bounds.height) <= canvas.width * canvas.height * 0.35;
+}
+
+function measureSvgElementBounds(root: Element, selector: string, index: number): SelectionRectState | null {
+  if (index < 0 || typeof document === "undefined") return null;
+  const wrapper = document.createElement("div");
+  wrapper.style.cssText = "position:fixed;left:-10000px;top:-10000px;width:1px;height:1px;overflow:hidden;pointer-events:none;";
+  wrapper.innerHTML = new XMLSerializer().serializeToString(root);
+  document.body.appendChild(wrapper);
+  try {
+    const svg = wrapper.querySelector("svg") as SVGSVGElement | null;
+    const target = wrapper.querySelectorAll(selector)[index] as SVGGraphicsElement | undefined;
+    if (!svg || !target) return null;
+    const canvas = readCanvas(root);
+    svg.style.width = `${canvas.width}px`;
+    svg.style.height = `${canvas.height}px`;
+    const svgRect = svg.getBoundingClientRect();
+    const rect = target.getBoundingClientRect();
+    if (!rect.width || !rect.height || !svgRect.width || !svgRect.height) return null;
+    return {
+      x: ((rect.left - svgRect.left) / svgRect.width) * canvas.width,
+      y: ((rect.top - svgRect.top) / svgRect.height) * canvas.height,
+      width: (rect.width / svgRect.width) * canvas.width,
+      height: (rect.height / svgRect.height) * canvas.height,
+    };
+  } finally {
+    wrapper.remove();
+  }
 }
 
 function readCanvas(root: Element) {
@@ -1720,6 +1899,34 @@ function normalizeColor(value: string) {
 
 function createId(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function pathTransform(node: PathNode) {
+  const baseX = node.baseX ?? node.x;
+  const baseY = node.baseY ?? node.y;
+  const baseWidth = Math.max(1, node.baseWidth ?? node.width);
+  const baseHeight = Math.max(1, node.baseHeight ?? node.height);
+  const dx = round(node.x - baseX);
+  const dy = round(node.y - baseY);
+  const sx = round(node.width / baseWidth);
+  const sy = round(node.height / baseHeight);
+  const transforms: string[] = [];
+  if (Math.abs(dx) > 0.01 || Math.abs(dy) > 0.01) transforms.push(`translate(${dx} ${dy})`);
+  if (Math.abs(sx - 1) > 0.01 || Math.abs(sy - 1) > 0.01) {
+    transforms.push(`translate(${round(baseX)} ${round(baseY)}) scale(${sx} ${sy}) translate(${-round(baseX)} ${-round(baseY)})`);
+  }
+  if (node.sourceTransform) transforms.push(node.sourceTransform);
+  return transforms.join(" ").trim();
+}
+
+function clampContextMenuPosition(clientX: number, clientY: number): ContextMenuState {
+  const width = 220;
+  const height = 260;
+  const margin = 8;
+  return {
+    left: Math.min(Math.max(margin, clientX), Math.max(margin, window.innerWidth - width - margin)),
+    top: Math.min(Math.max(margin, clientY), Math.max(margin, window.innerHeight - height - margin)),
+  };
 }
 
 function round(value: number) {

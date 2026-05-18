@@ -23,6 +23,7 @@ import type {
   TemplateAgentConfig,
   TemplateAgentStartResponse,
   TemplateAgentStatus,
+  TemplateImportFileList,
   TemplatePreview,
   TemplatePageType,
   UpdateFontsRequest,
@@ -234,6 +235,24 @@ export async function fetchTemplateImportAgentStatus(
   return request<TemplateAgentStatus>(
     `/api/templates/import/${importId}/agent/${agentJobId}`,
   );
+}
+
+export async function cancelTemplateImportAgent(
+  importId: string,
+  agentJobId: string,
+): Promise<TemplateAgentStatus> {
+  return request<TemplateAgentStatus>(
+    `/api/templates/import/${importId}/agent/${agentJobId}/cancel`,
+    { method: "POST" },
+  );
+}
+
+export async function fetchTemplateImportFiles(
+  importId: string,
+  path = "",
+): Promise<TemplateImportFileList> {
+  const query = path ? `?path=${encodeURIComponent(path)}` : "";
+  return request<TemplateImportFileList>(`/api/templates/import/${importId}/files${query}`);
 }
 
 export async function previewTemplateImportDraft(

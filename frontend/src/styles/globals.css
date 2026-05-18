@@ -3320,7 +3320,7 @@ body::before {
 }
 
 .konva-context-menu {
-  position: absolute;
+  position: fixed;
   z-index: 8;
   display: grid;
   min-width: 190px;
