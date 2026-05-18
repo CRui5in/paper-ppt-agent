@@ -5,7 +5,7 @@ from pathlib import Path
 
 from backend.config import settings
 from backend.generator.template_agent import _seed_agent_template_sources
-from backend.generator.template_importer import _review_manifest_slides, _write_json
+from backend.generator.template_importer import _ensure_agent_template_seeded, _review_manifest_slides, _write_json
 
 
 def _write_svg(path: Path, label: str) -> None:
@@ -38,7 +38,7 @@ def test_review_manifest_slides_reads_legacy_work_sidecar(workspace_tmp: Path) -
     assert slides[2]["elements"][0]["element_id"] == "s02_text_001"
 
 
-def test_agent_template_seed_uses_source_copies_and_archives_stale_outputs(workspace_tmp: Path) -> None:
+def test_agent_template_seed_uses_source_copies_and_preserves_existing_edits(workspace_tmp: Path) -> None:
     import_id = "agent_seed"
     import_dir = settings.workspaces_dir / "template_imports" / import_id
     _write_json(
@@ -84,8 +84,41 @@ def test_agent_template_seed_uses_source_copies_and_archives_stale_outputs(works
     _seed_agent_template_sources(import_dir)
 
     seeded = cover.read_text(encoding="utf-8")
-    assert stale_output not in seeded
-    assert "agent-source" in seeded
-    archived = list((import_dir / "agent_template" / "archive").glob("*/cover_01_cover.svg"))
-    assert archived
-    assert archived[0].read_text(encoding="utf-8") == stale_output
+    assert seeded == stale_output
+    assert not list((import_dir / "agent_template" / "archive").glob("*/cover_01_cover.svg"))
+
+
+def test_agent_template_preview_seed_preserves_existing_edits(workspace_tmp: Path) -> None:
+    import_id = "agent_preview_seed"
+    import_dir = settings.workspaces_dir / "template_imports" / import_id
+    work_dir = import_dir / "work"
+    _write_json(
+        import_dir / "review.json",
+        {
+            "import_id": import_id,
+            "draft": {
+                "page_selections": {
+                    "cover": 1,
+                },
+            },
+        },
+    )
+    _write_svg(work_dir / "svg" / "slide_01.svg", "Cover")
+
+    context = {
+        "review": {"import_id": import_id},
+        "work_dir": work_dir,
+        "selections": {"cover": 1},
+        "svg_clean_dir": work_dir / "svg",
+    }
+    agent_dir = import_dir / "agent_template"
+    _ensure_agent_template_seeded(context, agent_dir)
+
+    cover = agent_dir / "01_cover.svg"
+    assert cover.exists()
+    stale_output = "<svg>custom edit without source marker</svg>"
+    cover.write_text(stale_output, encoding="utf-8")
+    _ensure_agent_template_seeded(context, agent_dir)
+
+    assert cover.read_text(encoding="utf-8") == stale_output
+    assert not list((agent_dir / "archive").glob("*/cover_01_cover.svg"))

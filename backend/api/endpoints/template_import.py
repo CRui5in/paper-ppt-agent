@@ -6,13 +6,16 @@ import asyncio
 import hashlib
 import json
 import logging
+import mimetypes
 import time
 import uuid
 from collections import OrderedDict
+from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import quote
 
 from fastapi import APIRouter, Form, HTTPException, Response, UploadFile, WebSocket, WebSocketDisconnect, status
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from backend.config import settings
@@ -219,6 +222,21 @@ class TemplateAgentStatusResponse(BaseModel):
     completed_at: float | None = None
 
 
+class TemplateImportFileItem(BaseModel):
+    name: str
+    path: str
+    type: Literal["file", "directory"]
+    size: int | None = None
+    image: bool = False
+    preview_url: str | None = None
+
+
+class TemplateImportFileListResponse(BaseModel):
+    cwd: str
+    parent: str | None = None
+    items: list[TemplateImportFileItem]
+
+
 # ── In-memory import results (for preview) ───────────────────────────────────
 
 _import_results: dict[str, ImportResult] = {}
@@ -273,8 +291,36 @@ def _preview_cache_drop(import_id: str) -> None:
     _preview_locks.pop(import_id, None)
 
 
-def _import_workspace(import_id: str):
+def _import_workspace(import_id: str) -> Path:
     return settings.workspaces_dir / "template_imports" / import_id
+
+
+def _template_import_workspace(import_id: str) -> Path:
+    root = _import_workspace(import_id).resolve()
+    if not root.exists() or not root.is_dir():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Import workspace '{import_id}' not found.",
+        )
+    return root
+
+
+def _resolve_import_workspace_path(root: Path, relative: str = "") -> Path:
+    rel = (relative or "").replace("\\", "/").strip("/")
+    target = (root / rel).resolve()
+    try:
+        target.relative_to(root)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Path is outside the import workspace.") from None
+    return target
+
+
+def _workspace_relative_path(root: Path, path: Path) -> str:
+    return path.resolve().relative_to(root).as_posix()
+
+
+def _is_previewable_image(path: Path) -> bool:
+    return path.suffix.lower() in {".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 
 
 def _slide_svg_path(import_id: str, slide_index: int):
@@ -691,6 +737,63 @@ async def get_template_import_asset_preview(import_id: str, file_name: str) -> R
     return Response(content=data, media_type=media_type)
 
 
+@router.get("/import/{import_id}/files", response_model=TemplateImportFileListResponse)
+async def list_template_import_files(
+    import_id: str,
+    path: str = "",
+) -> TemplateImportFileListResponse:
+    """Browse files in the Agent's import workspace for @-mentions."""
+    root = _template_import_workspace(import_id)
+    target = _resolve_import_workspace_path(root, path)
+    if not target.exists() or not target.is_dir():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Workspace path '{path}' not found.",
+        )
+    items: list[TemplateImportFileItem] = []
+    for child in sorted(target.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
+        if child.name.startswith("."):
+            continue
+        rel = _workspace_relative_path(root, child)
+        is_file = child.is_file()
+        is_image = is_file and _is_previewable_image(child)
+        items.append(
+            TemplateImportFileItem(
+                name=child.name,
+                path=rel,
+                type="directory" if child.is_dir() else "file",
+                size=child.stat().st_size if is_file else None,
+                image=is_image,
+                preview_url=f"/api/templates/import/{import_id}/files/preview?path={quote(rel, safe='')}"
+                if is_image
+                else None,
+            )
+        )
+    cwd = _workspace_relative_path(root, target) if target != root else ""
+    parent_path = None
+    if target != root:
+        parent = target.parent
+        parent_path = _workspace_relative_path(root, parent) if parent != root else ""
+    return TemplateImportFileListResponse(cwd=cwd, parent=parent_path, items=items)
+
+
+@router.get("/import/{import_id}/files/preview", response_model=None)
+async def get_template_import_file_preview(import_id: str, path: str):
+    """Return a previewable image from the Agent workspace."""
+    root = _template_import_workspace(import_id)
+    target = _resolve_import_workspace_path(root, path)
+    if not target.exists() or not target.is_file() or not _is_previewable_image(target):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Preview '{path}' not found.",
+        )
+    if target.suffix.lower() == ".svg":
+        svg = await aoffload(lambda: inline_svg_asset_refs(target, max_bytes=5_000_000))
+        return Response(content=svg, media_type="image/svg+xml")
+    media_type = mimetypes.guess_type(target.name)[0]
+    return FileResponse(target, media_type=media_type or "application/octet-stream")
+
+
 # ── Annotation CRUD ───────────────────────────────────────────────────────
 
 
@@ -966,6 +1069,25 @@ async def get_template_import_agent_status(
     return _template_agent_status_response(job)
 
 
+@router.post(
+    "/import/{import_id}/agent/{agent_job_id}/cancel",
+    response_model=TemplateAgentStatusResponse,
+)
+async def cancel_template_import_agent(
+    import_id: str,
+    agent_job_id: str,
+) -> TemplateAgentStatusResponse:
+    """Cancel a running Template Agent job."""
+    job = template_agent_manager.get(agent_job_id)
+    if job is None or job.import_id != import_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Agent job '{agent_job_id}' not found.",
+        )
+    cancelled = await template_agent_manager.cancel(agent_job_id)
+    return _template_agent_status_response(cancelled or job)
+
+
 @router.websocket("/import/{import_id}/agent/{agent_job_id}/stream")
 async def stream_template_import_agent(
     websocket: WebSocket,
@@ -1017,7 +1139,7 @@ async def stream_template_import_agent(
                 await websocket.send_json({"type": "ping", "ts": time.time()})
                 continue
             await websocket.send_json(event)
-            if event.get("type") in {"complete", "error"}:
+            if event.get("type") in {"complete", "error", "cancelled"}:
                 await websocket.close(code=1000)
                 return
     except WebSocketDisconnect:

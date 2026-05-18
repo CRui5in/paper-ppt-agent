@@ -9,6 +9,7 @@ and edit the import workspace with Claude Code/Agent SDK semantics.
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import json
 import os
@@ -24,6 +25,7 @@ from typing import Any, Literal
 from xml.etree import ElementTree as ET
 
 from backend.config import settings
+from backend.usage.tracker import usage_tracker
 
 AgentConfigMode = Literal["claude_code", "custom"]
 AgentStatus = Literal["queued", "running", "complete", "error", "cancelled"]
@@ -51,6 +53,24 @@ class TemplateAgentConfig:
     reply_language: Literal["zh", "en"] = "en"
 
 
+@dataclass(slots=True)
+class TemplateAgentSessionState:
+    """Persistent Agent SDK session metadata for one import."""
+
+    session_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    initialized: bool = False
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_creation_tokens: int = 0
+    total_cost_usd: float = 0.0
+    num_turns: int = 0
+    duration_ms: int = 0
+    model_name: str | None = None
+    model_usage: dict[str, Any] = field(default_factory=dict)
+    updated_at: float = field(default_factory=time.time)
+
+
 @dataclass
 class TemplateAgentJob:
     """In-memory state for an agent job."""
@@ -60,6 +80,7 @@ class TemplateAgentJob:
     feedback: str
     config: TemplateAgentConfig
     session_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    session_state: TemplateAgentSessionState | None = None
     planning: bool = True
     status: AgentStatus = "queued"
     message: str = ""
@@ -97,6 +118,7 @@ class TemplateAgentManager:
 
     def __init__(self) -> None:
         self._jobs: dict[str, TemplateAgentJob] = {}
+        self._session_states: dict[str, TemplateAgentSessionState] = {}
         self._lock = asyncio.Lock()
 
     async def start(
@@ -115,6 +137,8 @@ class TemplateAgentManager:
             feedback=feedback.strip(),
             config=config,
         )
+        job.session_state = self._load_session_state(import_id)
+        self._seed_job_from_session_state(job)
         job.planning = planning
         async with self._lock:
             self._jobs[job_id] = job
@@ -142,6 +166,31 @@ class TemplateAgentManager:
 
     def get(self, job_id: str) -> TemplateAgentJob | None:
         return self._jobs.get(job_id)
+
+    async def cancel(self, job_id: str) -> TemplateAgentJob | None:
+        job = self._jobs.get(job_id)
+        if job is None:
+            return None
+        if job.status in {"complete", "error", "cancelled"}:
+            return job
+        job.status = "cancelled"
+        job.message = "Agent task cancelled."
+        job.completed_at = time.time()
+        job.updated_at = job.completed_at
+        task = job.task
+        if task is not None and not task.done():
+            task.cancel()
+        self._save_session_state(job)
+        await self._publish(
+            job,
+            {
+                "type": "cancelled",
+                "stage": "cancelled",
+                "status": "cancelled",
+                "message": job.message,
+            },
+        )
+        return job
 
     def subscribe(self, job_id: str) -> asyncio.Queue[dict[str, Any]]:
         job = self._jobs.get(job_id)
@@ -178,6 +227,74 @@ class TemplateAgentManager:
             "ts": time.time(),
         }
 
+    def _session_state_path(self, import_id: str) -> Path:
+        return _import_dir(import_id) / "agent_session.json"
+
+    def _load_session_state(self, import_id: str) -> TemplateAgentSessionState:
+        state = self._session_states.get(import_id)
+        if state is not None:
+            return state
+        path = self._session_state_path(import_id)
+        state = TemplateAgentSessionState()
+        if path.exists():
+            try:
+                raw = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                raw = None
+            if isinstance(raw, dict):
+                state.session_id = str(raw.get("session_id") or state.session_id)
+                state.initialized = bool(raw.get("initialized"))
+                state.input_tokens = int(raw.get("input_tokens") or 0)
+                state.output_tokens = int(raw.get("output_tokens") or 0)
+                state.cache_read_tokens = int(raw.get("cache_read_tokens") or 0)
+                state.cache_creation_tokens = int(raw.get("cache_creation_tokens") or 0)
+                state.total_cost_usd = float(raw.get("total_cost_usd") or 0.0)
+                state.num_turns = int(raw.get("num_turns") or 0)
+                state.duration_ms = int(raw.get("duration_ms") or 0)
+                model_name = raw.get("model_name")
+                state.model_name = str(model_name) if isinstance(model_name, str) and model_name else None
+                model_usage = raw.get("model_usage")
+                if isinstance(model_usage, dict):
+                    state.model_usage = copy.deepcopy(model_usage)
+                updated_at = raw.get("updated_at")
+                if isinstance(updated_at, (int, float)):
+                    state.updated_at = float(updated_at)
+        self._session_states[import_id] = state
+        return state
+
+    def _save_session_state(self, job: TemplateAgentJob) -> None:
+        if job.session_state is None:
+            return
+        state = job.session_state
+        state.session_id = job.session_id or state.session_id
+        state.input_tokens = job.input_tokens
+        state.output_tokens = job.output_tokens
+        state.cache_read_tokens = job.cache_read_tokens
+        state.cache_creation_tokens = job.cache_creation_tokens
+        state.total_cost_usd = job.total_cost_usd
+        state.num_turns = job.num_turns
+        state.duration_ms = job.duration_ms
+        state.model_name = job.model_name
+        state.model_usage = copy.deepcopy(job.model_usage)
+        state.updated_at = time.time()
+        self._session_states[job.import_id] = state
+        _atomic_write_json(self._session_state_path(job.import_id), _session_state_payload(state))
+
+    def _seed_job_from_session_state(self, job: TemplateAgentJob) -> None:
+        if job.session_state is None:
+            return
+        state = job.session_state
+        job.session_id = state.session_id
+        job.input_tokens = state.input_tokens
+        job.output_tokens = state.output_tokens
+        job.cache_read_tokens = state.cache_read_tokens
+        job.cache_creation_tokens = state.cache_creation_tokens
+        job.total_cost_usd = state.total_cost_usd
+        job.num_turns = state.num_turns
+        job.duration_ms = state.duration_ms
+        job.model_name = state.model_name
+        job.model_usage = copy.deepcopy(state.model_usage)
+
     async def _run(self, job: TemplateAgentJob) -> None:
         job.status = "running"
         job.started_at = time.time()
@@ -194,7 +311,7 @@ class TemplateAgentManager:
 
         try:
             try:
-                from claude_agent_sdk import ClaudeAgentOptions, query
+                from claude_agent_sdk import ClaudeAgentOptions
             except Exception as exc:  # noqa: BLE001 - optional runtime dependency
                 raise RuntimeError(
                     "Claude Agent SDK is not installed. Install `claude-agent-sdk` "
@@ -211,12 +328,13 @@ class TemplateAgentManager:
             _write_agent_context(import_dir)
             prompt = _build_prompt(job.import_id, import_dir, job.feedback, job.config.reply_language)
 
-            def _options_for_attempt(*, resume: bool) -> Any:
-                session_options = (
-                    {"resume": job.session_id}
-                    if resume
-                    else {"session_id": job.session_id}
+            def _options_for_attempt() -> Any:
+                resume_session = (
+                    job.session_state.session_id
+                    if job.session_state is not None and job.session_state.initialized
+                    else None
                 )
+                session_options = {"resume": resume_session} if resume_session else {}
                 return ClaudeAgentOptions(
                     tools={
                         "type": "preset",
@@ -252,7 +370,6 @@ class TemplateAgentManager:
                     stderr=lambda line: self._handle_stderr(job, line),
                 )
 
-            assistant_text: list[str] = []
             await self._publish(
                 job,
                 {
@@ -265,6 +382,7 @@ class TemplateAgentManager:
             attempt = 0
             while True:
                 attempt += 1
+                usage_snapshot = _usage_snapshot(job)
                 if attempt > 1:
                     _write_agent_context(import_dir)
                 attempt_prompt = (
@@ -278,19 +396,21 @@ class TemplateAgentManager:
                     )
                 )
                 try:
-                    async for message in _iter_query_in_worker_loop(
+                    async for message in _iter_client_in_worker_loop(
                         attempt_prompt,
-                        _options_for_attempt(resume=attempt > 1),
-                        query,
+                        _options_for_attempt(),
                     ):
                         # Update usage / cost counters before fanning out events so
                         # the UI sees them on the same tick as the originating frame.
-                        self._update_usage(job, message)
+                        self._update_usage(
+                            job,
+                            message,
+                            usage_snapshot=usage_snapshot,
+                        )
                         for event in _events_from_sdk_message(message):
                             if event.get("type") == "message":
                                 text = str(event.get("message") or "").strip()
                                 if text:
-                                    assistant_text.append(text)
                                     # Persist each assistant message individually so
                                     # the frontend dedupe (matches by exact content)
                                     # collapses the streamed bubble into the saved
@@ -303,6 +423,9 @@ class TemplateAgentManager:
                                         {"mode": "agent", "agent_job_id": job.id},
                                     )
                             await self._publish(job, event)
+                        if message.__class__.__name__ == "ResultMessage":
+                            self._record_usage(job, usage_snapshot, attempt=attempt)
+                            self._save_session_state(job)
                     break
                 except Exception as exc:  # noqa: BLE001 - resume recoverable SDK stream breaks
                     if attempt > _AGENT_RECOVERY_ATTEMPTS or not _is_recoverable_agent_error(exc):
@@ -334,6 +457,7 @@ class TemplateAgentManager:
             job.message = "Agent task complete."
             job.completed_at = time.time()
             job.updated_at = job.completed_at
+            self._save_session_state(job)
             await self._publish(
                 job,
                 {
@@ -349,10 +473,11 @@ class TemplateAgentManager:
             job.message = "Agent task cancelled."
             job.completed_at = time.time()
             job.updated_at = job.completed_at
+            self._save_session_state(job)
             await self._publish(
                 job,
                 {
-                    "type": "error",
+                    "type": "cancelled",
                     "stage": "cancelled",
                     "status": "cancelled",
                     "message": job.message,
@@ -365,6 +490,7 @@ class TemplateAgentManager:
             job.message = "Agent task failed."
             job.completed_at = time.time()
             job.updated_at = job.completed_at
+            self._save_session_state(job)
             await self._append_review_message(
                 job.import_id,
                 "assistant",
@@ -382,7 +508,13 @@ class TemplateAgentManager:
                 },
             )
 
-    def _update_usage(self, job: TemplateAgentJob, message: Any) -> None:
+    def _update_usage(
+        self,
+        job: TemplateAgentJob,
+        message: Any,
+        *,
+        usage_snapshot: dict[str, int] | None = None,
+    ) -> None:
         """Roll usage / cost counters from SDK messages onto the job.
 
         Mirrors the dedup-by-message-id pattern recommended by the cost
@@ -393,6 +525,20 @@ class TemplateAgentManager:
         accumulate across query() calls in case multiple are run.
         """
         kind = message.__class__.__name__
+
+        if kind == "SystemMessage":
+            subtype = getattr(message, "subtype", None)
+            if subtype == "init":
+                data = getattr(message, "data", None)
+                if isinstance(data, dict):
+                    session_id = data.get("session_id")
+                    if isinstance(session_id, str) and session_id:
+                        job.session_id = session_id
+                        if job.session_state is not None:
+                            job.session_state.session_id = session_id
+                            job.session_state.initialized = True
+                            self._save_session_state(job)
+            return
 
         if kind == "AssistantMessage":
             msg_id = getattr(message, "message_id", None)
@@ -415,6 +561,19 @@ class TemplateAgentManager:
             return
 
         if kind == "ResultMessage":
+            usage = getattr(message, "usage", None) or {}
+            if isinstance(usage, dict) and usage_snapshot is not None:
+                if (
+                    job.input_tokens == usage_snapshot["input_tokens"]
+                    and job.output_tokens == usage_snapshot["output_tokens"]
+                    and job.cache_read_tokens == usage_snapshot["cache_read_tokens"]
+                    and job.cache_creation_tokens == usage_snapshot["cache_creation_tokens"]
+                ):
+                    job.input_tokens += int(usage.get("input_tokens") or 0)
+                    job.output_tokens += int(usage.get("output_tokens") or 0)
+                    job.cache_read_tokens += int(usage.get("cache_read_input_tokens") or 0)
+                    job.cache_creation_tokens += int(usage.get("cache_creation_input_tokens") or 0)
+                    _safe_create_task(self._publish(job, _usage_event(job)))
             cost = getattr(message, "total_cost_usd", None)
             if isinstance(cost, (int, float)):
                 job.total_cost_usd += float(cost)
@@ -441,7 +600,37 @@ class TemplateAgentManager:
                     first_model = next(iter(model_usage.keys()), None)
                     if isinstance(first_model, str):
                         job.model_name = first_model
-            _safe_create_task(self._publish(job, _usage_event(job)))
+
+    def _record_usage(
+        self,
+        job: TemplateAgentJob,
+        usage_snapshot: dict[str, int],
+        *,
+        attempt: int,
+    ) -> None:
+        """Persist a per-attempt usage record for the logs page."""
+        prompt_tokens = (
+            job.input_tokens
+            + job.cache_read_tokens
+            + job.cache_creation_tokens
+            - usage_snapshot["input_tokens"]
+            - usage_snapshot["cache_read_tokens"]
+            - usage_snapshot["cache_creation_tokens"]
+        )
+        completion_tokens = job.output_tokens - usage_snapshot["output_tokens"]
+        duration_ms = job.duration_ms - usage_snapshot["duration_ms"]
+        if prompt_tokens <= 0 and completion_tokens <= 0:
+            return
+        usage_tracker.record(
+            provider="anthropic" if job.config.mode == "claude_code" else "custom",
+            model=job.model_name or job.config.model or "unknown",
+            prompt_tokens=max(0, prompt_tokens),
+            completion_tokens=max(0, completion_tokens),
+            job_id=job.session_id,
+            stage="agent",
+            attempt=attempt,
+            duration_ms=max(0, duration_ms),
+        )
 
     def _handle_stderr(self, job: TemplateAgentJob, line: str) -> None:
         message = str(line).strip()
@@ -541,8 +730,8 @@ def _import_dir(import_id: str) -> Path:
 _WORKER_DONE = object()
 
 
-async def _iter_query_in_worker_loop(prompt: str, options: Any, query: Any):
-    """Run ``query(prompt, options)`` on a dedicated background event loop and
+async def _iter_client_in_worker_loop(prompt: str, options: Any):
+    """Run ``ClaudeSDKClient`` on a dedicated background event loop and
     yield messages back to the caller's loop.
 
     This works around a Windows-specific issue: when uvicorn runs with
@@ -576,10 +765,14 @@ async def _iter_query_in_worker_loop(prompt: str, options: Any, query: Any):
 
     async def _drive() -> None:
         try:
-            async for message in query(prompt=prompt, options=options):
-                if cancel_event.is_set():
-                    break
-                _put_threadsafe(message)
+            from claude_agent_sdk import ClaudeSDKClient
+
+            async with ClaudeSDKClient(options=options) as client:
+                await client.query(prompt)
+                async for message in client.receive_response():
+                    if cancel_event.is_set():
+                        break
+                    _put_threadsafe(message)
         except BaseException as exc:  # noqa: BLE001 - propagate to caller loop
             if _is_false_success_error(exc):
                 return
@@ -893,6 +1086,7 @@ def _build_agent_task(
             "Keep the agent-source metadata comment in each SVG.",
             "Preserve source chrome, logos, backgrounds, bands, and navigation unless the user explicitly asks to change them.",
             "Replace only reusable content/text with placeholders by preserving original geometry.",
+            "Place placeholders where the original content lived: keep alignment, spacing, and reading order tidy; avoid drifting into logos, navigation, or decorative chrome.",
         ],
         "pages": pages,
         "required_reads": [
@@ -1439,6 +1633,8 @@ Editing contract:
 - Replace reusable content with continuous placeholder tokens such as ``{{{{TITLE}}}}``,
   ``{{{{SUBTITLE}}}}``, ``{{{{PAGE_TITLE}}}}``, ``{{{{CONTENT}}}}``,
   ``{{{{CONTENT_AREA}}}}``, ``{{{{AUTHOR}}}}``, ``{{{{DATE}}}}``.
+- Place placeholders in the same visual zones as the original content: keep alignment,
+  spacing, and reading order tidy; avoid piling tokens together or drifting into chrome.
 - Use ``source_orientation`` from ``agent_task.json`` for top/bottom direction; raw SVG
   y coordinates may be flipped by transforms.
 - Update ``review.json`` only for high-level decisions: design_spec, asset roles,
@@ -1544,6 +1740,7 @@ def _events_from_sdk_message(message: Any) -> list[dict[str, Any]]:
             elif hasattr(block, "name"):
                 tool_name = str(getattr(block, "name") or "tool")
                 tool_input = getattr(block, "input", None)
+                tool_use_id = getattr(block, "id", None)
                 events.append(
                     {
                         "type": "tool",
@@ -1553,9 +1750,46 @@ def _events_from_sdk_message(message: Any) -> list[dict[str, Any]]:
                         "data": {
                             "tool": tool_name,
                             "input": _compact_jsonish(tool_input),
+                            "tool_use_id": tool_use_id,
                         },
                     }
                 )
+    elif kind == "UserMessage":
+        # The SDK echoes tool execution results back through a synthetic
+        # UserMessage that carries one or more ToolResultBlocks. Forward each
+        # as a ``tool`` event with ``status=complete`` (or ``error``) so the
+        # UI can flip the matching running row to its done state.
+        for block in getattr(message, "content", []) or []:
+            block_kind = block.__class__.__name__
+            if block_kind != "ToolResultBlock" and not hasattr(block, "tool_use_id"):
+                continue
+            tool_use_id = getattr(block, "tool_use_id", None)
+            is_error = bool(getattr(block, "is_error", False))
+            content = getattr(block, "content", None)
+            # ``content`` can be a string or a list of dict-like blocks.
+            if isinstance(content, list):
+                snippets: list[str] = []
+                for entry in content:
+                    if isinstance(entry, dict):
+                        snippets.append(str(entry.get("text") or entry.get("content") or ""))
+                    else:
+                        snippets.append(str(entry))
+                content_text = "\n".join(s for s in snippets if s)
+            else:
+                content_text = str(content or "")
+            events.append(
+                {
+                    "type": "tool",
+                    "stage": "tool",
+                    "status": "error" if is_error else "complete",
+                    "message": "Tool result",
+                    "data": {
+                        "tool_use_id": tool_use_id,
+                        "is_error": is_error,
+                        "output_preview": content_text[:_TEXT_LIMIT // 4],
+                    },
+                }
+            )
     elif kind == "ResultMessage":
         subtype = str(getattr(message, "subtype", "") or "").lower()
         result = getattr(message, "result", None)
@@ -1632,6 +1866,16 @@ def _message_text(message: Any) -> str:
     return ""
 
 
+def _usage_snapshot(job: TemplateAgentJob) -> dict[str, int]:
+    return {
+        "input_tokens": job.input_tokens,
+        "output_tokens": job.output_tokens,
+        "cache_read_tokens": job.cache_read_tokens,
+        "cache_creation_tokens": job.cache_creation_tokens,
+        "duration_ms": job.duration_ms,
+    }
+
+
 def _usage_event(job: TemplateAgentJob) -> dict[str, Any]:
     """Build a ``usage`` event payload reflecting the current job totals."""
     return {
@@ -1640,6 +1884,7 @@ def _usage_event(job: TemplateAgentJob) -> dict[str, Any]:
         "status": "running" if job.status == "running" else job.status,
         "message": "Usage update",
         "data": {
+            "session_id": job.session_id,
             "model": job.model_name,
             "input_tokens": job.input_tokens,
             "output_tokens": job.output_tokens,
@@ -1650,6 +1895,23 @@ def _usage_event(job: TemplateAgentJob) -> dict[str, Any]:
             "duration_ms": job.duration_ms,
             "model_usage": job.model_usage or None,
         },
+    }
+
+
+def _session_state_payload(state: TemplateAgentSessionState) -> dict[str, Any]:
+    return {
+        "session_id": state.session_id,
+        "initialized": state.initialized,
+        "input_tokens": state.input_tokens,
+        "output_tokens": state.output_tokens,
+        "cache_read_tokens": state.cache_read_tokens,
+        "cache_creation_tokens": state.cache_creation_tokens,
+        "total_cost_usd": round(state.total_cost_usd, 6) if state.total_cost_usd else 0.0,
+        "num_turns": state.num_turns,
+        "duration_ms": state.duration_ms,
+        "model_name": state.model_name,
+        "model_usage": state.model_usage or None,
+        "updated_at": state.updated_at,
     }
 
 

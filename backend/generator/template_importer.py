@@ -860,12 +860,40 @@ def _element_bbox(element: ET.Element, kind: str, canvas_w: int, canvas_h: int) 
         rx = _to_float(element.attrib.get("rx"), 0)
         ry = _to_float(element.attrib.get("ry"), 0)
         return {"x": cx - rx, "y": cy - ry, "width": 2 * rx, "height": 2 * ry}
+    if _local_name(element.tag) == "path":
+        bbox = _path_bbox_estimate(element)
+        if bbox is not None:
+            return bbox
     return {
         "x": _to_float(element.attrib.get("x")),
         "y": _to_float(element.attrib.get("y")),
         "width": _to_float(element.attrib.get("width")),
         "height": _to_float(element.attrib.get("height")),
     }
+
+
+def _path_bbox_estimate(element: ET.Element) -> dict[str, float] | None:
+    """Best-effort bbox for decorative paths exported by PPT/PDF.
+
+    The review manifest only needs a useful target for user/agent feedback.
+    We approximate path geometry from numeric coordinate pairs, then apply the
+    element's own transform matrix. This catches outlined numerals and badges
+    that have no x/y/width/height attributes.
+    """
+
+    nums = _float_values(element.attrib.get("d", ""))
+    if len(nums) < 4:
+        return None
+    points = list(zip(nums[0::2], nums[1::2]))
+    if not points:
+        return None
+    matrix = _parse_svg_transform(element.attrib.get("transform"))
+    transformed = [_apply_svg_matrix(matrix, x, y) for x, y in points]
+    xs = [p[0] for p in transformed]
+    ys = [p[1] for p in transformed]
+    x0, x1 = min(xs), max(xs)
+    y0, y1 = min(ys), max(ys)
+    return {"x": x0, "y": y0, "width": x1 - x0, "height": y1 - y0}
 
 
 def _extract_slide_elements(
@@ -3274,6 +3302,7 @@ def _ensure_agent_template_seeded(context: dict[str, Any], agent_dir: Path) -> N
                 "agent_template_svg": target.relative_to(context["work_dir"].parent).as_posix(),
                 "source_sha1": source_hash,
                 "existing": target.exists(),
+                "archived_previous": None,
                 "baseline_policy": "edit_source_copy_minimally",
             }
         )

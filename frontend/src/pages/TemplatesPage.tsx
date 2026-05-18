@@ -5,7 +5,9 @@ import {
   useRef,
   useState,
   type DragEvent,
+  type MouseEvent as ReactMouseEvent,
 } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import {
   Bot,
@@ -43,6 +45,7 @@ import type {
   TemplatePreview,
   PreviewSlide,
   SlideDocument,
+  UserAnnotation,
 } from "../lib/types";
 import { ProgressView } from "../components/template/ProgressView";
 import { AgentImportingView } from "../components/template/AgentImportingView";
@@ -60,6 +63,12 @@ const ROUTING_PROFILE_STORAGE_KEY = "paper-ppt-agent-routing-profiles-v1";
 const TEMPLATE_AGENT_CONFIG_STORAGE_KEY = "paper-ppt-agent-template-agent-config-v1";
 const ACTIVE_TEMPLATE_IMPORT_STORAGE_KEY = "paper-ppt-agent-active-template-import-v1";
 const TEMPLATE_UPLOAD_MODE_STORAGE_KEY = "paper-ppt-agent-template-upload-mode-v1";
+
+type PageSelectionChange = {
+  pageType: TemplatePageType;
+  from: number | null;
+  to: number;
+};
 
 interface RoutingProfile {
   model: string;
@@ -223,6 +232,8 @@ export function TemplatesPage() {
   });
   const [selectedSlideIndex, setSelectedSlideIndex] = useState<number | null>(null);
   const [slideSvgByIndex, setSlideSvgByIndex] = useState<Record<number, string>>({});
+  const [pendingAgentSelectionChanges, setPendingAgentSelectionChanges] = useState<PageSelectionChange[]>([]);
+  const selectionBaselineRef = useRef<Partial<Record<TemplatePageType, number | null>>>({});
   const [uploadMode, setUploadMode] = useState<CollabMode>(readTemplateUploadMode);
   const [collabMode, setCollabMode] = useState<CollabMode>(readTemplateUploadMode);
   const [agentConfig, setAgentConfig] = useState<TemplateAgentConfig>(readTemplateAgentConfig);
@@ -247,9 +258,11 @@ export function TemplatesPage() {
     updateDraft,
     assist,
     runAgent,
+    cancelAgent,
     llmEvents,
     agentEvents,
     agentStatus,
+    agentCancelPending,
     confirm,
     retryStep,
     saveAgentTemplateSvg,
@@ -350,8 +363,14 @@ export function TemplatesPage() {
     }
     if (!review) {
       setSelectedSlideIndex(null);
+      selectionBaselineRef.current = {};
     }
   }, [review, selectedSlideIndex]);
+
+  useEffect(() => {
+    if (!review || pendingAgentSelectionChanges.length > 0) return;
+    selectionBaselineRef.current = { ...(draft.page_selections ?? {}) };
+  }, [draft.page_selections, pendingAgentSelectionChanges.length, review]);
 
   // ── Filtering ─────────────────────────────────────────────────────────
   const filteredTemplates = useMemo(() => {
@@ -418,7 +437,55 @@ export function TemplatesPage() {
     setCollabMode(uploadMode);
     setAutoSelectedFor(null);
     setSelectedSlideIndex(null);
+    setPendingAgentSelectionChanges([]);
   }, [uploadMode]);
+
+  const handleAssignPageTypeToSlide = useCallback(
+    (pageType: TemplatePageType, slideIndex: number) => {
+      const reviewing = Boolean(importId) && status?.status === "review_required" && Boolean(review);
+      if (!reviewing) {
+        setFocusedPageType(pageType);
+        return;
+      }
+      const currentSelections = draft.page_selections ?? {};
+      const previous = currentSelections[pageType] ?? null;
+      setFocusedPageType(pageType);
+      if (previous === slideIndex) {
+        return;
+      }
+      updateDraft({
+        page_selections: {
+          ...currentSelections,
+          [pageType]: slideIndex,
+        },
+      });
+      setSelectedSlideIndex(slideIndex);
+      setStageShowTemplated(true);
+      setStageMode("select");
+      if (collabMode === "agent") {
+        setPendingAgentSelectionChanges((prev) => {
+          const withoutType = prev.filter((item) => item.pageType !== pageType);
+          const baseline = selectionBaselineRef.current[pageType] ?? null;
+          if (baseline === slideIndex) return withoutType;
+          return [...withoutType, { pageType, from: baseline, to: slideIndex }];
+        });
+      }
+    },
+    [collabMode, draft.page_selections, importId, review, status?.status, updateDraft],
+  );
+
+  const handleReviewPageTypeClick = useCallback(
+    (pageType: TemplatePageType) => {
+      setFocusedPageType(pageType);
+      const assignedSlide = draft.page_selections?.[pageType];
+      if (typeof assignedSlide === "number") {
+        setSelectedSlideIndex(assignedSlide);
+        setStageShowTemplated(true);
+        setStageMode("select");
+      }
+    },
+    [draft.page_selections],
+  );
 
   const handleSelectTemplate = useCallback((tid: string) => {
     setSelectedTemplateId(tid);
@@ -569,7 +636,11 @@ export function TemplatesPage() {
         : null,
     [slide, slideSvgByIndex],
   );
-  const annotations = draft.annotations ?? review?.annotations ?? [];
+  const annotations: UserAnnotation[] = draft.annotations ?? review?.annotations ?? [];
+  const activeAnnotations = useMemo(
+    () => annotations.filter((annotation) => !annotation.resolved),
+    [annotations],
+  );
 
   const replyLanguage = useMemo<"zh" | "en">(() => {
     const fb = review?.feedback_history ?? [];
@@ -648,17 +719,8 @@ export function TemplatesPage() {
       const isAgentMessage = meta.mode === "agent" || Boolean(meta.agent_job_id);
       return collabMode === "agent" ? isAgentMessage : !isAgentMessage;
     });
-    if (collabMode === "agent" && isReviewing && review && filtered.length === 0 && !agentStatus) {
-      const slideCount = review.slide_count ?? review.slides.length;
-      filtered.push({
-        role: "assistant",
-        content: t("template.agentIntroMessage").replace("{slides}", String(slideCount)),
-        created_at: 0,
-        meta: { mode: "agent", synthetic: true },
-      });
-    }
     return filtered;
-  }, [agentStatus, collabMode, isReviewing, review, review?.conversation, t]);
+  }, [collabMode, review, review?.conversation]);
 
   const collabActivityEvents = useMemo(
     () =>
@@ -874,7 +936,10 @@ export function TemplatesPage() {
                     index={s.index}
                     svg={slideSvgByIndex[s.index] ?? s.preview_svg}
                     active={selectedSlideIndex === s.index}
-                    onClick={() => setSelectedSlideIndex(s.index)}
+                    onClick={() => {
+                      setStageMode("select");
+                      setSelectedSlideIndex(s.index);
+                    }}
                   />
                 ))
               ) : !isImporting && selectedTemplate && preview ? (
@@ -906,7 +971,7 @@ export function TemplatesPage() {
                   <SlideStage
                     slide={slideForStage}
                     templatedSvg={templatedSvg}
-                    annotations={annotations}
+                    annotations={activeAnnotations}
                     mode={stageMode}
                     onModeChange={setStageMode}
                     toolbarHidden
@@ -1022,7 +1087,9 @@ export function TemplatesPage() {
                 focusedPageType={focusedPageType}
                 selectedSlideIndex={selectedSlideIndex}
                 onSelectPageType={setFocusedPageType}
-                onSelectSlide={setSelectedSlideIndex}
+                onAssignPageType={handleAssignPageTypeToSlide}
+                onReviewPageTypeClick={handleReviewPageTypeClick}
+                slides={review?.slides ?? []}
               />
             </div>
           </div>
@@ -1061,18 +1128,35 @@ export function TemplatesPage() {
                 agentStatus={agentStatus}
                 onSendFeedback={async (text) => {
                   if (collabMode === "agent") {
-                    await runAgent(text, { ...agentConfig, reply_language: locale });
+                    const selectionNote = formatPageSelectionChanges(pendingAgentSelectionChanges, t);
+                    await runAgent(
+                      selectionNote ? `${text}\n\n${selectionNote}` : text,
+                      { ...agentConfig, reply_language: locale },
+                    );
+                    if (selectionNote) setPendingAgentSelectionChanges([]);
                   } else {
                     await assist(text);
                   }
                 }}
+                onStopAgent={cancelAgent}
+                importId={importId}
+                contextAttachments={pendingAgentSelectionChanges.map((change) => {
+                  const label = t(`templates.preview.tilelabel.${change.pageType}`);
+                  const from = change.from ? String(change.from) : t("templates.chip.notAssigned");
+                  return {
+                    id: `selection:${change.pageType}`,
+                    label: `${label}: ${from} -> ${change.to}`,
+                    detail: t("templates.chip.pendingAgentChange"),
+                  };
+                })}
                 modelConfigured={collabMode === "agent" ? agentConfigured : modelConfigured}
-                annotationCount={annotations.length}
+                annotationCount={activeAnnotations.length}
                 modelLabel={
                   collabMode === "agent"
-                    ? agentConfig.model || undefined
+                    ? agentConfig.model || agentConfig.custom_model_option || "Claude Code"
                     : modelConfig?.model
                 }
+                agentCancelPending={agentCancelPending}
               />
             </div>
           </div>
@@ -1503,7 +1587,9 @@ interface BottomRailProps {
   focusedPageType: TemplatePageType;
   selectedSlideIndex: number | null;
   onSelectPageType: (pt: TemplatePageType) => void;
-  onSelectSlide: (slideIndex: number) => void;
+  onAssignPageType: (pt: TemplatePageType, slideIndex: number) => void;
+  onReviewPageTypeClick: (pt: TemplatePageType) => void;
+  slides: TemplateImportSlide[];
 }
 
 function BottomRail({
@@ -1514,9 +1600,32 @@ function BottomRail({
   focusedPageType,
   selectedSlideIndex,
   onSelectPageType,
-  onSelectSlide,
+  onAssignPageType,
+  onReviewPageTypeClick,
+  slides,
 }: BottomRailProps) {
   const { t } = useLocale();
+  const [selectionMenu, setSelectionMenu] = useState<TemplatePageType | null>(null);
+  const [selectionMenuPos, setSelectionMenuPos] = useState<{ left: number; top: number; maxHeight: number } | null>(null);
+  const menuPositionFromRect = (rect: DOMRect) => {
+    const width = 160;
+    const margin = 8;
+    const maxHeight = Math.min(420, Math.max(180, window.innerHeight - margin * 2));
+    const belowTop = rect.bottom + 6;
+    const top = belowTop + maxHeight > window.innerHeight - margin
+      ? Math.max(margin, rect.top - maxHeight - 6)
+      : belowTop;
+    return {
+      left: Math.min(Math.max(margin, rect.right - width), window.innerWidth - width - margin),
+      top,
+      maxHeight: Math.min(maxHeight, window.innerHeight - top - margin),
+    };
+  };
+  const openSelectionMenu = (pageType: TemplatePageType, event: ReactMouseEvent<HTMLElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    setSelectionMenu((current) => (current === pageType ? null : pageType));
+    setSelectionMenuPos(menuPositionFromRect(rect));
+  };
   return (
     <section className="templates-bottom-rail" role="tablist" aria-label={t("templates.preview.header")}>
       {PAGE_TYPES.map((pt) => {
@@ -1537,10 +1646,7 @@ function BottomRail({
               type="button"
               role="tab"
               aria-selected={isActive}
-              disabled={!isAssigned}
-              onClick={() => {
-                if (isAssigned) onSelectSlide(assignedSlide);
-              }}
+              onClick={() => onReviewPageTypeClick(pt)}
               className={`ti-focusable templates-bottom-tile ${
                 isActive ? "templates-bottom-tile-active" : ""
               } ${!isAssigned ? "templates-bottom-tile-empty" : ""}`}
@@ -1548,6 +1654,58 @@ function BottomRail({
               <div className="templates-bottom-thumb">
                 {svg ? (
                   <div dangerouslySetInnerHTML={{ __html: sanitizeSvg(svg) }} />
+                ) : null}
+                {slides.length > 0 ? (
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    className="templates-bottom-edit"
+                    title={t("templates.chip.chooseReference")}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      openSelectionMenu(pt, event);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter" && event.key !== " ") return;
+                      event.preventDefault();
+                      event.stopPropagation();
+                      const rect = event.currentTarget.getBoundingClientRect();
+                      setSelectionMenu((current) => (current === pt ? null : pt));
+                      setSelectionMenuPos(menuPositionFromRect(rect));
+                    }}
+                  >
+                    <Pencil size={12} />
+                  </span>
+                ) : null}
+                {selectionMenu === pt && selectionMenuPos ? createPortal(
+                  <div
+                    className="templates-bottom-page-menu"
+                    style={{
+                      left: selectionMenuPos.left,
+                      top: selectionMenuPos.top,
+                      maxHeight: selectionMenuPos.maxHeight,
+                    }}
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    <strong>{t("templates.chip.chooseReference")}</strong>
+                    <div>
+                      {slides.map((slide) => (
+                        <button
+                          key={slide.index}
+                          type="button"
+                          data-active={assignedSlide === slide.index ? "true" : "false"}
+                          onClick={() => {
+                            onAssignPageType(pt, slide.index);
+                            setSelectionMenu(null);
+                            setSelectionMenuPos(null);
+                          }}
+                        >
+                          {t("templates.chip.assignedToPage").replace("{n}", String(slide.index))}
+                        </button>
+                      ))}
+                    </div>
+                  </div>,
+                  document.body,
                 ) : null}
               </div>
               <span className="templates-bottom-label">
@@ -1603,4 +1761,21 @@ function BottomRail({
       })}
     </section>
   );
+}
+
+function formatPageSelectionChanges(
+  changes: PageSelectionChange[],
+  t: (key: string) => string,
+): string {
+  if (changes.length === 0) return "";
+  const lines = changes.map((change) => {
+    const label = t(`templates.preview.tilelabel.${change.pageType}`);
+    const from = change.from ? String(change.from) : t("templates.chip.notAssigned");
+    return `- ${label}: ${from} -> ${change.to}`;
+  });
+  return [
+    "Page selection changes since the previous Agent message:",
+    ...lines,
+    "Please refresh agent_template/source_map.json and the related agent_template SVG baseline for any changed page type before applying this request.",
+  ].join("\n");
 }
