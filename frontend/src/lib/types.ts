@@ -46,6 +46,14 @@ export interface TemplateInfo {
   theme_mode: string;
   category: string;
   keywords: string[];
+  source?: "builtin" | "user";
+  editable?: boolean;
+  slide_count?: number;
+  has_cover?: boolean;
+  has_chapter?: boolean;
+  has_content?: boolean;
+  has_ending?: boolean;
+  has_toc?: boolean;
 }
 
 export interface ResearchConfig {
@@ -105,24 +113,35 @@ export interface ImportStartResponse {
   import_id: string;
   status: string;
   template_id?: string | null;
+  collaboration_mode?: "classic" | "agent";
 }
 
 export interface ImportStatus {
   import_id: string;
-  status: "processing" | "complete" | "error";
+  status: "processing" | "review_required" | "complete" | "error";
+  stage?: string;
+  progress?: number;
+  message?: string;
+  steps?: Array<{ id: string; label: string; status: string }>;
+  review_required?: boolean;
   template_id?: string | null;
   label?: string | null;
   slide_count?: number;
   export_mode?: string;
   theme_colors?: string[];
   error?: string | null;
+  collaboration_mode?: "classic" | "agent";
 }
 
 export interface TemplatePreview {
   template_id: string;
   label: string;
   cover_svg?: string;
+  toc_svg?: string;
+  chapter_svg?: string;
   content_svg?: string;
+  ending_svg?: string;
+  design_spec?: string;
   theme_colors?: string[];
 }
 
@@ -131,6 +150,128 @@ export interface UserTemplateItem {
   label: string;
   summary?: string;
   slide_count?: number;
+}
+
+/**
+ * A user-drawn rectangular annotation on a slide preview. Coordinates are
+ * normalized to ``[0, 1]`` against the slide canvas; see the
+ * `SlideStage` coordinate-contract comment for the full spec.
+ */
+export interface UserAnnotation {
+  annotation_id: string;
+  slide_index: number;
+  bbox_norm: { x: number; y: number; width: number; height: number };
+  note: string;
+  linked_element_id?: string | null;
+  created_at: number;
+  resolved?: boolean;
+}
+
+export type TemplateAssetRole = "logo" | "background" | "decoration" | "content_image" | "ignore";
+export type TemplatePageType = "cover" | "toc" | "chapter" | "content" | "ending";
+
+export interface TemplateImportSlide {
+  index: number;
+  page_type: TemplatePageType;
+  text_samples?: string[];
+  preview_svg?: string;
+  preview_svg_url?: string;
+}
+
+export interface TemplateImportAsset {
+  asset_id: string;
+  file_name: string;
+  image_size?: { width: number; height: number };
+  preview_data_uri?: string;
+  preview_url?: string;
+  usage_count: number;
+  pages: number[];
+  position_stable: boolean;
+  recommended_role: TemplateAssetRole;
+  recommendation_source?: "rule" | "llm";
+  llm_reason?: string;
+  llm_confidence?: number;
+  role: TemplateAssetRole;
+  name: string;
+  occurrences: Array<{
+    slide_index: number;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  }>;
+}
+
+export interface TemplateReviewDraft {
+  label?: string;
+  page_selections?: Partial<Record<TemplatePageType, number | null>>;
+  assets?: Record<string, { role?: TemplateAssetRole; name?: string | null }>;
+  preserve_texts?: string[];
+  placeholder_hints?: Partial<Record<TemplatePageType, Record<string, string>>>;
+  element_actions?: Array<{
+    page_type: TemplatePageType;
+    element_id: string;
+    action: "keep" | "remove" | "replace_with_placeholder";
+    placeholder?: string;
+    reason?: string;
+  }>;
+  design_spec?: string;
+  annotations?: UserAnnotation[];
+}
+
+export interface TemplateReview {
+  import_id: string;
+  template_id: string;
+  label: string;
+  status: string;
+  export_mode?: string;
+  slide_count?: number;
+  page_types: TemplatePageType[];
+  asset_roles: TemplateAssetRole[];
+  page_type_candidates: Partial<Record<TemplatePageType, number[]>>;
+  slides: TemplateImportSlide[];
+  assets: TemplateImportAsset[];
+  draft: {
+    label?: string;
+    page_selections?: Partial<Record<TemplatePageType, number | null>>;
+    assets?: Record<string, { role: TemplateAssetRole; name: string }>;
+    preserve_texts?: string[];
+    placeholder_hints?: Partial<Record<TemplatePageType, Record<string, string>>>;
+    element_actions?: TemplateReviewDraft["element_actions"];
+    design_spec?: string;
+  };
+  theme_colors?: string[];
+  text_candidates?: Array<{ text: string; pages: number[]; page_count: number }>;
+  feedback_history?: Array<{ feedback: string; created_at?: number }>;
+  annotations?: UserAnnotation[];
+  conversation?: Array<{
+    role: "user" | "assistant" | string;
+    content: string;
+    created_at?: number;
+    meta?: Record<string, unknown>;
+  }>;
+  llm_trace?: {
+    iteration?: number;
+    updated_at?: number;
+    user_feedback?: string;
+    changed?: boolean;
+    retried_no_change?: boolean;
+    rule_patches?: string[];
+    input?: unknown;
+    action_plan?: unknown;
+  };
+  llm?: {
+    enabled?: boolean;
+    status?: "not_run" | "missing_config" | "complete" | "error" | string;
+    provider?: string;
+    model?: string;
+    agent?: boolean;
+    error?: string;
+    notes?: string[];
+    changed?: boolean;
+    retried_no_change?: boolean;
+    rule_patches?: string[];
+  };
 }
 
 export interface DeepSeekSettings {
@@ -155,6 +296,79 @@ export interface GenerateRequestPayload {
     openai_settings?: OpenAISettings;
   };
   options: GenerationOptions;
+}
+
+export type TemplateImportModelConfig = GenerateRequestPayload["model_config"];
+
+export type TemplateAgentConfigMode = "claude_code" | "custom";
+
+export interface TemplateAgentConfig {
+  mode: TemplateAgentConfigMode;
+  api_key?: string;
+  auth_token?: string;
+  base_url?: string;
+  model?: string;
+  custom_model_option?: string;
+  load_project_settings?: boolean;
+  max_turns?: number;
+  reply_language?: "zh" | "en";
+}
+
+export interface TemplateAgentStartResponse {
+  agent_job_id: string;
+  import_id: string;
+  status: string;
+}
+
+export interface TemplateAgentStatus {
+  agent_job_id: string;
+  import_id: string;
+  status: "queued" | "running" | "complete" | "error" | "cancelled" | string;
+  message?: string;
+  error?: string | null;
+  created_at?: number;
+  updated_at?: number;
+  started_at?: number | null;
+  completed_at?: number | null;
+}
+
+export interface TemplateAgentEvent {
+  type:
+    | "snapshot"
+    | "status"
+    | "message"
+    | "tool"
+    | "stderr"
+    | "system"
+    | "result"
+    | "usage"
+    | "llm_step"
+    | "complete"
+    | "error"
+    | "ping";
+  agent_job_id?: string;
+  import_id?: string;
+  stage?: string;
+  status?: string;
+  message?: string;
+  error?: string | null;
+  data?: Record<string, unknown> | unknown;
+  seq?: number;
+  ts?: number;
+  last_seq?: number;
+}
+
+/** Aggregated cost / usage snapshot derived from agent ``usage`` events. */
+export interface TemplateAgentUsage {
+  model?: string | null;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_input_tokens: number;
+  cache_creation_input_tokens: number;
+  total_cost_usd: number;
+  num_turns: number;
+  duration_ms: number;
+  model_usage?: Record<string, Record<string, number | string>> | null;
 }
 
 export interface GenerateResponse {

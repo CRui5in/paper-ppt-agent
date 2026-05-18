@@ -130,5 +130,8 @@ class Settings(BaseSettings):
     # lost on a hard crash; the snapshot just rolls up indices.
     persist_debounce_ms: int = 200
 
+    # ── Template import v2 (gradual rollout) ─────────────────────────────
+    template_import_v2: bool = False  # gradual rollout — when True, route through v2 pipeline
+
 
 settings = Settings()

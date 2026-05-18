@@ -17,11 +17,18 @@ import type {
   ReexportResponse,
   RefineRequestPayload,
   RefineResponse,
+  TemplateReview,
+  TemplateReviewDraft,
   TemplateInfo,
+  TemplateAgentConfig,
+  TemplateAgentStartResponse,
+  TemplateAgentStatus,
   TemplatePreview,
+  TemplatePageType,
   UpdateFontsRequest,
   UpdateFontsResponse,
   UploadResponse,
+  UserAnnotation,
   UserTemplateItem,
   VersionDetailResponse,
   VersionsResponse,
@@ -140,9 +147,17 @@ export async function fetchTemplates(): Promise<TemplateInfo[]> {
   return request<TemplateInfo[]>("/api/templates");
 }
 
-export async function uploadTemplatePptx(file: File): Promise<ImportStartResponse> {
+export async function uploadTemplatePptx(
+  file: File,
+  modelConfig: GenerateRequestPayload["model_config"] | undefined,
+  collaborationMode: "classic" | "agent" = "classic",
+): Promise<ImportStartResponse> {
   const formData = new FormData();
   formData.append("file", file);
+  formData.append("collaboration_mode", collaborationMode);
+  if (modelConfig) {
+    formData.append("model_config", JSON.stringify(modelConfig));
+  }
   return request<ImportStartResponse>("/api/templates/upload", {
     method: "POST",
     body: formData,
@@ -151,6 +166,135 @@ export async function uploadTemplatePptx(file: File): Promise<ImportStartRespons
 
 export async function fetchImportStatus(importId: string): Promise<ImportStatus> {
   return request<ImportStatus>(`/api/templates/import/${importId}`);
+}
+
+export async function fetchTemplateReview(importId: string): Promise<TemplateReview> {
+  return request<TemplateReview>(`/api/templates/import/${importId}/review`);
+}
+
+export async function updateTemplateReview(
+  importId: string,
+  draft: TemplateReviewDraft,
+): Promise<TemplateReview> {
+  return request<TemplateReview>(`/api/templates/import/${importId}/review`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(draft),
+  });
+}
+
+export async function assistTemplateImport(
+  importId: string,
+  modelConfig: GenerateRequestPayload["model_config"],
+): Promise<TemplateReview> {
+  return request<TemplateReview>(`/api/templates/import/${importId}/assist`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model_config: modelConfig }),
+  });
+}
+
+export async function optimizeTemplateImportWithFeedback(
+  importId: string,
+  modelConfig: GenerateRequestPayload["model_config"],
+  feedback: string,
+  draft?: TemplateReviewDraft,
+): Promise<TemplateReview> {
+  return request<TemplateReview>(`/api/templates/import/${importId}/feedback`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model_config: modelConfig, feedback, draft }),
+  });
+}
+
+export async function startTemplateImportAgent(
+  importId: string,
+  payload: {
+    feedback: string;
+    config: TemplateAgentConfig;
+    draft?: TemplateReviewDraft;
+    /** If true, the backend will not append ``feedback`` to the visible
+     * chat conversation. Used for the auto-kickoff template-ization run. */
+    silent?: boolean;
+    /** False for the automatic read-only inspection run. */
+    planning?: boolean;
+  },
+): Promise<TemplateAgentStartResponse> {
+  return request<TemplateAgentStartResponse>(`/api/templates/import/${importId}/agent`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchTemplateImportAgentStatus(
+  importId: string,
+  agentJobId: string,
+): Promise<TemplateAgentStatus> {
+  return request<TemplateAgentStatus>(
+    `/api/templates/import/${importId}/agent/${agentJobId}`,
+  );
+}
+
+export async function previewTemplateImportDraft(
+  importId: string,
+  draft?: TemplateReviewDraft,
+): Promise<TemplatePreview> {
+  return request<TemplatePreview>(`/api/templates/import/${importId}/preview`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(draft ?? {}),
+  });
+}
+
+export async function confirmTemplateImport(importId: string): Promise<ImportStatus> {
+  return request<ImportStatus>(`/api/templates/import/${importId}/confirm`, {
+    method: "POST",
+  });
+}
+
+export async function addAnnotation(
+  importId: string,
+  payload: {
+    slide_index: number;
+    bbox_norm: { x: number; y: number; width: number; height: number };
+    note: string;
+    linked_element_id?: string | null;
+  },
+): Promise<{ annotation_id: string; annotations: UserAnnotation[] }> {
+  return request<{ annotation_id: string; annotations: UserAnnotation[] }>(
+    `/api/templates/import/${importId}/annotation`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function removeAnnotation(
+  importId: string,
+  annotationId: string,
+): Promise<{ deleted: boolean; annotations: UserAnnotation[] }> {
+  return request<{ deleted: boolean; annotations: UserAnnotation[] }>(
+    `/api/templates/import/${importId}/annotation/${annotationId}`,
+    { method: "DELETE" },
+  );
+}
+
+export async function updateAnnotation(
+  importId: string,
+  annotationId: string,
+  payload: Partial<Pick<UserAnnotation, "bbox_norm" | "note" | "linked_element_id" | "resolved">>,
+): Promise<{ annotation: UserAnnotation; annotations: UserAnnotation[] }> {
+  return request<{ annotation: UserAnnotation; annotations: UserAnnotation[] }>(
+    `/api/templates/import/${importId}/annotation/${annotationId}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
 }
 
 export async function fetchTemplatePreview(templateId: string): Promise<TemplatePreview> {
@@ -163,6 +307,14 @@ export async function fetchImportedTemplates(): Promise<UserTemplateItem[]> {
 
 export async function deleteTemplate(templateId: string): Promise<void> {
   await request<void>(`/api/templates/${templateId}`, { method: "DELETE" });
+}
+
+export async function renameTemplate(templateId: string, label: string): Promise<UserTemplateItem> {
+  return request<UserTemplateItem>(`/api/templates/${templateId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ label }),
+  });
 }
 
 export async function generatePresentation(
@@ -219,6 +371,21 @@ export async function updatePreviewSlide(jobId: string, slideIndex: number, cont
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ content, document, notes }),
   });
+}
+
+export async function updateTemplateAgentTemplateSvg(
+  importId: string,
+  pageType: TemplatePageType,
+  svg: string,
+): Promise<TemplatePreview> {
+  return request<TemplatePreview>(
+    `/api/templates/import/${importId}/agent-template/${pageType}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ svg }),
+    },
+  );
 }
 
 export async function createPreviewSlide(jobId: string, content?: string, document?: SlideDocument, notes?: string): Promise<PreviewSlide> {

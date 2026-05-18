@@ -44,6 +44,14 @@ class TemplateInfo:
     theme_mode: str = ""
     category: str = ""
     keywords: list[str] = field(default_factory=list)
+    source: str = "builtin"
+    editable: bool = False
+    slide_count: int = 0
+    has_cover: bool = False
+    has_chapter: bool = False
+    has_content: bool = False
+    has_ending: bool = False
+    has_toc: bool = False
 
 
 @dataclass
@@ -114,6 +122,14 @@ def list_templates() -> list[TemplateInfo]:
                 theme_mode=meta.get("themeMode", ""),
                 category=cat_map.get(tid, ""),
                 keywords=meta.get("keywords", []),
+                source="builtin",
+                editable=False,
+                slide_count=meta.get("slideCount", 0),
+                has_cover=(tdir / "01_cover.svg").exists(),
+                has_chapter=(tdir / "02_chapter.svg").exists(),
+                has_content=(tdir / "03_content.svg").exists(),
+                has_ending=(tdir / "04_ending.svg").exists(),
+                has_toc=(tdir / "02_toc.svg").exists(),
             )
         )
 
@@ -134,6 +150,14 @@ def list_templates() -> list[TemplateInfo]:
                         theme_mode=meta.get("themeMode", ""),
                         category="user-imported",
                         keywords=meta.get("keywords", []),
+                        source="user",
+                        editable=True,
+                        slide_count=meta.get("slideCount", 0),
+                        has_cover=(tdir / "01_cover.svg").exists(),
+                        has_chapter=(tdir / "02_chapter.svg").exists(),
+                        has_content=(tdir / "03_content.svg").exists(),
+                        has_ending=(tdir / "04_ending.svg").exists(),
+                        has_toc=(tdir / "02_toc.svg").exists(),
                     )
                 )
         except (json.JSONDecodeError, OSError):
@@ -169,9 +193,26 @@ def load_template(template_id: str) -> TemplateContent | None:
             tone=meta.get("tone", ""),
             theme_mode=meta.get("themeMode", ""),
             keywords=meta.get("keywords", []),
+            source="user" if template_id.startswith("user_") else "builtin",
+            editable=template_id.startswith("user_"),
+            slide_count=meta.get("slideCount", 0),
+            has_cover=(tdir / "01_cover.svg").exists(),
+            has_chapter=(tdir / "02_chapter.svg").exists(),
+            has_content=(tdir / "03_content.svg").exists(),
+            has_ending=(tdir / "04_ending.svg").exists(),
+            has_toc=(tdir / "02_toc.svg").exists(),
         )
     else:
-        info = TemplateInfo(template_id=template_id)
+        info = TemplateInfo(
+            template_id=template_id,
+            source="user" if template_id.startswith("user_") else "builtin",
+            editable=template_id.startswith("user_"),
+            has_cover=(tdir / "01_cover.svg").exists(),
+            has_chapter=(tdir / "02_chapter.svg").exists(),
+            has_content=(tdir / "03_content.svg").exists(),
+            has_ending=(tdir / "04_ending.svg").exists(),
+            has_toc=(tdir / "02_toc.svg").exists(),
+        )
 
     def _read(name: str) -> str:
         p = tdir / name

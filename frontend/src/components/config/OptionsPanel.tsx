@@ -51,7 +51,6 @@ interface OptionsPanelProps {
   onEnableIconRagChange: (value: boolean) => void;
   onGeminiApiKeyChange: (value: string) => void;
   onTemplateChange: (value: string) => void;
-  onManageTemplates: () => void;
   onDensityChange: (value: string) => void;
   onCustomFontChange: (value: string) => void;
   onHeadingFontChange: (value: string) => void;
@@ -82,11 +81,7 @@ export function OptionsPanel(props: OptionsPanelProps) {
           <Select
             value={props.templateId || "__none__"}
             onValueChange={(value) => {
-              if (value === "__manage__") {
-                props.onManageTemplates();
-              } else {
-                props.onTemplateChange(value === "__none__" ? "" : value);
-              }
+              props.onTemplateChange(value === "__none__" ? "" : value);
             }}
           >
             <SelectTrigger className="template-select-trigger">
@@ -99,7 +94,6 @@ export function OptionsPanel(props: OptionsPanelProps) {
                   {tmpl.label || tmpl.template_id}
                 </SelectItem>
               ))}
-              <SelectItem value="__manage__">{t("options.templateManage")}</SelectItem>
             </SelectContent>
           </Select>
         </label>

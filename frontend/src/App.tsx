@@ -3,6 +3,7 @@ import { Route, Routes, useLocation } from "react-router-dom";
 import { GeneratePage } from "./pages/GeneratePage";
 import { LogsPage } from "./pages/LogsPage";
 import { ResultPage } from "./pages/ResultPage";
+import { TemplatesPage } from "./pages/TemplatesPage";
 
 export default function App() {
   const location = useLocation();
@@ -23,6 +24,7 @@ export default function App() {
           <Route path="/generate" element={<GeneratePage />} />
           <Route path="/result" element={<ResultPage />} />
           <Route path="/logs" element={<LogsPage />} />
+          <Route path="/templates" element={<TemplatesPage />} />
           <Route path="*" element={<GeneratePage />} />
         </Routes>
       </div>

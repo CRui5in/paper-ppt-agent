@@ -1,4 +1,4 @@
-import type { JobEvent, JobSocketMessage } from "./types";
+import type { JobEvent, JobSocketMessage, TemplateAgentEvent } from "./types";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? window.location.origin;
 
@@ -233,6 +233,35 @@ export function openUsageSocket(
     onEvent,
     onOpen,
     onClose: () => onClose?.(),
+  });
+}
+
+export function openTemplateAgentSocket(
+  importId: string,
+  agentJobId: string,
+  onEvent: (event: TemplateAgentEvent) => void,
+  onOpen?: () => void,
+  onClose?: (willReconnect: boolean) => void,
+  onGiveUp?: () => void,
+  initialSeq = 0,
+): ReconnectingSocket {
+  return createReconnectingSocket<TemplateAgentEvent>({
+    buildUrl: (lastSeq) =>
+      toWsUrl(
+        `/api/templates/import/${importId}/agent/${agentJobId}/stream`,
+        lastSeq > 0 ? { since_seq: String(lastSeq) } : undefined,
+      ),
+    onEvent,
+    onOpen,
+    onClose: (_ev, willReconnect) => onClose?.(willReconnect),
+    extractSeq: (event) => {
+      if (typeof event.seq === "number") return event.seq;
+      if (typeof event.last_seq === "number") return event.last_seq;
+      return undefined;
+    },
+    isInternal: (raw) =>
+      Boolean(raw && typeof raw === "object" && (raw as { type?: string }).type === "ping"),
+    options: { onGiveUp, initialSeq },
   });
 }
 

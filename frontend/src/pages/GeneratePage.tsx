@@ -57,7 +57,6 @@ import type {
   TemplateInfo,
   UploadResponse,
 } from "../lib/types";
-import { TemplateManager } from "../components/template/TemplateManager";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Progress } from "../components/ui/progress";
@@ -249,7 +248,6 @@ export function GeneratePage() {
   });
   const [templateId, setTemplateId] = useState(initialSettings.templateId ?? "");
   const [templates, setTemplates] = useState<TemplateInfo[]>([]);
-  const [templateManagerOpen, setTemplateManagerOpen] = useState(false);
   const [cancelLoading, setCancelLoading] = useState(false);
   const [secondaryPanel, setSecondaryPanel] = useState<SecondaryPanel | null>(null);
   const freshRequested = searchParams.get("fresh") === "1";
@@ -683,7 +681,6 @@ export function GeneratePage() {
                 onEnableIconRagChange={setEnableIconRag}
                 onGeminiApiKeyChange={setGeminiApiKey}
                 onTemplateChange={setTemplateId}
-                onManageTemplates={() => setTemplateManagerOpen(true)}
                 density={density}
                 customFont={customFont}
                 headingFont={headingFont}
@@ -761,17 +758,6 @@ export function GeneratePage() {
       >
         <CriticPanel criticEvents={criticEvents} jobId={jobId} />
       </FloatingInspector>
-      <TemplateManager
-        open={templateManagerOpen}
-        onClose={() => setTemplateManagerOpen(false)}
-        onSelect={(tid) => {
-          setTemplateId(tid);
-          // Refresh templates list to include newly imported ones
-          fetchTemplates()
-            .then((list) => setTemplates(list))
-            .catch(() => undefined);
-        }}
-      />
     </Layout>
   );
 }

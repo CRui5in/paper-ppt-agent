@@ -6,6 +6,7 @@ import { useTheme } from "../../hooks/useTheme";
 import {
   Languages,
   LayoutDashboard,
+  Library,
   Moon,
   Plus,
   Sun,
@@ -22,6 +23,7 @@ export function Header() {
   const location = useLocation();
   const isWorkspace = location.pathname === "/" || location.pathname === "/generate" || location.pathname === "/result";
   const isLogs = location.pathname === "/logs";
+  const isTemplates = location.pathname === "/templates";
   const statusLabel =
     backendStatus === "connected"
       ? t("status.connected")
@@ -55,6 +57,13 @@ export function Header() {
           >
             <LayoutDashboard size={17} strokeWidth={1.8} />
             <span>{t("nav.workspace")}</span>
+          </Link>
+          <Link
+            to="/templates"
+            className={`workspace-nav-item ${isTemplates ? "workspace-nav-item-active" : ""}`}
+          >
+            <Library size={17} strokeWidth={1.8} />
+            <span>{t("nav.templates")}</span>
           </Link>
           <Link
             to="/logs"
