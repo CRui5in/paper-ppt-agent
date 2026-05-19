@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
   AlertTriangle,
   ArrowUpDown,
@@ -9,9 +9,9 @@ import {
   ChevronDown,
   ChevronRight,
   CircleDot,
+  FileCheck2,
   File as FileIcon,
   Folder,
-  KeyRound,
   Loader2,
   MessageSquareText,
   Send,
@@ -25,10 +25,14 @@ import remarkGfm from "remark-gfm";
 import { useLocale } from "../../i18n";
 import { fetchTemplateImportFiles } from "../../lib/api";
 import type {
+  ImportStatus,
   TemplateAgentConfig,
   TemplateAgentEvent,
   TemplateAgentStatus,
   TemplateImportFileItem,
+  TemplatePageType,
+  TemplateReview,
+  TemplateReviewDraft,
 } from "../../lib/types";
 import type { AgentActivity } from "./agentActivity";
 
@@ -46,8 +50,8 @@ export interface CollabPanelProps {
   agentEvents?: TemplateAgentEvent[];
   replyLanguage: "zh" | "en";
   loading: boolean;
-  mode: "classic" | "agent";
-  onModeChange: (mode: "classic" | "agent") => void;
+  mode: "classic" | "agent" | "direct";
+  onModeChange: (mode: "classic" | "agent" | "direct") => void;
   modeLocked?: boolean;
   agentConfig: TemplateAgentConfig;
   onAgentConfigChange: (config: TemplateAgentConfig) => void;
@@ -63,6 +67,9 @@ export interface CollabPanelProps {
   annotationCount?: number;
   /** Resolved model label for the status footer (e.g. ``Claude Sonnet 4.5``). */
   modelLabel?: string;
+  importStatus?: ImportStatus | null;
+  review?: TemplateReview | null;
+  draftState?: TemplateReviewDraft;
 }
 
 /**
@@ -91,6 +98,9 @@ export function CollabPanel({
   className,
   annotationCount = 0,
   modelLabel,
+  importStatus,
+  review,
+  draftState,
 }: CollabPanelProps) {
   const { t } = useLocale();
   const [draft, setDraft] = useState("");
@@ -262,6 +272,22 @@ export function CollabPanel({
     return out.slice(-60);
   }, [conversation, pendingUser, showThinking, visibleActivityEvents]);
 
+  const chatTimeline = useMemo(() => {
+    const messages = conversation.slice(-30).map((message, index) => ({
+      key: `message:${index}:${message.created_at ?? "na"}`,
+      timestamp: normalizeTimestamp(message.created_at) || Date.now() + index,
+      message,
+    }));
+    if (pendingUser) {
+      messages.push({
+        key: `pending:${pendingUser.created_at ?? "now"}`,
+        timestamp: normalizeTimestamp(pendingUser.created_at) || Date.now(),
+        message: pendingUser,
+      });
+    }
+    return messages.sort((a, b) => a.timestamp - b.timestamp);
+  }, [conversation, pendingUser]);
+
   useEffect(() => {
     const node = scrollerRef.current;
     if (!node) return;
@@ -271,7 +297,7 @@ export function CollabPanel({
       node.scrollTop = node.scrollHeight;
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [timeline.length, loading]);
+  }, [timeline.length, chatTimeline.length, loading]);
 
   const send = async () => {
     if (canStopAgent) {
@@ -312,6 +338,128 @@ export function CollabPanel({
     }
   };
 
+  const composer = (
+    <div
+      className="ti-console-composer"
+      style={{ borderColor: "var(--ti-line)", background: "var(--ti-surface)" }}
+    >
+      {mentions.length > 0 || contextAttachments.length > 0 ? (
+        <div className="ti-console-mentions">
+          {contextAttachments.map((item) => (
+            <span className="ti-console-mention-chip ti-console-context-chip" key={item.id} title={item.detail ?? item.label}>
+              <ArrowUpDown size={11} />
+              {item.label}
+            </span>
+          ))}
+          {mentions.map((mention) => (
+            <span className="ti-console-mention-chip" key={mention.path} title={mention.path}>
+              <FileIcon size={11} />
+              {mention.label}
+              <button
+                type="button"
+                onClick={() => setMentions((prev) => prev.filter((item) => item.path !== mention.path))}
+                aria-label={t("template.collab.removeMention")}
+              >
+                <X size={10} />
+              </button>
+            </span>
+          ))}
+        </div>
+      ) : null}
+      <textarea
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault();
+            void send();
+          }
+        }}
+        placeholder={t("template.feedbackPlaceholder")}
+        rows={3}
+        disabled={!modelConfigured}
+        className="ti-focusable ti-console-composer-textarea"
+        style={{ color: "var(--ti-text)" }}
+      />
+      <div className="ti-console-composer-footer">
+        <div className="ti-console-composer-meta">
+          <span className="ti-console-meta-pill" title={t("template.collab.annotations")}>
+            <Bookmark size={10} />
+            <span>{annotationCount}</span>
+          </span>
+          {mode === "agent" && importId ? (
+            <div className="ti-console-mention-wrap">
+              <button
+                type="button"
+                className="ti-console-mention-button"
+                onClick={() => setMentionOpen((open) => !open)}
+                title={t("template.collab.attachFile")}
+                aria-expanded={mentionOpen}
+              >
+                <AtSign size={11} />
+              </button>
+              {mentionOpen ? (
+                <FileMentionPopover
+                  importId={importId}
+                  onSelect={(file) => {
+                    const label = `@${file.name}`;
+                    setMentions((prev) =>
+                      prev.some((item) => item.path === file.path)
+                        ? prev
+                        : [...prev, { label, path: file.path }],
+                    );
+                    setMentionOpen(false);
+                  }}
+                />
+              ) : null}
+            </div>
+          ) : null}
+          {resolvedModelLabel ? (
+            <span
+              className="ti-console-meta-pill"
+              title={t("template.collab.model")}
+            >
+              <Bot size={10} />
+              <span className="ti-console-meta-text">{resolvedModelLabel}</span>
+            </span>
+          ) : null}
+          {mode === "agent" ? (
+            <span
+              className="ti-console-meta-pill"
+              title={tokensTooltip(t, usage)}
+            >
+              <ArrowUpDown size={10} />
+              <span>
+                {formatTokens(usage?.input_tokens ?? 0)} / {formatTokens(usage?.output_tokens ?? 0)}
+              </span>
+            </span>
+          ) : null}
+        </div>
+        <button
+          type="button"
+          onClick={() => void send()}
+          disabled={!modelConfigured || (!canStopAgent && !draft.trim() && mentions.length === 0 && contextAttachments.length === 0)}
+          className="ti-console-composer-send disabled:cursor-not-allowed disabled:opacity-50"
+          data-busy={canStopAgent ? "true" : "false"}
+          style={{ background: "var(--ti-accent)", color: "var(--ti-accent-fg)" }}
+        >
+          {canStopAgent ? (
+            agentCancelPending ? (
+              <Loader2 size={12} className="animate-spin" />
+            ) : (
+              <Square size={12} fill="currentColor" />
+            )
+          ) : loading ? (
+            <Loader2 size={12} className="animate-spin" />
+          ) : (
+            <Send size={12} />
+          )}
+          <span>{agentCancelPending ? t("template.collab.stopping") : canStopAgent ? t("template.collab.stop") : t("template.collab.send")}</span>
+        </button>
+      </div>
+    </div>
+  );
+
   return (
     <aside
       className={`ti-console-panel flex h-full flex-col ${className ?? ""}`}
@@ -328,150 +476,150 @@ export function CollabPanel({
           disabled={loading}
           agentStatus={agentStatus}
         />
-        <div
-          ref={scrollerRef}
-          className="ti-console-timeline"
-          style={{ scrollbarGutter: "stable" }}
-        >
-          {timeline.length === 0 ? (
-            <p className="text-xs" style={{ color: "var(--ti-muted)" }}>
-              {t("template.collab.empty")}
-            </p>
-          ) : (
-            timeline.map((item) =>
-              item.type === "message" ? (
-                <ChatBubble key={item.key} message={item.message} />
-              ) : item.type === "thinking" ? (
-                <ThinkingBubble key={item.key} />
-              ) : item.type === "group" ? (
-                <ActivityGroup key={item.key} events={item.events} />
-              ) : (
-                <ActivityLine key={item.key} event={item.event} />
-              ),
-            )
-          )}
-        </div>
-        <div
-          className="ti-console-composer"
-          style={{ borderColor: "var(--ti-line)", background: "var(--ti-surface)" }}
-        >
-          {mentions.length > 0 || contextAttachments.length > 0 ? (
-            <div className="ti-console-mentions">
-              {contextAttachments.map((item) => (
-                <span className="ti-console-mention-chip ti-console-context-chip" key={item.id} title={item.detail ?? item.label}>
-                  <ArrowUpDown size={11} />
-                  {item.label}
-                </span>
-              ))}
-              {mentions.map((mention) => (
-                <span className="ti-console-mention-chip" key={mention.path} title={mention.path}>
-                  <FileIcon size={11} />
-                  {mention.label}
-                  <button
-                    type="button"
-                    onClick={() => setMentions((prev) => prev.filter((item) => item.path !== mention.path))}
-                    aria-label={t("template.collab.removeMention")}
-                  >
-                    <X size={10} />
-                  </button>
-                </span>
-              ))}
-            </div>
-          ) : null}
-          <textarea
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                e.preventDefault();
-                void send();
-              }
-            }}
-            placeholder={t("template.feedbackPlaceholder")}
-            rows={3}
-            disabled={!modelConfigured}
-            className="ti-focusable ti-console-composer-textarea"
-            style={{ color: "var(--ti-text)" }}
+        {mode === "classic" ? (
+          <LlmCollabWorkspace
+            status={importStatus}
+            review={review}
+            draft={draftState}
+            chatItems={chatTimeline}
+            loading={loading}
+            scrollerRef={scrollerRef}
           />
-          <div className="ti-console-composer-footer">
-            <div className="ti-console-composer-meta">
-              <span className="ti-console-meta-pill" title={t("template.collab.annotations")}>
-                <Bookmark size={10} />
-                <span>{annotationCount}</span>
-              </span>
-              {mode === "agent" && importId ? (
-                <div className="ti-console-mention-wrap">
-                  <button
-                    type="button"
-                    className="ti-console-mention-button"
-                    onClick={() => setMentionOpen((open) => !open)}
-                    title={t("template.collab.attachFile")}
-                    aria-expanded={mentionOpen}
-                  >
-                    <AtSign size={11} />
-                  </button>
-                  {mentionOpen ? (
-                    <FileMentionPopover
-                      importId={importId}
-                      onSelect={(file) => {
-                        const label = `@${file.name}`;
-                        setMentions((prev) =>
-                          prev.some((item) => item.path === file.path)
-                            ? prev
-                            : [...prev, { label, path: file.path }],
-                        );
-                        setMentionOpen(false);
-                      }}
-                    />
-                  ) : null}
-                </div>
-              ) : null}
-              {resolvedModelLabel ? (
-                <span
-                  className="ti-console-meta-pill"
-                  title={t("template.collab.model")}
-                >
-                  <Bot size={10} />
-                  <span className="ti-console-meta-text">{resolvedModelLabel}</span>
-                </span>
-              ) : null}
-              {mode === "agent" ? (
-                <span
-                  className="ti-console-meta-pill"
-                  title={tokensTooltip(t, usage)}
-                >
-                  <ArrowUpDown size={10} />
-                  <span>
-                    {formatTokens(usage?.input_tokens ?? 0)} / {formatTokens(usage?.output_tokens ?? 0)}
-                  </span>
-                </span>
-              ) : null}
-            </div>
-            <button
-              type="button"
-              onClick={() => void send()}
-              disabled={!modelConfigured || (!canStopAgent && !draft.trim() && mentions.length === 0 && contextAttachments.length === 0)}
-              className="ti-console-composer-send disabled:cursor-not-allowed disabled:opacity-50"
-              data-busy={canStopAgent ? "true" : "false"}
-              style={{ background: "var(--ti-accent)", color: "var(--ti-accent-fg)" }}
-            >
-              {canStopAgent ? (
-                agentCancelPending ? (
-                  <Loader2 size={12} className="animate-spin" />
+        ) : (
+          <div
+            ref={scrollerRef}
+            className="ti-console-timeline"
+            style={{ scrollbarGutter: "stable" }}
+          >
+            {timeline.length === 0 ? (
+              <p className="text-xs" style={{ color: "var(--ti-muted)" }}>
+                {t("template.collab.empty")}
+              </p>
+            ) : (
+              timeline.map((item) =>
+                item.type === "message" ? (
+                  <ChatBubble key={item.key} message={item.message} />
+                ) : item.type === "thinking" ? (
+                  <ThinkingBubble key={item.key} />
+                ) : item.type === "group" ? (
+                  <ActivityGroup key={item.key} events={item.events} />
                 ) : (
-                  <Square size={12} fill="currentColor" />
-                )
-              ) : loading ? (
-                <Loader2 size={12} className="animate-spin" />
-              ) : (
-                <Send size={12} />
-              )}
-              <span>{agentCancelPending ? t("template.collab.stopping") : canStopAgent ? t("template.collab.stop") : t("template.collab.send")}</span>
-            </button>
+                  <ActivityLine key={item.key} event={item.event} />
+                ),
+              )
+            )}
           </div>
-        </div>
+        )}
+        {composer}
       </section>
     </aside>
+  );
+}
+
+const TEMPLATE_PAGE_TYPES: TemplatePageType[] = ["cover", "toc", "chapter", "content", "ending"];
+
+function LlmCollabWorkspace({
+  status,
+  review,
+  draft,
+  chatItems,
+  loading,
+  scrollerRef,
+}: {
+  status?: ImportStatus | null;
+  review?: TemplateReview | null;
+  draft?: TemplateReviewDraft;
+  chatItems: Array<{ key: string; message: ChatMessage }>;
+  loading: boolean;
+  scrollerRef: RefObject<HTMLDivElement | null>;
+}) {
+  const { t } = useLocale();
+  const effectiveDraft = draft ?? review?.draft ?? {};
+  const actions = effectiveDraft.element_actions ?? [];
+  const replaceCount = actions.filter((action) => action.action === "replace_with_placeholder").length;
+  const removeCount = actions.filter((action) => action.action === "remove").length;
+  const keepCount = actions.filter((action) => action.action === "keep").length;
+  const changed = Boolean(review?.llm_trace?.changed ?? review?.llm?.changed);
+  const llmComplete = review?.llm?.status === "complete";
+  const selections = effectiveDraft.page_selections ?? {};
+  const steps = status?.steps ?? [];
+
+  return (
+    <div className="ti-llm-workspace">
+      <section className="ti-llm-card ti-llm-progress-card" aria-label={t("template.llmFlow.progress")}>
+        <div className="ti-llm-section-head">
+          <span>{t("template.llmFlow.progress")}</span>
+          {status?.stage ? <em>{t(`template.step.${status.stage}`)}</em> : null}
+        </div>
+        <div className="ti-llm-step-list">
+          {steps.length > 0 ? (
+            steps.map((step) => (
+              <div className="ti-llm-step" data-state={step.status ?? "info"} key={step.id}>
+                <span className="ti-llm-step-icon" aria-hidden="true">
+                  {step.status === "complete" ? (
+                    <CheckCircle2 size={12} />
+                  ) : step.status === "active" ? (
+                    <Loader2 size={12} className="animate-spin" />
+                  ) : (
+                    <CircleDot size={12} />
+                  )}
+                </span>
+                <span>{t(`template.step.${step.id}`)}</span>
+              </div>
+            ))
+          ) : (
+            <p className="ti-llm-empty">{t("template.llmFlow.noProgress")}</p>
+          )}
+        </div>
+      </section>
+
+      <section className="ti-llm-card ti-llm-review-card" aria-label={t("template.llmFlow.review")}>
+        <div className="ti-llm-section-head">
+          <span>{t("template.llmFlow.review")}</span>
+          <em>{llmComplete ? t("template.llmFlow.reviewComplete") : loading ? t("template.llmFlow.reviewing") : t("template.llmFlow.waiting")}</em>
+        </div>
+        <div className="ti-llm-stat-grid">
+          <Metric label={t("template.llmFlow.changed")} value={changed ? t("template.llmFlow.yes") : t("template.llmFlow.no")} />
+          <Metric label={t("template.llmFlow.placeholders")} value={replaceCount} />
+          <Metric label={t("template.llmFlow.removed")} value={removeCount} />
+          <Metric label={t("template.llmFlow.kept")} value={keepCount} />
+        </div>
+        <div className="ti-llm-pages">
+          {TEMPLATE_PAGE_TYPES.map((pageType) => {
+            const slide = selections[pageType];
+            return (
+              <span key={pageType}>
+                {t(`template.page.${pageType}`)}
+                <b>{typeof slide === "number" && slide > 0 ? t("template.activity.slideNumber").replace("{slide}", String(slide)) : t("template.unassigned")}</b>
+              </span>
+            );
+          })}
+        </div>
+      </section>
+
+      <section className="ti-llm-chat-card" aria-label={t("template.llmFlow.feedback")}>
+        <div className="ti-llm-section-head">
+          <span>{t("template.llmFlow.feedback")}</span>
+        </div>
+        <div ref={scrollerRef} className="ti-llm-chat-scroll" style={{ scrollbarGutter: "stable" }}>
+          {chatItems.length === 0 ? (
+            <p className="ti-llm-empty" aria-hidden="true" />
+          ) : (
+            chatItems.map((item) => <ChatBubble key={item.key} message={item.message} />)
+          )}
+          {loading ? <ThinkingBubble /> : null}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function Metric({ label, value }: { label: string; value: string | number }) {
+  return (
+    <span className="ti-llm-metric">
+      <em>{label}</em>
+      <b>{value}</b>
+    </span>
   );
 }
 
@@ -577,24 +725,25 @@ function CollabModeControls({
   disabled,
   agentStatus,
 }: {
-  mode: "classic" | "agent";
-  onModeChange: (mode: "classic" | "agent") => void;
+  mode: "classic" | "agent" | "direct";
+  onModeChange: (mode: "classic" | "agent" | "direct") => void;
   modeLocked: boolean;
   agentConfig: TemplateAgentConfig;
   onAgentConfigChange: (config: TemplateAgentConfig) => void;
   disabled: boolean;
   agentStatus?: TemplateAgentStatus | null;
 }) {
+  const { t } = useLocale();
   const setConfig = (patch: Partial<TemplateAgentConfig>) => {
     onAgentConfigChange({ ...agentConfig, ...patch });
   };
   return (
     <div className="flex flex-col gap-2">
       <div
-        className="grid grid-cols-2 rounded-[var(--ti-radius-sm,6px)] border p-0.5"
+        className="grid grid-cols-3 rounded-[var(--ti-radius-sm,6px)] border p-0.5"
         style={{ borderColor: "var(--ti-line)", background: "var(--ti-surface-inset)" }}
       >
-        {(["classic", "agent"] as const).map((item) => {
+        {(["direct", "classic", "agent"] as const).map((item) => {
           const active = mode === item;
           const agentBusy =
             item === "agent" &&
@@ -616,124 +765,18 @@ function CollabModeControls({
                 <Loader2 size={11} className="animate-spin" />
               ) : item === "agent" ? (
                 <Bot size={11} />
+              ) : item === "direct" ? (
+                <FileCheck2 size={11} />
               ) : (
                 <MessageSquareText size={11} />
               )}
-              {item === "agent" ? "Agent" : "LLM"}
+              {item === "agent" ? "Agent" : item === "direct" ? t("templates.upload.mode.direct") : "LLM"}
             </button>
           );
         })}
       </div>
 
-      {mode === "agent" ? (
-        <div
-          className="flex flex-col gap-2 rounded-[var(--ti-radius-sm,6px)] border p-2"
-          style={{ borderColor: "var(--ti-line)", background: "var(--ti-surface-inset)" }}
-        >
-          <div className="grid grid-cols-2 gap-1">
-            <ConfigButton
-              active={agentConfig.mode === "claude_code"}
-              disabled={disabled}
-              label="Claude 配置"
-              onClick={() => setConfig({ mode: "claude_code" })}
-            />
-            <ConfigButton
-              active={agentConfig.mode === "custom"}
-              disabled={disabled}
-              label="自定义端点"
-              onClick={() => setConfig({ mode: "custom" })}
-            />
-          </div>
-          {agentConfig.mode === "custom" ? (
-            <div className="grid gap-1.5">
-              <AgentInput
-                icon={<KeyRound size={11} />}
-                placeholder="API Key"
-                type="password"
-                value={agentConfig.api_key ?? ""}
-                disabled={disabled}
-                onChange={(value) => setConfig({ api_key: value })}
-              />
-              <AgentInput
-                placeholder="Base URL"
-                value={agentConfig.base_url ?? ""}
-                disabled={disabled}
-                onChange={(value) => setConfig({ base_url: value })}
-              />
-              <AgentInput
-                placeholder="Model"
-                value={agentConfig.model ?? ""}
-                disabled={disabled}
-                onChange={(value) => setConfig({ model: value })}
-              />
-            </div>
-          ) : null}
-        </div>
-      ) : null}
     </div>
-  );
-}
-
-function ConfigButton({
-  active,
-  disabled,
-  label,
-  onClick,
-}: {
-  active: boolean;
-  disabled: boolean;
-  label: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={onClick}
-      className="ti-focusable rounded border px-2 py-1 text-[11px] font-semibold"
-      style={{
-        borderColor: active ? "var(--ti-accent)" : "var(--ti-line)",
-        background: active ? "color-mix(in srgb, var(--ti-accent) 12%, var(--ti-surface))" : "var(--ti-surface)",
-        color: active ? "var(--ti-accent)" : "var(--ti-muted)",
-      }}
-      aria-pressed={active}
-    >
-      {label}
-    </button>
-  );
-}
-
-function AgentInput({
-  icon,
-  placeholder,
-  type = "text",
-  value,
-  disabled,
-  onChange,
-}: {
-  icon?: ReactNode;
-  placeholder: string;
-  type?: string;
-  value: string;
-  disabled: boolean;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <label
-      className="flex items-center gap-1 rounded border px-2 py-1"
-      style={{ borderColor: "var(--ti-line)", background: "var(--ti-surface)" }}
-    >
-      {icon}
-      <input
-        type={type}
-        value={value}
-        disabled={disabled}
-        placeholder={placeholder}
-        onChange={(event) => onChange(event.currentTarget.value)}
-        className="min-w-0 flex-1 bg-transparent text-[11px] outline-none"
-        style={{ color: "var(--ti-text)" }}
-      />
-    </label>
   );
 }
 
@@ -829,7 +872,7 @@ function ActivityGroup({ events }: { events: AgentActivity[] }) {
 
 function formatActivitySummary(event: AgentActivity): string {
   const label = event.label
-    .replace(/^(正在执行|已执行|调用)\s+/, "")
+    .replace(/^(正在执行|已执行|调用|Running|Executed|Calling)\s+/, "")
     .trim();
   const detail = event.detail && !event.detail.trim().startsWith("{")
     ? event.detail.trim()

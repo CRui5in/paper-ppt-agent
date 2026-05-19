@@ -22,7 +22,7 @@ from typing import Any
 
 from . import asset_extractor, chrome_detector, page_classifier, persistence, templateizer
 from . import renderer as renderer_pkg
-from .llm_client import LLMClient
+from .llm_client import LLMClient, merge_llm_plan
 from .observability import step_timing
 from .types import (
     AssetCandidate,
@@ -525,16 +525,16 @@ class Pipeline:
                             continue
                         try:
                             client = LLMClient(ctx)
-                            await client.assist(
+                            plan, _entry = await client.assist(
                                 ctx,
                                 review,
                                 manifest_data,
                                 feedback=None,
-                                required=False,
+                                required=True,
                             )
-                        except LLMPlanError as exc:
-                            if not skippable:
-                                raise
+                            merge_llm_plan(review, plan)
+                        except LLMPlanError:
+                            raise
                             _set_step_status(
                                 state,
                                 step_id,

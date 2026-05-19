@@ -3,10 +3,10 @@ import type { TemplatePageType } from "../../lib/types";
 
 function sanitizeSvg(svg: string): string {
   return (svg ?? "")
-    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "")
-    .replace(/\son\w+\s*=\s*"[^"]*"/gi, "")
-    .replace(/\son\w+\s*=\s*'[^']*'/gi, "")
-    .replace(/javascript:/gi, "");
+    .replace(/<\s*(script|foreignObject|iframe|object|embed|link|meta|base)\b[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, "")
+    .replace(/<\s*(script|foreignObject|iframe|object|embed|link|meta|base)\b[^>]*\/\s*>/gi, "")
+    .replace(/\son[a-z0-9:_-]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, "")
+    .replace(/\s+(href|xlink:href)\s*=\s*(?:"\s*javascript:[^"]*"|'\s*javascript:[^']*'|javascript:[^\s>]+)/gi, ' href="#"');
 }
 
 export interface BigPreviewProps {
@@ -51,10 +51,12 @@ export function BigPreview({ svg, pageType }: BigPreviewProps) {
 export function MiddleEmptyState() {
   const { t } = useLocale();
   return (
-    <div className="templates-canvas-empty">
-      <span className="templates-canvas-empty-text">
-        {t("templates.empty.title")}
-      </span>
+    <div className="templates-canvas-empty templates-empty-stage">
+      <div className="scholarly-slide-frame slide-empty-preview templates-empty-preview-frame">
+        <span className="templates-canvas-empty-text">
+          {t("templates.empty.title")}
+        </span>
+      </div>
     </div>
   );
 }

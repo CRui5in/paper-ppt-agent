@@ -132,3 +132,13 @@ def test_template_agent_session_state_round_trip(workspace_tmp: Path):
     assert reloaded.duration_ms == 9876
     assert reloaded.model_name == "claude-sonnet-4"
     assert reloaded.model_usage == {"claude-sonnet-4": {"inputTokens": 111}}
+
+
+def test_claude_code_environment_status_reports_missing_cli(monkeypatch):
+    monkeypatch.setattr(template_agent.shutil, "which", lambda name: None if name == "claude" else "other")
+
+    status = template_agent.claude_code_environment_status()
+
+    assert status["available"] is False
+    assert status["cli_path"] is None
+    assert "Claude Code" in status["message"]

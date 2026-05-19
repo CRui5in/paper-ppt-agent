@@ -44,9 +44,10 @@ export interface AgentActivity {
 const MAX_ENTRIES = 80;
 
 interface BuildActivityOptions {
-  mode?: "classic" | "agent";
+  mode?: "classic" | "agent" | "direct";
   agentEvents?: TemplateAgentEvent[];
   llmEvents?: TemplateAgentEvent[];
+  t?: (key: string) => string;
 }
 
 function tsFromSec(seconds: number | undefined | null): number {
@@ -77,6 +78,20 @@ function trimText(value: string, max = 80): string {
   return cleaned.length > max ? `${cleaned.slice(0, max - 1)}…` : cleaned;
 }
 
+function tr(t: BuildActivityOptions["t"], key: string, fallback: string, params?: Record<string, string | number>): string {
+  const template = t?.(key);
+  const value = template && template !== key ? template : fallback;
+  if (!params) return value;
+  return Object.entries(params).reduce(
+    (text, [name, replacement]) => text.split(`{${name}}`).join(String(replacement)),
+    value,
+  );
+}
+
+function pageTypeLabel(pageType: string, t?: BuildActivityOptions["t"]): string {
+  return tr(t, `template.page.${pageType}`, pageType);
+}
+
 function agentEventState(event: TemplateAgentEvent): AgentActivity["state"] {
   if (event.type === "error" || event.status === "error") return "error";
   if (event.type === "complete" || event.status === "complete") return "done";
@@ -86,15 +101,17 @@ function agentEventState(event: TemplateAgentEvent): AgentActivity["state"] {
   return "info";
 }
 
-function agentEventLabel(event: TemplateAgentEvent): string {
+function agentEventLabel(event: TemplateAgentEvent, t?: BuildActivityOptions["t"]): string {
   if (event.type === "tool") {
     const tool = (event.data && typeof event.data === "object" && (event.data as Record<string, unknown>).tool) || null;
-    return typeof tool === "string" && tool ? `调用 ${tool}` : "工具调用";
+    return typeof tool === "string" && tool
+      ? tr(t, "template.activity.toolCallNamed", "Calling {tool}", { tool })
+      : tr(t, "template.activity.toolCall", "Tool call");
   }
   if (event.type === "message") return "Agent";
-  if (event.type === "stderr") return "Agent 日志";
-  if (event.type === "system") return "Agent 系统";
-  if (event.type === "result") return "Agent 结果";
+  if (event.type === "stderr") return tr(t, "template.activity.agentLog", "Agent log");
+  if (event.type === "system") return tr(t, "template.activity.agentSystem", "Agent system");
+  if (event.type === "result") return tr(t, "template.activity.agentResult", "Agent result");
   return "Agent";
 }
 
@@ -185,6 +202,7 @@ export function buildAgentActivityEvents(
   const mode = options.mode ?? "classic";
   const agentEvents = options.agentEvents ?? [];
   const llmEvents = options.llmEvents ?? [];
+  const t = options.t;
 
   // 1. Pipeline step events.
   const steps = mode === "classic" ? (status?.steps ?? []) as Array<{
@@ -206,7 +224,7 @@ export function buildAgentActivityEvents(
       id: `pipeline:${step.id}:${step.status}`,
       kind: "pipeline",
       state,
-      label: step.label || step.id,
+      label: tr(t, `template.step.${step.id}`, step.label || step.id),
       detail: step.error || step.message || undefined,
       timestamp: ts,
     });
@@ -218,7 +236,7 @@ export function buildAgentActivityEvents(
       id: `pipeline:error:${status.import_id}`,
       kind: "pipeline",
       state: "error",
-      label: status.message || "Import failed",
+      label: status.message || tr(t, "template.importError", "Import failed"),
       detail: status.error,
       timestamp: now,
     });
@@ -234,7 +252,7 @@ export function buildAgentActivityEvents(
         id: `llm:feedback:${iter}`,
         kind: "user",
         state: "done",
-        label: "用户反馈",
+        label: tr(t, "template.activity.userFeedback", "User feedback"),
         detail: trimText(trace.user_feedback),
         timestamp: ts - 50,
       });
@@ -243,12 +261,12 @@ export function buildAgentActivityEvents(
       id: `llm:call:${iter}`,
       kind: "llm",
       state: trace.changed ? "done" : trace.retried_no_change ? "warning" : "info",
-      label: `LLM 调用 #${iter || "—"}`,
+      label: tr(t, "template.activity.llmCallNumber", "LLM call #{iter}", { iter: iter || "—" }),
       detail: trace.changed
-        ? "本轮发生改动"
+        ? tr(t, "template.activity.llmChanged", "Changes applied")
         : trace.retried_no_change
-          ? "重试后未发生改动"
-          : "已收到响应",
+          ? tr(t, "template.activity.llmNoChange", "Retried with no visible change")
+          : tr(t, "template.activity.llmResponse", "Response received"),
       timestamp: ts,
     });
     const patches = trace.rule_patches?.length ?? 0;
@@ -257,7 +275,7 @@ export function buildAgentActivityEvents(
         id: `llm:patches:${iter}`,
         kind: "llm",
         state: "done",
-        label: `规则补丁 ×${patches}`,
+        label: tr(t, "template.activity.rulePatches", "Rule patches x{count}", { count: patches }),
         detail: trace.rule_patches?.slice(0, 3).join(" · "),
         timestamp: ts + 50,
       });
@@ -272,23 +290,25 @@ export function buildAgentActivityEvents(
       id: `user:annotations:${annotations.length}`,
       kind: "user",
       state: "done",
-      label: `你创建了 ${annotations.length} 个标注`,
+      label: tr(t, "template.activity.annotationsCreated", "You created {count} annotations", { count: annotations.length }),
       detail: last ? trimText(last.note, 60) : undefined,
       timestamp: tsFromSec(last?.created_at) || now,
     });
   }
 
-  // 5. Page-type assignments (cover / content) — show "completed" once set.
+  // 5. Page-type assignments — show "completed" once each selected slot is set.
   const selections = mode === "classic" ? draft.page_selections ?? {} : {};
-  (["cover", "content"] as const).forEach((pt, i) => {
+  (["cover", "toc", "chapter", "content", "ending"] as const).forEach((pt, i) => {
     const slide = selections[pt];
     if (typeof slide === "number" && slide > 0) {
       events.push({
         id: `user:assign:${pt}:${slide}`,
         kind: "user",
         state: "done",
-        label: pt === "cover" ? "封面已分配" : "内容页已分配",
-        detail: `第 ${slide} 页`,
+        label: tr(t, "template.activity.pageAssigned", "{pageType} assigned", {
+          pageType: pageTypeLabel(pt, t),
+        }),
+        detail: tr(t, "template.activity.slideNumber", "Slide {slide}", { slide }),
         timestamp: now - 200 + i,
       });
     }
@@ -300,7 +320,7 @@ export function buildAgentActivityEvents(
       id: `pipeline:complete:${status.template_id}`,
       kind: "pipeline",
       state: "done",
-      label: "模板已保存",
+      label: tr(t, "template.activity.templateSaved", "Template saved"),
       detail: status.label || status.template_id,
       timestamp: now,
     });
@@ -321,11 +341,11 @@ export function buildAgentActivityEvents(
       state,
       label:
         event.stage === "user"
-          ? "你"
+          ? tr(t, "template.chatUser", "You")
           : event.stage === "preview"
-            ? "预览"
+            ? tr(t, "template.preview", "Preview")
             : event.stage === "draft"
-              ? "草稿"
+              ? tr(t, "template.activity.draft", "Draft")
               : "LLM",
       detail: trimText(message, 90),
       timestamp: tsFromSec(event.ts) || now,
@@ -365,7 +385,7 @@ export function buildAgentActivityEvents(
       .forEach((event) => {
         let detail = "";
         const isPrimary = event.type === "message";
-        let label = agentEventLabel(event);
+        let label = agentEventLabel(event, t);
         let state = agentEventState(event);
         if (event.type === "tool") {
           const data = event.data as Record<string, unknown> | undefined;
@@ -375,12 +395,12 @@ export function buildAgentActivityEvents(
           const matchedStatus = toolUseId ? toolStatusById.get(toolUseId) : undefined;
           if (matchedStatus === "complete") {
             state = "done";
-            label = "已执行";
+            label = tr(t, "template.activity.executed", "Executed");
           } else if (matchedStatus === "error") {
             state = "error";
-            label = "执行失败";
+            label = tr(t, "template.activity.executionFailed", "Execution failed");
           } else {
-            label = "正在执行";
+            label = tr(t, "template.activity.executing", "Running");
           }
           detail = [tool, input].filter(Boolean).join(" ");
         } else if (isPrimary) {

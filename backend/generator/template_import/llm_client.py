@@ -19,6 +19,8 @@ from typing import Any, Literal
 
 from pydantic import ValidationError
 
+from backend.config import settings
+
 from .types import (
     ChatMessage,
     ElementActionRecord,
@@ -175,8 +177,17 @@ def _build_payload(
         "feedback": feedback or "",
         "user_annotations": _summarize_annotations(review),
         "reply_language": _resolve_reply_language(review, feedback),
+        "design_spec_reference": _read_design_spec_reference(),
         "schema": json.dumps(LLMTemplateImportPlan.model_json_schema(), sort_keys=True),
     }
+
+
+def _read_design_spec_reference(max_chars: int = 36000) -> str:
+    path = settings.templates_dir / "design_spec_reference.md"
+    try:
+        return path.read_text(encoding="utf-8")[:max_chars]
+    except OSError:
+        return ""
 
 
 def _resolve_reply_language(
@@ -402,11 +413,16 @@ class LLMClient:
             "You are a senior PPTX template-import analyst. Return exactly one JSON object "
             "conforming to the supplied schema. No markdown, no prose, no code fences. "
             "Every `reason` field MUST be human-readable text in the user's language so the "
-            "frontend can show it on suggestion cards."
+            "frontend can show it on suggestion cards. `design_spec_md` MUST be a non-empty "
+            "Markdown document that follows the supplied design_spec_reference structure exactly, "
+            "including sections I through XI."
         )
         user_prompt = (
             "Analyze this PPTX template-import draft and return a plan as a single JSON "
             f"object that validates against this schema:\n{schema_str}\n\n"
+            "For `design_spec_md`, adapt the design_spec_reference to this imported template pack: "
+            "describe canvas, visual theme, typography, the selected page types, placeholder/content "
+            "guidance, image/assets, speaker notes, and technical constraints.\n\n"
             f"Evidence:\n{json.dumps(payload, ensure_ascii=False, sort_keys=True)}"
         )
         messages: list[dict[str, str]] = [
