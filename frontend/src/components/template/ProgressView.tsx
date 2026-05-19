@@ -21,12 +21,12 @@ interface StepLike {
   started_at?: number;
 }
 
-const STEP_ORDER = ["uploaded", "analyzing", "rendering", "detecting_assets", "llm_review", "review"] as const;
+const STEP_ORDER = ["uploaded", "analyzing", "rendering", "detecting_assets", "baseline_preview", "llm_review", "review"] as const;
 
 /**
  * ProgressView (Task 16.3)
  *
- * Six step chips driven by `ImportStatus.steps`. Long-running active step
+ * Step chips driven by `ImportStatus.steps`. Long-running active step
  * surfaces `step.message`; an `error` step surfaces a localized
  * `error_kind` description plus a "Retry this stage" button (Req 1.5/1.6).
  */
@@ -93,7 +93,8 @@ export function ProgressView({ status, onRetry }: ProgressViewProps) {
 function StepChip({ step, t }: { step: StepLike; t: (key: string) => string }) {
   const status = (step.status as StepStatus) ?? "pending";
   const tone = chipTone(status);
-  const label = step.label || t(`template.step.${step.id}`);
+  const translated = t(`template.step.${step.id}`);
+  const label = translated !== `template.step.${step.id}` ? translated : step.label || step.id;
   return (
     <span
       className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium"
@@ -178,6 +179,8 @@ function ActiveDetail({
   // populated it.
   const showMessage = active.message && (elapsed >= 10 || true);
   if (!showMessage) return null;
+  const translated = t(`template.step.${active.id}`);
+  const label = translated !== `template.step.${active.id}` ? translated : active.label || active.id;
   return (
     <div
       className="rounded-[var(--ti-radius-md,10px)] border px-3 py-2 text-sm"
@@ -188,7 +191,7 @@ function ActiveDetail({
       }}
     >
       <span className="mr-2 font-semibold" style={{ color: "var(--ti-accent)" }}>
-        {active.label || t(`template.step.${active.id}`)}
+        {label}
       </span>
       <span>{active.message}</span>
     </div>

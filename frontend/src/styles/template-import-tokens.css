@@ -549,6 +549,185 @@
   flex-shrink: 0;
 }
 
+/* ─── LLM collaboration mode: separate progress, review, feedback ───── */
+
+.ti-llm-workspace {
+  display: flex;
+  flex: 1 1 0;
+  min-height: 0;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ti-llm-card,
+.ti-llm-chat-card {
+  border: 1px solid var(--ti-line);
+  border-radius: var(--ti-radius-sm, 6px);
+  background: color-mix(in srgb, var(--ti-surface-inset) 72%, var(--ti-surface));
+}
+
+.ti-llm-card {
+  flex: 0 0 auto;
+  padding: 9px;
+}
+
+.ti-llm-chat-card {
+  display: flex;
+  flex: 1 1 0;
+  min-height: 0;
+  flex-direction: column;
+  padding: 9px;
+}
+
+.ti-llm-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 7px;
+  color: var(--ti-text);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.ti-llm-section-head em {
+  min-width: 0;
+  color: var(--ti-muted);
+  font-size: 10.5px;
+  font-style: normal;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ti-llm-step-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px 8px;
+}
+
+.ti-llm-step {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  color: var(--ti-muted);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.ti-llm-step > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ti-llm-step-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--ti-muted);
+}
+
+.ti-llm-step[data-state="complete"] {
+  color: var(--ti-text);
+}
+
+.ti-llm-step[data-state="complete"] .ti-llm-step-icon {
+  color: var(--ti-success);
+}
+
+.ti-llm-step[data-state="active"] {
+  color: var(--ti-accent);
+}
+
+.ti-llm-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.ti-llm-metric {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  border: 1px solid color-mix(in srgb, var(--ti-line) 70%, transparent);
+  border-radius: 6px;
+  background: var(--ti-surface);
+}
+
+.ti-llm-metric em {
+  color: var(--ti-muted);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ti-llm-metric b {
+  color: var(--ti-text);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.ti-llm-pages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 8px;
+}
+
+.ti-llm-pages span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  border: 1px solid color-mix(in srgb, var(--ti-accent) 22%, var(--ti-line));
+  border-radius: 999px;
+  padding: 3px 7px;
+  color: var(--ti-text);
+  background: color-mix(in srgb, var(--ti-accent) 6%, var(--ti-surface));
+  font-size: 10.5px;
+  font-weight: 700;
+}
+
+.ti-llm-pages b {
+  color: var(--ti-muted);
+  font-weight: 700;
+}
+
+.ti-llm-empty {
+  margin: 0;
+  color: var(--ti-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.ti-llm-chat-scroll {
+  display: flex;
+  flex: 1 1 0;
+  min-height: 0;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+  padding: 6px 1px 2px;
+  overscroll-behavior: contain;
+}
+
+.ti-llm-chat-scroll > * {
+  flex-shrink: 0;
+}
+
+.ti-llm-chat-scroll > :first-child {
+  margin-top: auto;
+}
+
 .ti-console-activity {
   position: relative;
   display: grid;
@@ -1267,33 +1446,140 @@
   }
 }
 
+.ti-upload-card {
+  display: flex;
+  cursor: pointer;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 220px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: linear-gradient(180deg, var(--surface-inset), var(--surface-hover));
+  color: var(--ti-text);
+  text-align: center;
+  transition:
+    border-color var(--motion-base) var(--motion-ease),
+    background var(--motion-base) var(--motion-ease),
+    box-shadow var(--motion-base) var(--motion-ease),
+    transform var(--motion-base) var(--motion-spring);
+}
+
+.ti-upload-card-compact {
+  min-height: 210px;
+  padding: 24px;
+}
+
+.ti-upload-card:hover,
+.ti-upload-card-dragging {
+  border-color: var(--si-accent);
+  background: var(--accent-surface);
+  box-shadow:
+    inset 0 0 0 1px rgba(26, 90, 215, 0.12),
+    0 0 0 3px rgba(26, 90, 215, 0.08);
+  transform: translateY(-1px);
+}
+
 .ti-upload-mode-switch {
   display: grid;
-  width: min(100%, 210px);
-  grid-template-columns: 1fr 1fr;
-  gap: 2px;
+  width: 100%;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
   border: 1px solid var(--ti-line);
-  border-radius: var(--ti-radius-sm);
+  border-radius: 8px;
   background: var(--ti-surface);
-  padding: 2px;
+  padding: 5px;
+  box-shadow: 0 8px 24px color-mix(in srgb, #000 7%, transparent);
+}
+
+.ti-upload-mode-tooltip-trigger {
+  display: flex;
+  min-width: 0;
 }
 
 .ti-upload-mode-button {
   display: inline-flex;
+  width: 100%;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: 8px;
   min-width: 0;
-  border-radius: 4px;
-  padding: 4px 6px;
+  min-height: 36px;
+  border-radius: 7px;
+  overflow: hidden;
+  padding: 9px 12px;
   color: var(--ti-muted);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
+  line-height: 1;
+  transition: background 160ms ease, color 160ms ease;
+}
+
+.ti-upload-mode-button > svg {
+  display: block;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+}
+
+.ti-upload-mode-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  white-space: nowrap;
 }
 
 .ti-upload-mode-button[data-active="true"] {
-  background: color-mix(in srgb, var(--ti-accent) 12%, var(--ti-surface));
+  background: color-mix(in srgb, var(--ti-accent) 13%, var(--ti-surface));
   color: var(--ti-accent);
+}
+
+.ti-upload-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--body-color);
+}
+
+.ti-upload-icon svg {
+  stroke: #334155;
+}
+
+.ti-agent-runtime-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid var(--ti-line);
+  border-radius: var(--ti-radius-sm);
+  padding: 9px;
+}
+
+.ti-agent-runtime-card-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ti-text);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.ti-agent-runtime-card p {
+  margin: 0;
+  color: var(--ti-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.ti-agent-runtime-fix {
+  align-self: flex-start;
+  border: 1px solid var(--ti-line);
+  border-radius: var(--ti-radius-sm);
+  padding: 4px 8px;
+  color: var(--ti-accent);
+  font-size: 11px;
+  font-weight: 700;
 }
 
 .template-edit-toolbar {
@@ -1543,7 +1829,7 @@
  * We swap to the templates surface palette and ensure children fill the
  * available height like the workspace canvas does. */
 .templates-canvas-area {
-  background: var(--ti-surface-inset);
+  background: var(--ti-surface);
   padding: 0;
   overflow: hidden;
   gap: 0;
@@ -1563,16 +1849,17 @@
 
 .templates-canvas-area > .konva-slide-editor {
   flex: 1;
-  width: calc(100% - 24px);
+  width: min(calc(100% - 28px), 1500px);
+  height: calc(100% - 28px);
   min-height: 0;
-  display: flex;
+  display: grid;
   align-items: center;
   justify-content: center;
-  margin: 12px;
-  border: 1px solid var(--ti-line);
-  border-radius: var(--ti-radius-md, 10px);
-  background: var(--ti-surface);
-  overflow: hidden;
+  margin: 14px auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  overflow: visible;
 }
 
 .templates-canvas-area > .konva-slide-editor .konva-stage-shell {
@@ -1915,9 +2202,30 @@
   height: 100%;
   min-height: 0;
   padding: 0;
-  background: var(--ti-surface-inset);
+  background: var(--ti-surface);
   color: var(--ti-muted);
   font-size: 13px;
+}
+
+.templates-empty-stage {
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 12px;
+  padding: 14px;
+  overflow: auto;
+}
+
+.templates-empty-preview-frame {
+  width: min(100%, 1500px);
+  max-height: none;
+}
+
+.templates-empty-notes {
+  width: min(100%, 1500px);
+  margin-right: auto;
+  margin-left: auto;
+  cursor: default;
 }
 
 .templates-canvas-empty-text {
@@ -2109,6 +2417,14 @@
   background: var(--ti-surface);
   border: 1px solid var(--ti-line);
   border-radius: 8px;
+}
+
+.templates-library-source {
+  display: block;
+  margin-top: 2px;
+  color: var(--ti-muted);
+  font-size: 10px;
+  font-weight: 700;
 }
 
 

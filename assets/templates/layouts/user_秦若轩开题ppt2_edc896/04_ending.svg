@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" width="1350.08" height="759.36" viewBox="0 0 1350.08 759.36">
+<defs>
+<clipPath id="clip_1">
+<path transform="matrix(1.33,0,0,-1.33,0,759.36)" d="M0 0H1012.56V569.52H0Z" clip-rule="evenodd" />
+</clipPath>
+<clipPath id="clip_4">
+<path transform="matrix(1.33,0,0,-1.33,0,759.36)" d="M0 150.53H1012.44V413.46H0Z" clip-rule="evenodd" />
+</clipPath>
+</defs>
+<g>
+<g clip-path="url(#clip_1)">
+<path transform="matrix(1.33,0,0,-1.33,0,759.36)" d="M0 0.02H1012.5V569.52H0Z" fill="#ffffff" fill-rule="evenodd" />
+</g>
+<g clip-path="url(#clip_1)">
+<path transform="matrix(1.33,0,0,-1.33,0,759.36)" stroke-width="1" stroke-linecap="butt" stroke-miterlimit="10" stroke-linejoin="miter" fill="none" stroke="#7f7f7f" d="M221.5 284.77C221.5 442.03 348.99 569.52 506.25 569.52 663.51 569.52 791 442.03 791 284.77 791 127.51 663.51 0.02 506.25 0.02 348.99 0.02 221.5 127.51 221.5 284.77ZM331.3 284.77C331.3 188.15 409.63 109.82 506.25 109.82 602.87 109.82 681.2 188.15 681.2 284.77 681.2 381.39 602.87 459.72 506.25 459.72 409.63 459.72 331.3 381.39 331.3 284.77Z" />
+</g>
+<g clip-path="url(#clip_1)">
+<text fill="#d9d9d9" xml:space="preserve" transform="matrix(1.33 0 0 1.33 0 759.36)" font-size="96.02" font-family="Microsoft YaHei" font-weight="bold" y="-247.73" x="334.2 394.22 456.25 511.75 573.97 631.2">Thanks</text>
+</g>
+<g clip-path="url(#clip_4)">
+<g transform="matrix(0.67,0,0,0.67,0,208.08)">
+<image id="image_5" width="2002" height="520" xlink:href="assets/inline_ef1b8b810ee0.jpg" />
+</g>
+</g>
+<g clip-path="url(#clip_1)">
+<path transform="matrix(1.33,0,0,-1.33,0,759.36)" d="M0.03 150.53H1012.47V413.46H0.03Z" fill="#33364b" fill-opacity=".85098" fill-rule="evenodd" />
+</g>
+<g clip-path="url(#clip_1)">
+<text fill="#d9d9d9" xml:space="preserve" transform="matrix(1.33 0 0 1.33 0 759.36)" font-size="96.02" font-family="Microsoft YaHei" font-weight="bold" y="-247.73" x="270.12 307.57 345.02 399.94 481.37 557.42 600.44 663.72">{{END_CO</text>
+</g>
+<g clip-path="url(#clip_1)">
+<text fill="#d9d9d9" xml:space="preserve" transform="matrix(1.33 0 0 1.33 0 759.36)" font-size="96.02" font-family="Microsoft YaHei" font-weight="bold" y="-132.5" x="299.88 381.31 441.32 496.25 577.68 637.69 675.14">NTENT}}</text>
+</g>
+</g>
+</svg>

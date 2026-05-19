@@ -21,6 +21,7 @@ import type {
   TemplateReviewDraft,
   TemplateInfo,
   TemplateAgentConfig,
+  TemplateAgentClaudeCodeStatus,
   TemplateAgentStartResponse,
   TemplateAgentStatus,
   TemplateImportFileList,
@@ -116,7 +117,10 @@ export function isNotFoundError(error: unknown): boolean {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, init);
+  const response = await fetch(`${API_BASE}${path}`, {
+    cache: "no-store",
+    ...init,
+  });
   if (!response.ok) {
     const detail = await response.text();
     throw new ApiError(detail || `Request failed: ${response.status}`, response.status);
@@ -151,7 +155,7 @@ export async function fetchTemplates(): Promise<TemplateInfo[]> {
 export async function uploadTemplatePptx(
   file: File,
   modelConfig: GenerateRequestPayload["model_config"] | undefined,
-  collaborationMode: "classic" | "agent" = "classic",
+  collaborationMode: "classic" | "agent" | "direct" = "classic",
 ): Promise<ImportStartResponse> {
   const formData = new FormData();
   formData.append("file", file);
@@ -163,6 +167,10 @@ export async function uploadTemplatePptx(
     method: "POST",
     body: formData,
   });
+}
+
+export async function fetchTemplateAgentClaudeCodeStatus(): Promise<TemplateAgentClaudeCodeStatus> {
+  return request<TemplateAgentClaudeCodeStatus>("/api/templates/agent/claude-code/status");
 }
 
 export async function fetchImportStatus(importId: string): Promise<ImportStatus> {
@@ -318,6 +326,18 @@ export async function updateAnnotation(
 
 export async function fetchTemplatePreview(templateId: string): Promise<TemplatePreview> {
   return request<TemplatePreview>(`/api/templates/${templateId}/preview`);
+}
+
+export async function generateTemplateDesignSpec(
+  templateId: string,
+  modelConfig: GenerateRequestPayload["model_config"],
+  feedback?: string,
+): Promise<TemplatePreview> {
+  return request<TemplatePreview>(`/api/templates/${templateId}/design-spec`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model_config: modelConfig, feedback: feedback ?? "" }),
+  });
 }
 
 export async function fetchImportedTemplates(): Promise<UserTemplateItem[]> {

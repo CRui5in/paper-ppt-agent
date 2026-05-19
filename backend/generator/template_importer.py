@@ -70,6 +70,7 @@ IMPORT_STEPS = [
     ("analyzing", "Analyze PPTX structure"),
     ("rendering", "Render slides to SVG"),
     ("detecting_assets", "Detect reusable assets"),
+    ("baseline_preview", "Generate rule template draft"),
     ("llm_review", "Analyze template with LLM"),
     ("review", "Wait for review"),
     ("registering", "Register template"),
@@ -263,8 +264,8 @@ def initialize_import_task(import_id: str, pptx_path: Path, label: str | None = 
 
 
 def set_import_collaboration_mode(import_id: str, mode: str) -> dict[str, Any]:
-    """Persist whether this import is owned by the classic LLM or Agent flow."""
-    normalized = "agent" if mode == "agent" else "classic"
+    """Persist whether this import is owned by classic LLM, Agent, or direct flow."""
+    normalized = mode if mode in {"agent", "direct"} else "classic"
     return _update_state(import_id, collaboration_mode=normalized)
 
 
@@ -756,9 +757,16 @@ def _resolve_preview_asset(svg_path: Path, href: str) -> Path | None:
         return local_path
     if "{{" in href and "}}" in href:
         return _pick_placeholder_asset(svg_path.parent, href)
+    basename = PurePosixPath(clean_href).name
+    for candidate in (
+        svg_path.parent / "assets" / basename,
+        svg_path.parent.parent / "assets" / basename,
+    ):
+        if basename and candidate.exists():
+            return candidate.resolve()
     # Some older templates refer to ../images/... although assets live in the
     # template directory itself.
-    alt_path = (svg_path.parent / PurePosixPath(clean_href).name).resolve()
+    alt_path = (svg_path.parent / basename).resolve()
     if alt_path.exists():
         return alt_path
     return None
@@ -1706,6 +1714,22 @@ def _generate_design_spec(manifest: dict[str, Any], review: dict[str, Any], temp
 # ── Optional LLM-assisted review ─────────────────────────────────────────────
 
 
+def _read_design_spec_reference(max_chars: int = 36000) -> str:
+    path = settings.templates_dir / "design_spec_reference.md"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    return text[:max_chars]
+
+
+def _strip_markdown_fence(text: str) -> str:
+    cleaned = (text or "").strip()
+    cleaned = re.sub(r"^```(?:markdown)?\s*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s*```$", "", cleaned)
+    return cleaned.strip()
+
+
 def _read_svg_excerpt(import_id: str, slide_index: int, max_chars: int = 12000) -> str:
     svg_path = _work_dir(import_id) / "svg" / f"slide_{slide_index:02d}.svg"
     try:
@@ -1889,6 +1913,28 @@ def _summarize_user_annotations(review: dict[str, Any]) -> list[str]:
             f"w={w * 100:.1f}%, h={h * 100:.1f}%){link_text}: {note}"
         )
     return bullets
+
+
+def _resolve_user_annotations(review: dict[str, Any]) -> int:
+    annotations = review.get("annotations")
+    if not isinstance(annotations, list):
+        return 0
+    resolved_count = 0
+    next_annotations: list[Any] = []
+    for annotation in annotations:
+        if isinstance(annotation, dict) and not annotation.get("resolved"):
+            annotation = {**annotation, "resolved": True}
+            resolved_count += 1
+        next_annotations.append(annotation)
+    if resolved_count:
+        review["annotations"] = next_annotations
+        draft = review.get("draft")
+        if isinstance(draft, dict) and isinstance(draft.get("annotations"), list):
+            draft["annotations"] = [
+                {**item, "resolved": True} if isinstance(item, dict) and not item.get("resolved") else item
+                for item in draft["annotations"]
+            ]
+    return resolved_count
 
 
 def _extract_json_object(text: str) -> str:
@@ -2095,14 +2141,20 @@ async def _call_template_design_spec_llm(
         "user_feedback": payload.get("user_feedback", ""),
         "current_template_preview": payload.get("current_template_preview"),
     }
+    reference = _read_design_spec_reference()
     messages = [
         LLMMessage.system(
-            "You write concise design_spec.md files for imported presentation templates. "
-            "Return Markdown only. Do not wrap it in JSON or code fences."
+            "You write production-quality design_spec.md files for imported presentation templates. "
+            "Return Markdown only. Do not wrap it in JSON or code fences. "
+            "The output MUST follow the provided reference structure exactly, including sections I through XI. "
+            "Adapt project/content-specific sections to a reusable imported template pack when the source is a template."
         ),
         LLMMessage.user(
-            "Write design_spec.md for this imported PPTX template. Include visual system, layout rules, "
-            "placeholder contract, reusable assets, and generation guidance.\n\n"
+            "Reference design_spec.md structure to follow:\n"
+            f"{reference or '(reference unavailable)'}\n\n"
+            "Write design_spec.md for this imported PPTX template. Include visual system, canvas constraints, "
+            "typography, layout rules for the five page types, placeholder contract, reusable assets, "
+            "generation guidance, speaker-note expectations, and technical constraints.\n\n"
             f"{json.dumps(spec_payload, ensure_ascii=False)}"
         ),
     ]
@@ -2113,9 +2165,9 @@ async def _call_template_design_spec_llm(
                 messages,
                 model_config["model"],
                 temperature=0.2,
-                max_tokens=3000,
+                max_tokens=8192,
             )
-            text = (response.content or "").strip()
+            text = _strip_markdown_fence(response.content or "")
             if text:
                 return text
             last_error = ValueError("empty design_spec response")
@@ -2730,11 +2782,10 @@ async def assist_import_review(
     )
     try:
         current_preview = None
-        if feedback_text:
-            try:
-                current_preview = preview_import_template(import_id)
-            except Exception as preview_exc:
-                logger.warning("Could not build current template preview for feedback context: %s", preview_exc)
+        try:
+            current_preview = preview_import_template(import_id)
+        except Exception as preview_exc:
+            logger.warning("Could not build current template preview for LLM context: %s", preview_exc)
         payload = _manifest_summary_for_llm(
             manifest,
             review,
@@ -2767,6 +2818,8 @@ async def assist_import_review(
             after_retry_signature = _draft_signature(review)
             changed = before_signature != after_retry_signature or bool(rule_patches)
             payload = retry_payload
+        if feedback_text:
+            _resolve_user_annotations(review)
         review["llm"] = {
             "enabled": True,
             "status": "complete",
@@ -2857,6 +2910,70 @@ async def assist_import_review(
     return review
 
 
+async def generate_direct_import_design_spec(import_id: str, model_config: dict[str, Any]) -> dict[str, Any]:
+    """Generate ``design_spec.md`` for Direct mode before auto-registration."""
+    review = _ensure_direct_review(import_id)
+    work_dir = _work_dir(import_id)
+    manifest = _safe_read_json(work_dir / "manifest.json")
+    if not manifest:
+        raise FileNotFoundError(f"manifest for {import_id}")
+
+    _update_state(
+        import_id,
+        status="processing",
+        stage="llm_review",
+        progress=0.86,
+        message="Generating Direct template design_spec.md with LLM.",
+        review_required=False,
+    )
+    current_preview = None
+    try:
+        current_preview = _direct_template_preview(import_id)
+    except Exception as preview_exc:
+        logger.warning("Could not build direct template preview for design_spec context: %s", preview_exc)
+    payload = _manifest_summary_for_llm(
+        manifest,
+        review,
+        feedback="Generate a complete design_spec.md for this Direct five-slide template.",
+        current_preview=current_preview,
+    )
+    try:
+        spec = await _call_template_design_spec_llm(model_config, payload, review)
+    except Exception as exc:
+        _update_state(
+            import_id,
+            status="error",
+            stage="llm_review",
+            progress=0.86,
+            message="Direct template design_spec.md generation failed.",
+            error=str(exc) or exc.__class__.__name__,
+            review_required=False,
+        )
+        raise
+    draft = review.setdefault("draft", {})
+    draft["design_spec"] = spec
+    review["llm"] = {
+        "enabled": True,
+        "status": "complete",
+        "provider": model_config.get("provider"),
+        "model": model_config.get("model"),
+        "direct": True,
+        "notes": ["Generated design_spec.md for Direct mode."],
+    }
+    review["llm_trace"] = {
+        "iteration": 1,
+        "updated_at": time.time(),
+        "user_feedback": "",
+        "changed": True,
+        "retried_no_change": False,
+        "rule_patches": [],
+        "input": _compact_llm_trace_value(payload),
+        "action_plan": {"design_spec_md": spec},
+    }
+    _write_json(_review_path(import_id), review)
+    return review
+
+
 # ── Main workflow ────────────────────────────────────────────────────────────
 
 
@@ -2914,6 +3031,22 @@ def import_pptx_template(pptx_path: Path, *, task_id: str | None = None) -> Impo
         review = _build_review_payload(import_id, manifest, cleaned_svgs, export_mode, template_id, label)
         _write_json(_review_path(import_id), review)
         _write_json(work_dir / "manifest.json", manifest)
+
+        _update_state(
+            import_id,
+            status="processing",
+            stage="baseline_preview",
+            progress=0.74,
+            message="Generating a rule-based template draft with placeholders.",
+            review_required=False,
+            template_id=template_id,
+            label=label,
+            export_mode=export_mode,
+            slide_count=slide_count,
+            theme_colors=review.get("theme_colors", []),
+            error=None,
+        )
+        preview_import_template(import_id)
 
         state = _update_state(
             import_id,
@@ -3049,13 +3182,13 @@ def save_import_review(import_id: str, draft: dict[str, Any]) -> dict[str, Any]:
     return review
 
 
-def _review_template_context(import_id: str) -> dict[str, Any]:
+def _review_template_context(import_id: str, *, require_llm_complete: bool = True) -> dict[str, Any]:
     review = get_import_review(import_id)
     state = get_import_task(import_id)
     if review is None or state is None:
         raise FileNotFoundError(import_id)
     is_agent_mode = state.get("collaboration_mode") == "agent"
-    if not is_agent_mode and review.get("llm", {}).get("status") != "complete":
+    if require_llm_complete and not is_agent_mode and review.get("llm", {}).get("status") != "complete":
         raise ValueError("Template import must complete LLM analysis before preview or registration.")
     element_actions = review.get("draft", {}).get("element_actions") or []
 
@@ -3538,12 +3671,16 @@ def _robust_rmtree(path: Path, retries: int = 5, delay: float = 0.1) -> None:
         raise last_exc
 
 
-def preview_import_template(import_id: str) -> dict[str, Any]:
-    context = _review_template_context(import_id)
+def preview_import_template(import_id: str, *, require_llm_complete: bool = False) -> dict[str, Any]:
+    state = get_import_task(import_id) or {}
+    if state.get("collaboration_mode") == "direct":
+        return _direct_template_preview(import_id)
+    context = _review_template_context(import_id, require_llm_complete=require_llm_complete)
     is_agent_mode = context["state"].get("collaboration_mode") == "agent"
-    agent_preview = _agent_template_preview(context)
-    if agent_preview is not None:
-        return agent_preview
+    if is_agent_mode:
+        agent_preview = _agent_template_preview(context)
+        if agent_preview is not None:
+            return agent_preview
     if is_agent_mode:
         return {
             "template_id": context["template_id"],
@@ -3587,6 +3724,9 @@ def preview_import_template(import_id: str) -> dict[str, Any]:
 
 
 def confirm_import_template(import_id: str) -> ImportResult:
+    state = get_import_task(import_id) or {}
+    if state.get("collaboration_mode") == "direct":
+        return confirm_direct_import_template(import_id)
     context = _review_template_context(import_id)
     review = context["review"]
     manifest = context["manifest"]
@@ -3606,7 +3746,9 @@ def confirm_import_template(import_id: str) -> ImportResult:
     if template_dir.exists():
         shutil.rmtree(template_dir)
     template_dir.mkdir(parents=True, exist_ok=True)
-    used_agent_outputs = _copy_agent_template_outputs(context, template_dir)
+    used_agent_outputs = False
+    if state.get("collaboration_mode") == "agent":
+        used_agent_outputs = _copy_agent_template_outputs(context, template_dir)
     if not used_agent_outputs:
         _write_templateized_svgs(context, template_dir)
 
@@ -3637,6 +3779,173 @@ def confirm_import_template(import_id: str) -> ImportResult:
         template_id=template_id,
         label=label,
         slide_count=int(review.get("slide_count") or 0),
+        export_mode=review.get("export_mode") or "",
+        theme_colors=review.get("theme_colors") or [],
+        error=None,
+    )
+    return _result_from_state(state)
+
+
+def _direct_page_selections() -> dict[str, int]:
+    return {page_type: idx for idx, page_type in enumerate(PAGE_TYPES, start=1)}
+
+
+def _ensure_direct_review(import_id: str) -> dict[str, Any]:
+    review = get_import_review(import_id)
+    if review is None:
+        raise FileNotFoundError(import_id)
+    slide_count = int(review.get("slide_count") or 0)
+    if slide_count != 5:
+        raise ValueError(
+            f"Direct template mode requires exactly 5 slides in order: cover, toc, chapter, content, ending; got {slide_count}."
+        )
+    selections = _direct_page_selections()
+    review["page_type_candidates"] = {page_type: [idx] for page_type, idx in selections.items()}
+    draft = review.setdefault("draft", {})
+    draft["page_selections"] = selections
+    current_llm = review.get("llm") if isinstance(review.get("llm"), dict) else {}
+    review["llm"] = {
+        **current_llm,
+        "enabled": bool(current_llm.get("enabled")),
+        "status": current_llm.get("status") or "not_run",
+        "direct": True,
+    }
+    _write_json(_review_path(import_id), review)
+    return review
+
+
+def _direct_template_preview(import_id: str) -> dict[str, Any]:
+    review = _ensure_direct_review(import_id)
+    work_dir = _work_dir(import_id)
+    selections = _direct_page_selections()
+
+    def preview_file(page_type: str) -> str:
+        path = work_dir / "svg" / f"slide_{selections[page_type]:02d}.svg"
+        if not path.exists():
+            return ""
+        return inline_svg_asset_refs(path)
+
+    return {
+        "template_id": str(review.get("template_id") or ""),
+        "label": str(review.get("label") or review.get("template_id") or ""),
+        "cover_svg": preview_file("cover"),
+        "toc_svg": preview_file("toc"),
+        "chapter_svg": preview_file("chapter"),
+        "content_svg": preview_file("content"),
+        "ending_svg": preview_file("ending"),
+        "design_spec": str(review.get("draft", {}).get("design_spec") or "")[:40000],
+        "theme_colors": review.get("theme_colors") or [],
+    }
+
+
+def _rewrite_svg_asset_refs_for_template(svg_text: str, source_svg: Path, assets_dir: Path) -> str:
+    """Rewrite local image hrefs so registered Direct SVGs resolve assets/."""
+    if not svg_text:
+        return svg_text
+
+    def repl(match: re.Match[str]) -> str:
+        attr = match.group("attr")
+        quote = match.group("quote")
+        href = match.group("href")
+        if not href or href.startswith(("data:", "http://", "https://", "#")):
+            return match.group(0)
+        if "{{" in href and "}}" in href:
+            return match.group(0)
+        asset_path = _resolve_preview_asset(source_svg, href)
+        if asset_path is None or not asset_path.exists():
+            return match.group(0)
+        try:
+            asset_path.relative_to(assets_dir)
+        except ValueError:
+            return match.group(0)
+        rewritten = f"assets/{asset_path.name}"
+        return f"{attr}={quote}{rewritten}{quote}"
+
+    pattern = re.compile(r'(?P<attr>(?:xlink:)?href)=(?P<quote>["\'])(?P<href>[^"\']+)(?P=quote)')
+    return pattern.sub(repl, svg_text)
+
+
+def confirm_direct_import_template(import_id: str) -> ImportResult:
+    """Register a 5-slide PPTX as an immutable direct template.
+
+    The uploaded deck itself is the template: slide 1 cover, slide 2 TOC,
+    slide 3 chapter, slide 4 content, slide 5 ending. No templateizer or
+    placeholder rewrite runs in this mode.
+    """
+    try:
+        review = _ensure_direct_review(import_id)
+    except Exception as exc:
+        state = _update_state(
+            import_id,
+            status="error",
+            stage="direct_validation",
+            progress=0.9,
+            message="Direct template validation failed.",
+            error=str(exc) or exc.__class__.__name__,
+            review_required=False,
+        )
+        return _result_from_state(state)
+    state = get_import_task(import_id) or {}
+    manifest = _safe_read_json(_work_dir(import_id) / "manifest.json")
+    template_id = str(review.get("template_id") or state.get("template_id") or _generate_template_id(import_id, import_id))
+    label = str(review.get("draft", {}).get("label") or review.get("label") or state.get("label") or template_id)
+    template_dir = _templates_root() / template_id
+    work_dir = _work_dir(import_id)
+
+    _update_state(
+        import_id,
+        status="processing",
+        stage="registering",
+        progress=0.9,
+        message="Registering direct template.",
+        review_required=False,
+    )
+
+    if template_dir.exists():
+        shutil.rmtree(template_dir)
+    template_dir.mkdir(parents=True, exist_ok=True)
+    src_assets = work_dir / "assets"
+    for page_type, slide_index in _direct_page_selections().items():
+        src = work_dir / "svg" / f"slide_{slide_index:02d}.svg"
+        if not src.exists():
+            raise ValueError(f"Rendered SVG for slide {slide_index} is missing.")
+        try:
+            svg_text = src.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise ValueError(f"Could not read rendered SVG for slide {slide_index}.") from exc
+        svg_text = _rewrite_svg_asset_refs_for_template(svg_text, src, src_assets)
+        (template_dir / PAGE_TYPE_FILES[page_type]).write_text(svg_text, encoding="utf-8")
+
+    if src_assets.is_dir():
+        shutil.copytree(src_assets, template_dir / "assets", dirs_exist_ok=True)
+
+    design_spec = str(review.get("draft", {}).get("design_spec") or "").strip()
+    if not design_spec:
+        raise ValueError("Direct template registration requires LLM-generated design_spec.md.")
+    (template_dir / "design_spec.md").write_text(design_spec, encoding="utf-8")
+
+    manifest_with_review = {
+        **manifest,
+        "directTemplate": True,
+        "pageSelections": _direct_page_selections(),
+        "importReview": review,
+    }
+    (template_dir / "manifest.json").write_text(
+        json.dumps(manifest_with_review, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    _register_user_template(template_id, label, manifest)
+
+    state = _update_state(
+        import_id,
+        status="complete",
+        stage="registering",
+        progress=1.0,
+        message="Direct template registered.",
+        review_required=False,
+        template_id=template_id,
+        label=label,
+        slide_count=5,
         export_mode=review.get("export_mode") or "",
         theme_colors=review.get("theme_colors") or [],
         error=None,

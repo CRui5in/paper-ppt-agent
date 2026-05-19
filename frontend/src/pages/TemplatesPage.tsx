@@ -12,6 +12,7 @@ import { useNavigate } from "react-router-dom";
 import {
   Bot,
   Check,
+  FileCheck2,
   Inbox,
   Layers,
   Library,
@@ -20,18 +21,21 @@ import {
   Pencil,
   Sparkles,
   Trash2,
-  Upload,
+  UploadCloud,
   Wand2,
   X as XIcon,
 } from "lucide-react";
 
 import { Layout } from "../components/layout/Layout";
 import { useLocale } from "../i18n";
+import { useGeneration } from "../hooks/useGeneration";
 import { useTemplateImport } from "../hooks/useTemplateImport";
 import {
   deleteTemplate,
+  fetchTemplateAgentClaudeCodeStatus,
   fetchTemplatePreview,
   fetchTemplates,
+  generateTemplateDesignSpec,
   renameTemplate,
 } from "../lib/api";
 import type {
@@ -58,6 +62,7 @@ import {
   MiddleEmptyState,
 } from "../components/template/MiddlePagePreview";
 import { detectUserLanguage } from "../components/template/detectUserLanguage";
+import { HoverTooltip } from "../components/common/HoverTooltip";
 
 const ROUTING_PROFILE_STORAGE_KEY = "paper-ppt-agent-routing-profiles-v1";
 const TEMPLATE_AGENT_CONFIG_STORAGE_KEY = "paper-ppt-agent-template-agent-config-v1";
@@ -83,7 +88,7 @@ type RoutingProfileMap = Record<string, RoutingProfile>;
 const PAGE_TYPES: TemplatePageType[] = ["cover", "toc", "chapter", "content", "ending"];
 
 type LibraryFilter = "all" | "builtin" | "user";
-type CollabMode = "classic" | "agent";
+type CollabMode = "classic" | "agent" | "direct";
 
 function readModelConfig(): TemplateImportModelConfig | undefined {
   try {
@@ -114,14 +119,9 @@ function readTemplateAgentConfig(): TemplateAgentConfig {
     const raw = window.localStorage.getItem(TEMPLATE_AGENT_CONFIG_STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw) as TemplateAgentConfig;
-      if (parsed && (parsed.mode === "custom" || parsed.mode === "claude_code")) {
+      if (parsed) {
         return {
-          mode: parsed.mode,
-          api_key: parsed.api_key ?? "",
-          auth_token: parsed.auth_token ?? "",
-          base_url: parsed.base_url ?? "",
-          model: parsed.model ?? "",
-          custom_model_option: parsed.custom_model_option ?? "",
+          mode: "claude_code",
           load_project_settings: parsed.load_project_settings ?? true,
           max_turns:
             typeof parsed.max_turns === "number" && parsed.max_turns > 0 && parsed.max_turns !== 16
@@ -151,9 +151,9 @@ function readActiveTemplateImportId(): string | undefined {
 function readTemplateUploadMode(): CollabMode {
   try {
     const value = window.localStorage.getItem(TEMPLATE_UPLOAD_MODE_STORAGE_KEY);
-    return value === "agent" ? "agent" : "classic";
+    return value === "agent" || value === "classic" || value === "direct" ? value : "direct";
   } catch {
-    return "classic";
+    return "direct";
   }
 }
 
@@ -179,10 +179,10 @@ function writeActiveTemplateImportId(importId: string | undefined): void {
 
 function sanitizeSvg(svg: string): string {
   return (svg ?? "")
-    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "")
-    .replace(/\son\w+\s*=\s*"[^"]*"/gi, "")
-    .replace(/\son\w+\s*=\s*'[^']*'/gi, "")
-    .replace(/javascript:/gi, "");
+    .replace(/<\s*(script|foreignObject|iframe|object|embed|link|meta|base)\b[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, "")
+    .replace(/<\s*(script|foreignObject|iframe|object|embed|link|meta|base)\b[^>]*\/\s*>/gi, "")
+    .replace(/\son[a-z0-9:_-]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, "")
+    .replace(/\s+(href|xlink:href)\s*=\s*(?:"\s*javascript:[^"]*"|'\s*javascript:[^']*'|javascript:[^\s>]+)/gi, ' href="#"');
 }
 
 function pickPreviewSvg(preview: TemplatePreview, pt: TemplatePageType): string | undefined {
@@ -203,6 +203,7 @@ function pickPreviewSvg(preview: TemplatePreview, pt: TemplatePageType): string 
 export function TemplatesPage() {
   const { t, locale } = useLocale();
   const navigate = useNavigate();
+  const reportGlobalError = useGeneration((state) => state.reportError);
 
   // ── Library state ─────────────────────────────────────────────────────
   const [templates, setTemplates] = useState<TemplateInfo[]>([]);
@@ -218,6 +219,7 @@ export function TemplatesPage() {
   const [modelConfig] = useState<TemplateImportModelConfig | undefined>(readModelConfig);
   const [importId, setImportId] = useState<string | undefined>(readActiveTemplateImportId);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [checkingAgentRuntime, setCheckingAgentRuntime] = useState(false);
   const [confirmingFlag, setConfirmingFlag] = useState(false);
   const [autoSelectedFor, setAutoSelectedFor] = useState<string | null>(null);
   const [stageMode, setStageMode] = useState<StageMode>("select");
@@ -236,6 +238,7 @@ export function TemplatesPage() {
   const selectionBaselineRef = useRef<Partial<Record<TemplatePageType, number | null>>>({});
   const [uploadMode, setUploadMode] = useState<CollabMode>(readTemplateUploadMode);
   const [collabMode, setCollabMode] = useState<CollabMode>(readTemplateUploadMode);
+  const [directConversation, setDirectConversation] = useState<Array<{ role: string; content: string; created_at?: number; meta?: Record<string, unknown> }>>([]);
   const [agentConfig, setAgentConfig] = useState<TemplateAgentConfig>(readTemplateAgentConfig);
 
   const handleMissingImport = useCallback(
@@ -266,16 +269,30 @@ export function TemplatesPage() {
     confirm,
     retryStep,
     saveAgentTemplateSvg,
-  } = useTemplateImport(importId, { modelConfig, onMissingImport: handleMissingImport });
+  } = useTemplateImport(importId, { modelConfig, onMissingImport: handleMissingImport, t });
 
   const modelConfigured = Boolean(modelConfig?.api_key && modelConfig?.model);
-  const agentConfigured =
-    agentConfig.mode === "claude_code" ||
-    Boolean((agentConfig.api_key || agentConfig.auth_token) && agentConfig.model);
+  const agentConfigured = true;
+
+  const setTemplateError = useCallback(
+    (message: string | null) => {
+      setUploadError(message);
+      reportGlobalError(message ?? "");
+    },
+    [reportGlobalError],
+  );
 
   useEffect(() => {
     writeActiveTemplateImportId(importId);
   }, [importId]);
+
+  useEffect(() => {
+    if (importError) reportGlobalError(importError);
+  }, [importError, reportGlobalError]);
+
+  useEffect(() => {
+    if (libraryError) reportGlobalError(libraryError);
+  }, [libraryError, reportGlobalError]);
 
   useEffect(() => {
     writeTemplateUploadMode(uploadMode);
@@ -285,7 +302,7 @@ export function TemplatesPage() {
   }, [importId, uploadMode]);
 
   useEffect(() => {
-    if (status?.collaboration_mode === "classic" || status?.collaboration_mode === "agent") {
+    if (status?.collaboration_mode === "classic" || status?.collaboration_mode === "agent" || status?.collaboration_mode === "direct") {
       setCollabMode(status.collaboration_mode);
     }
   }, [status?.collaboration_mode]);
@@ -308,11 +325,11 @@ export function TemplatesPage() {
     try {
       setTemplates(await fetchTemplates());
     } catch (err) {
-      setLibraryError(err instanceof Error ? err.message : "Failed to load templates");
+      setLibraryError(err instanceof Error ? err.message : t("templates.error.loadFailed"));
     } finally {
       setTemplatesLoading(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     void loadTemplates();
@@ -333,7 +350,7 @@ export function TemplatesPage() {
       })
       .catch((err) => {
         if (!cancelled) {
-          setLibraryError(err instanceof Error ? err.message : "Preview failed");
+          setLibraryError(err instanceof Error ? err.message : t("templates.error.previewFailed"));
         }
       })
       .finally(() => {
@@ -342,7 +359,7 @@ export function TemplatesPage() {
     return () => {
       cancelled = true;
     };
-  }, [selectedTemplateId]);
+  }, [selectedTemplateId, t]);
 
   // ── Auto-select after import completes ───────────────────────────────
   useEffect(() => {
@@ -352,6 +369,7 @@ export function TemplatesPage() {
     if (!tid || autoSelectedFor === tid) return;
     setAutoSelectedFor(tid);
     setImportId(undefined);
+    writeActiveTemplateImportId(undefined);
     void loadTemplates();
     setSelectedTemplateId(tid);
   }, [status, autoSelectedFor, loadTemplates]);
@@ -395,20 +413,27 @@ export function TemplatesPage() {
   // ── Handlers ──────────────────────────────────────────────────────────
   const handleUpload = useCallback(
     async (file: File) => {
-      setUploadError(null);
-      if (uploadMode === "classic" && !modelConfigured) {
-        setUploadError(t("template.modelRequired"));
-        return;
-      }
-      if (uploadMode === "agent" && !agentConfigured) {
-        setUploadError("Agent mode needs Claude Code config or a custom endpoint.");
+      setTemplateError(null);
+      if ((uploadMode === "classic" || uploadMode === "direct") && !modelConfigured) {
+        setTemplateError(t("template.modelRequired"));
         return;
       }
       try {
+        if (uploadMode === "agent") {
+          setCheckingAgentRuntime(true);
+          const runtime = await fetchTemplateAgentClaudeCodeStatus();
+          if (!runtime.available) {
+            const detail = runtime.message ? ` ${runtime.message}` : "";
+            setTemplateError(`${t("template.agentClaudeCodeMissing")}${detail}`);
+            return;
+          }
+        }
         const id = await upload(
           file,
           uploadMode,
-          uploadMode === "classic" ? modelConfig as TemplateImportModelConfig : undefined,
+          uploadMode === "classic" || uploadMode === "direct"
+            ? modelConfig as TemplateImportModelConfig
+            : undefined,
         );
         writeActiveTemplateImportId(id);
         setImportId(id);
@@ -416,10 +441,12 @@ export function TemplatesPage() {
         setSelectedTemplateId(null);
         setSelectedSlideIndex(null);
       } catch (err) {
-        setUploadError(err instanceof Error ? err.message : "Upload failed");
+        setTemplateError(err instanceof Error ? err.message : t("template.uploadFailed"));
+      } finally {
+        setCheckingAgentRuntime(false);
       }
     },
-    [agentConfigured, modelConfigured, modelConfig, upload, uploadMode, t],
+    [modelConfigured, modelConfig, setTemplateError, upload, uploadMode, t],
   );
 
   const handleConfirm = useCallback(async () => {
@@ -502,7 +529,7 @@ export function TemplatesPage() {
           setSelectedTemplateId(null);
         }
       } catch (err) {
-        setLibraryError(err instanceof Error ? err.message : "Delete failed");
+        setLibraryError(err instanceof Error ? err.message : t("templates.error.deleteFailed"));
       }
     },
     [loadTemplates, selectedTemplateId, t],
@@ -517,7 +544,7 @@ export function TemplatesPage() {
         await renameTemplate(tmpl.template_id, label);
         await loadTemplates();
       } catch (err) {
-        setLibraryError(err instanceof Error ? err.message : "Rename failed");
+        setLibraryError(err instanceof Error ? err.message : t("templates.error.renameFailed"));
       }
     },
     [loadTemplates, t],
@@ -561,10 +588,7 @@ export function TemplatesPage() {
     });
     if (existing.length > 0) return;
     autoAgentInspectionRef.current = importId;
-    const seed =
-      locale === "zh"
-        ? "请先只读检查当前模板导入工作区状态：阅读 agent_context.json 和 agent_task.json，说明五个页面的选择、当前准备状态和是否可以开始模板化。不要编辑 review.json，不要制作占位内容，不要标记 llm 完成。最后询问用户是否开始，以及是否有补充要求。"
-        : "First perform a read-only inspection of the current template-import workspace: read agent_context.json and agent_task.json, then explain the five page selections, current preparation state, and whether template editing can start. Do not edit review.json, do not create placeholders, and do not mark llm complete. End by asking whether to start and whether the user has extra requirements.";
+    const seed = t("template.agentReadOnlyInspectionPrompt");
     void runAgent(seed, { ...agentConfig, reply_language: locale }, {
       silent: true,
       preview: false,
@@ -600,7 +624,7 @@ export function TemplatesPage() {
     void Promise.all(
       toFetch.map(async (s): Promise<[number, string] | null> => {
         try {
-          const res = await fetch(s.preview_svg_url as string);
+          const res = await fetch(s.preview_svg_url as string, { cache: "no-store" });
           if (!res.ok) {
             console.warn(`Slide preview fetch failed: ${s.preview_svg_url} (${res.status})`);
             return null;
@@ -709,10 +733,10 @@ export function TemplatesPage() {
     (collabMode !== "agent" || (review?.llm?.agent === true && review?.llm?.status === "complete")) &&
     !confirmingFlag;
 
-  const confirmDisabledHint =
-    isReviewing && !canConfirm ? t("template.confirmDisabledHint") : "";
+  const confirmDisabledHint = "";
 
   const collabConversation = useMemo(() => {
+    if (collabMode === "direct") return directConversation;
     const conversation = review?.conversation ?? [];
     const filtered = conversation.filter((message) => {
       const meta = message.meta ?? {};
@@ -720,7 +744,7 @@ export function TemplatesPage() {
       return collabMode === "agent" ? isAgentMessage : !isAgentMessage;
     });
     return filtered;
-  }, [collabMode, review, review?.conversation]);
+  }, [collabMode, directConversation, review, review?.conversation]);
 
   const collabActivityEvents = useMemo(
     () =>
@@ -728,8 +752,9 @@ export function TemplatesPage() {
         mode: collabMode,
         agentEvents,
         llmEvents,
+        t,
       }),
-    [status, review, draft, collabMode, agentEvents, llmEvents],
+    [status, review, draft, collabMode, agentEvents, llmEvents, t],
   );
 
   return (
@@ -749,12 +774,12 @@ export function TemplatesPage() {
           <div className="flex flex-1 flex-col gap-3 overflow-y-auto px-3 pb-3">
             <UploadCard
               onUpload={handleUpload}
-              uploading={importLoading && !importId}
+              uploading={(importLoading && !importId) || checkingAgentRuntime}
               mode={uploadMode}
               onModeChange={setUploadMode}
               modelConfigured={modelConfigured}
               agentConfigured={agentConfigured}
-              error={uploadError ?? importError}
+              checkingAgentRuntime={checkingAgentRuntime}
               compact
             />
             {templates.length > 0 ? (
@@ -1069,8 +1094,6 @@ export function TemplatesPage() {
                   <MiddleEmptyState />
                 )}
               </div>
-              {/* 5-page rail belongs only under the canvas in this layout
-               * (left rail spans full panel height). */}
               <BottomRail
                 mode={
                   isReviewing
@@ -1134,6 +1157,19 @@ export function TemplatesPage() {
                       { ...agentConfig, reply_language: locale },
                     );
                     if (selectionNote) setPendingAgentSelectionChanges([]);
+                  } else if (collabMode === "direct") {
+                    if (!selectedTemplateId || !modelConfig) return;
+                    const now = Date.now() / 1000;
+                    setDirectConversation((prev) => [
+                      ...prev,
+                      { role: "user", content: text || t("templates.designSpec.generate"), created_at: now, meta: { mode: "direct" } },
+                    ]);
+                    const nextPreview = await generateTemplateDesignSpec(selectedTemplateId, modelConfig, text);
+                    setPreview(nextPreview);
+                    setDirectConversation((prev) => [
+                      ...prev,
+                      { role: "assistant", content: t("templates.designSpec.generated"), created_at: Date.now() / 1000, meta: { mode: "direct" } },
+                    ]);
                   } else {
                     await assist(text);
                   }
@@ -1153,9 +1189,12 @@ export function TemplatesPage() {
                 annotationCount={activeAnnotations.length}
                 modelLabel={
                   collabMode === "agent"
-                    ? agentConfig.model || agentConfig.custom_model_option || "Claude Code"
+                    ? "Claude Code"
                     : modelConfig?.model
                 }
+                importStatus={status}
+                review={review}
+                draftState={draft}
                 agentCancelPending={agentCancelPending}
               />
             </div>
@@ -1177,7 +1216,7 @@ interface UploadCardProps {
   onModeChange: (mode: CollabMode) => void;
   modelConfigured: boolean;
   agentConfigured: boolean;
-  error: string | null;
+  checkingAgentRuntime: boolean;
   compact?: boolean;
 }
 
@@ -1188,7 +1227,7 @@ function UploadCard({
   onModeChange,
   modelConfigured,
   agentConfigured,
-  error,
+  checkingAgentRuntime,
   compact,
 }: UploadCardProps) {
   const { t } = useLocale();
@@ -1220,6 +1259,38 @@ function UploadCard({
   return (
     <div className="flex flex-col gap-2">
       <div
+        className="ti-upload-mode-switch"
+        role="radiogroup"
+        aria-label={t("templates.upload.mode.label")}
+      >
+        {(["direct", "classic", "agent"] as const).map((item) => {
+          const active = mode === item;
+          const label = item === "agent" ? "Agent" : item === "direct" ? t("templates.upload.mode.direct") : "LLM";
+          const hint = item === "agent"
+            ? t("templates.upload.mode.agentHint")
+            : item === "direct"
+              ? t("templates.upload.mode.directHint")
+              : t("templates.upload.mode.llmHint");
+          return (
+            <HoverTooltip key={item} content={hint} className="ti-upload-mode-tooltip-trigger">
+              <button
+                type="button"
+                disabled={uploading}
+                onClick={() => onModeChange(item)}
+                className="ti-focusable ti-upload-mode-button"
+                data-active={active}
+                aria-checked={active}
+                aria-label={label}
+                role="radio"
+              >
+                {item === "agent" ? <Bot size={12} /> : item === "direct" ? <FileCheck2 size={12} /> : <MessageSquareText size={12} />}
+                <span className="ti-upload-mode-label">{label}</span>
+              </button>
+            </HoverTooltip>
+          );
+        })}
+      </div>
+      <div
         role="button"
         tabIndex={0}
         aria-busy={uploading}
@@ -1233,52 +1304,14 @@ function UploadCard({
         onDragOver={onDragOver}
         onDragLeave={onDragLeave}
         onDrop={onDrop}
-        className={`ti-focusable group flex cursor-pointer flex-col items-center justify-center gap-2 rounded-[var(--ti-radius-lg,14px)] border-2 border-dashed text-center transition ${compact ? "p-4" : "p-7"}`}
-        style={{
-          borderColor: dragging ? "var(--ti-accent)" : "var(--ti-line)",
-          background: dragging
-            ? "color-mix(in srgb, var(--ti-accent) 10%, transparent)"
-            : "var(--ti-surface-inset)",
-          color: "var(--ti-text)",
-        }}
+        className={`ti-upload-card ti-focusable group ${dragging ? "ti-upload-card-dragging" : ""} ${compact ? "ti-upload-card-compact" : ""}`}
       >
-        <div
-          className="ti-upload-mode-switch"
-          onClick={(event) => event.stopPropagation()}
-          role="radiogroup"
-          aria-label="Template import mode"
-        >
-          {(["classic", "agent"] as const).map((item) => {
-            const active = mode === item;
-            return (
-              <button
-                key={item}
-                type="button"
-                disabled={uploading}
-                onClick={() => onModeChange(item)}
-                className="ti-focusable ti-upload-mode-button"
-                data-active={active}
-                aria-checked={active}
-                role="radio"
-              >
-                {item === "agent" ? <Bot size={12} /> : <MessageSquareText size={12} />}
-                <span>{item === "agent" ? "Agent" : "LLM"}</span>
-              </button>
-            );
-          })}
-        </div>
-        <span
-          className="flex h-10 w-10 items-center justify-center rounded-full"
-          style={{
-            background: "color-mix(in srgb, var(--ti-accent) 14%, transparent)",
-            color: "var(--ti-accent)",
-          }}
-        >
-          {uploading ? <Loader2 size={18} className="animate-spin" /> : <Upload size={18} />}
+        <span className="ti-upload-icon">
+          {uploading ? <Loader2 size={40} className="animate-spin" /> : <UploadCloud size={40} strokeWidth={1.5} />}
         </span>
         <strong className="text-sm">{t("templates.upload.title")}</strong>
         <span className="text-xs" style={{ color: "var(--ti-muted)" }}>
-          {t("templates.upload.hint")}
+          {checkingAgentRuntime ? t("templates.upload.checkingClaude") : t("templates.upload.hint")}
         </span>
         <input
           ref={inputRef}
@@ -1304,22 +1337,11 @@ function UploadCard({
         >
           <span>
             {mode === "agent"
-              ? "Agent mode needs Claude Code config or a custom endpoint."
+              ? t("template.agentClaudeCodeRequired")
+              : mode === "direct"
+                ? ""
               : t("template.modelRequired")}
           </span>
-        </div>
-      ) : null}
-      {error ? (
-        <div
-          role="alert"
-          className="rounded-[var(--ti-radius-sm,6px)] border px-2 py-1.5 text-xs"
-          style={{
-            borderColor: "color-mix(in srgb, var(--ti-danger) 50%, var(--ti-line))",
-            background: "color-mix(in srgb, var(--ti-danger) 10%, transparent)",
-            color: "var(--ti-danger)",
-          }}
-        >
-          {error}
         </div>
       ) : null}
     </div>
@@ -1411,24 +1433,9 @@ function LibraryRow({
         <strong className="block truncate text-sm">
           {template.label || template.template_id}
         </strong>
-        <div className="mt-0.5 flex items-center gap-1">
-          <span
-            className="rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase"
-            style={{
-              background: isUser
-                ? "color-mix(in srgb, var(--ti-success) 14%, transparent)"
-                : "color-mix(in srgb, var(--ti-muted) 12%, transparent)",
-              color: isUser ? "var(--ti-success)" : "var(--ti-muted)",
-            }}
-          >
-            {isUser ? t("templates.badge.user") : t("templates.badge.builtin")}
-          </span>
-          {template.slide_count ? (
-            <span className="text-[10px]" style={{ color: "var(--ti-muted)" }}>
-              {template.slide_count} {t("template.slideCount")}
-            </span>
-          ) : null}
-        </div>
+        <span className="templates-library-source">
+          {isUser ? t("templates.badge.user") : t("templates.badge.builtin")}
+        </span>
       </div>
       {template.editable ? (
         <div className="flex items-center gap-0.5 opacity-0 transition group-hover:opacity-100">
@@ -1566,7 +1573,7 @@ function SlideThumb({
 
 function EmptySlideThumb() {
   return (
-    <div className="rail-slide rail-slide-empty" aria-hidden="true">
+    <div className="rail-slide rail-slide-empty rail-slide-active" aria-hidden="true">
       <span>1</span>
       <div className="rail-empty-frame" />
     </div>

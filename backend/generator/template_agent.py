@@ -36,6 +36,36 @@ _AGENT_MAX_BUFFER_SIZE = 16 * 1024 * 1024
 _AGENT_RECOVERY_ATTEMPTS = 2
 
 
+def claude_code_environment_status() -> dict[str, Any]:
+    """Return whether the backend can start the Claude Code-backed agent."""
+    cli_path = shutil.which("claude")
+    sdk_available = True
+    sdk_error: str | None = None
+    try:
+        import claude_agent_sdk  # noqa: F401
+    except Exception as exc:  # noqa: BLE001 - report optional dependency state
+        sdk_available = False
+        sdk_error = str(exc) or exc.__class__.__name__
+
+    available = bool(cli_path) and sdk_available
+    if available:
+        message = "Claude Code is installed and the Agent SDK is available."
+    elif not cli_path and not sdk_available:
+        message = "Claude Code CLI and claude-agent-sdk are not available in the backend environment."
+    elif not cli_path:
+        message = "Claude Code CLI is not installed or not on PATH."
+    else:
+        message = f"claude-agent-sdk is not available: {sdk_error}"
+
+    return {
+        "available": available,
+        "cli_path": cli_path,
+        "sdk_available": sdk_available,
+        "sdk_error": sdk_error,
+        "message": message,
+    }
+
+
 @dataclass(slots=True)
 class TemplateAgentConfig:
     """Runtime config for one Agent SDK session."""
@@ -453,6 +483,7 @@ class TemplateAgentManager:
             # and should not unlock confirm/templated preview by itself.
             if job.planning:
                 await self._mark_llm_satisfied(job.import_id)
+                await self._resolve_active_annotations(job.import_id)
             job.status = "complete"
             job.message = "Agent task complete."
             job.completed_at = time.time()
@@ -720,6 +751,45 @@ class TemplateAgentManager:
         llm_meta = {**llm_meta, "enabled": True, "status": "complete", "agent": True}
         review["llm"] = llm_meta
         _atomic_write_json(path, review)
+
+    async def _resolve_active_annotations(self, import_id: str) -> None:
+        """Mark current user annotations as handled after a successful Agent run.
+
+        The Agent sees unresolved annotations in ``agent_context.json`` and should
+        update ``review.json`` itself, but in practice it often summarizes them
+        as handled without flipping the ``resolved`` flags. The UI hides only
+        resolved annotations so the next round can start cleanly.
+        """
+        path = _import_dir(import_id) / "review.json"
+        if not path.exists():
+            return
+        try:
+            review = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
+        if not isinstance(review, dict):
+            return
+        resolved_at = time.time()
+        changed = False
+
+        def resolve_list(value: Any) -> None:
+            nonlocal changed
+            if not isinstance(value, list):
+                return
+            for annotation in value:
+                if not isinstance(annotation, dict) or annotation.get("resolved"):
+                    continue
+                annotation["resolved"] = True
+                annotation["resolved_at"] = resolved_at
+                annotation["resolved_by"] = "agent"
+                changed = True
+
+        resolve_list(review.get("annotations"))
+        draft = review.get("draft")
+        if isinstance(draft, dict):
+            resolve_list(draft.get("annotations"))
+        if changed:
+            _atomic_write_json(path, review)
 
 
 def _import_dir(import_id: str) -> Path:
@@ -1005,6 +1075,7 @@ def _write_agent_context(import_dir: Path) -> None:
 
     visual_brief = _build_agent_visual_brief(import_dir, review)
     agent_task = _build_agent_task(import_dir, review, visual_brief)
+    _write_agent_design_spec_reference(import_dir)
 
     context = {
         "schema_version": 2,
@@ -1027,6 +1098,7 @@ def _write_agent_context(import_dir: Path) -> None:
         "visual_brief_file": "agent_visual_brief.json",
         "files": {
             "editable_review": "review.json",
+            "design_spec_reference": "agent_design_spec_reference.md",
             "source_svgs": "work/svg/slide_XX.svg",
             "agent_output_dir": "agent_template/",
         },
@@ -1034,6 +1106,17 @@ def _write_agent_context(import_dir: Path) -> None:
     _atomic_write_json(import_dir / "agent_context.json", context)
     _atomic_write_json(import_dir / "agent_task.json", agent_task)
     _atomic_write_json(import_dir / "agent_visual_brief.json", visual_brief)
+
+
+def _write_agent_design_spec_reference(import_dir: Path) -> None:
+    reference_path = settings.templates_dir / "design_spec_reference.md"
+    try:
+        text = reference_path.read_text(encoding="utf-8")
+    except OSError:
+        text = ""
+    if not text:
+        return
+    (import_dir / "agent_design_spec_reference.md").write_text(text, encoding="utf-8")
 
 
 def _agent_draft_summary(review: dict[str, Any]) -> dict[str, Any]:
@@ -1099,7 +1182,7 @@ def _build_agent_task(
             for page in pages
         ],
         "review_updates": [
-            "draft.design_spec",
+            "draft.design_spec must be a complete Markdown design_spec.md following agent_design_spec_reference.md sections I through XI",
             "draft.assets/assets only when asset roles change",
             "draft.element_actions only when an element is intentionally removed or replaced",
         ],
@@ -1620,9 +1703,10 @@ Execution gate:
 Read order:
 1. Read ``agent_context.json``.
 2. Read ``agent_task.json``. This is the compact source of truth for the five selected pages.
-3. For template SVG edits, read every ``source_svg`` and ``agent_template_svg`` listed in
+3. Read ``agent_design_spec_reference.md`` before writing or revising any design spec.
+4. For template SVG edits, read every ``source_svg`` and ``agent_template_svg`` listed in
    ``agent_task.json.required_reads``.
-4. Read ``agent_visual_brief.json`` only when you need extra visual geometry details.
+5. Read ``agent_visual_brief.json`` only when you need extra visual geometry details.
 
 Editing contract:
 - The backend has seeded ``agent_template/*.svg`` from the selected source slides.
@@ -1639,6 +1723,10 @@ Editing contract:
   y coordinates may be flipped by transforms.
 - Update ``review.json`` only for high-level decisions: design_spec, asset roles,
   element_actions, and resolved annotations.
+- Always create or update a complete design spec. Put the same Markdown in
+  ``review.json`` at ``draft.design_spec`` and in ``agent_template/design_spec.md``.
+  It must follow ``agent_design_spec_reference.md`` sections I through XI, adapted
+  to this imported reusable template pack.
 - Do not confirm/register the template or edit global template directories.
 
 Output discipline:
@@ -1678,16 +1766,17 @@ Workspace:
 Current review snapshot:
 {snapshot}
 
-Continue the task by reading the current ``agent_context.json`` first and
-``agent_task.json`` second. If the remaining work includes creating or revising
+Continue the task by reading the current ``agent_context.json`` first,
+``agent_task.json`` second, and ``agent_design_spec_reference.md`` before any
+design-spec edits. If the remaining work includes creating or revising
 ``agent_template/`` SVGs, read every ``source_svg`` and ``agent_template_svg`` in
 ``agent_task.json.required_reads`` before editing. Avoid printing large JSON, SVG,
 command output, or file contents in chat;
 summarize instead. If you use Bash, redirect potentially large output to a temporary
 file and inspect targeted snippets only.
 
-Finish by editing ``review.json`` as needed, then summarize what changed and what the
-user should inspect in the preview pane.
+Finish by editing ``review.json`` and ``agent_template/design_spec.md`` as needed,
+then summarize what changed and what the user should inspect in the preview pane.
 """
 
 

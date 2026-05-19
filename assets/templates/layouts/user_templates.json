@@ -30,6 +30,38 @@
           "minorEastAsia": "微软雅黑 Light"
         }
       }
+    },
+    "user_秦若轩开题ppt2_edc896": {
+      "label": "秦若轩开题Ppt2",
+      "summary": "Imported from 秦若轩开题PPT2.pptx",
+      "tone": "user-imported",
+      "themeMode": "custom",
+      "keywords": [
+        "user-imported"
+      ],
+      "slideCount": 5,
+      "theme": {
+        "colors": {
+          "dk1": "#000000",
+          "lt1": "#FFFFFF",
+          "dk2": "#44546A",
+          "lt2": "#E7E6E6",
+          "accent1": "#ADB9CA",
+          "accent2": "#ABB2D3",
+          "accent3": "#424C80",
+          "accent4": "#595959",
+          "accent5": "#424C80",
+          "accent6": "#595959",
+          "hlink": "#424C80",
+          "folHlink": "#595959"
+        },
+        "fonts": {
+          "majorLatin": "Times New Roman ",
+          "minorLatin": "Times New Roman ",
+          "minorEastAsia": "微软雅黑 Light"
+        }
+      },
+      "createdAt": 1779174214.2593248
     }
   }
 }

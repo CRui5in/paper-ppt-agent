@@ -7,6 +7,7 @@ import hashlib
 import json
 import logging
 import mimetypes
+import re
 import time
 import uuid
 from collections import OrderedDict
@@ -20,6 +21,8 @@ from pydantic import BaseModel, Field
 
 from backend.config import settings
 from backend.api.schemas import ModelConfig
+from backend.llm.registry import create_provider
+from backend.llm.types import LLMMessage
 
 # DEPRECATED: replaced by template_import.v2 facade when settings.template_import_v2=True.
 # v1 helpers are still imported for the legacy code path; the v2 facade
@@ -28,10 +31,12 @@ from backend.api.schemas import ModelConfig
 from backend.generator.template_importer import (
     ImportResult,
     assist_import_review,
+    confirm_direct_import_template,
     confirm_import_template,
     get_import_review,
     get_import_result,
     get_import_task,
+    generate_direct_import_design_spec,
     initialize_import_task,
     import_pptx_template,
     inline_svg_asset_refs,
@@ -47,6 +52,7 @@ from backend.generator import template_import as template_import_v2
 from backend.generator.template_manager import load_template
 from backend.generator.template_agent import (
     TemplateAgentConfig,
+    claude_code_environment_status,
     template_agent_manager,
 )
 from backend.runtime import aensure_dir, aoffload, awrite_bytes
@@ -57,17 +63,45 @@ def _v2_enabled() -> bool:
     return bool(getattr(settings, "template_import_v2", False))
 
 
-def _collaboration_mode_for_import(import_id: str) -> Literal["classic", "agent"]:
+def _collaboration_mode_for_import(import_id: str) -> Literal["classic", "agent", "direct"]:
     if _v2_enabled():
         state = template_import_v2.get_status(import_id) or {}
     else:
         state = get_import_task(import_id) or {}
-    return "agent" if state.get("collaboration_mode") == "agent" else "classic"
+    mode = state.get("collaboration_mode")
+    return mode if mode in {"classic", "agent", "direct"} else "classic"
 
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/templates")
+
+_SVG_BLOCKLIST = ("script", "foreignObject", "iframe", "object", "embed", "link", "meta", "base")
+_SVG_BLOCK_RE = re.compile(
+    rf"<\s*({'|'.join(_SVG_BLOCKLIST)})\b[^>]*>.*?<\s*/\s*\1\s*>",
+    re.IGNORECASE | re.DOTALL,
+)
+_SVG_SELF_CLOSING_BLOCK_RE = re.compile(
+    rf"<\s*({'|'.join(_SVG_BLOCKLIST)})\b[^>]*/\s*>",
+    re.IGNORECASE | re.DOTALL,
+)
+_SVG_EVENT_ATTR_RE = re.compile(
+    r"""\s+on[a-z0-9:_-]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)""",
+    re.IGNORECASE,
+)
+_SVG_JS_HREF_RE = re.compile(
+    r"""\s+(href|xlink:href)\s*=\s*(?:"\s*javascript:[^"]*"|'\s*javascript:[^']*'|javascript:[^\s>]+)""",
+    re.IGNORECASE,
+)
+
+
+def _sanitize_template_svg(svg: str) -> str:
+    """Defang active SVG content before persisting user/agent template edits."""
+    cleaned = _SVG_BLOCK_RE.sub("", svg)
+    cleaned = _SVG_SELF_CLOSING_BLOCK_RE.sub("", cleaned)
+    cleaned = _SVG_EVENT_ATTR_RE.sub("", cleaned)
+    cleaned = _SVG_JS_HREF_RE.sub(' href="#"', cleaned)
+    return cleaned
 
 
 # ── Response models ───────────────────────────────────────────────────────────
@@ -77,7 +111,15 @@ class ImportStartResponse(BaseModel):
     import_id: str
     status: str = "processing"
     template_id: str | None = None
-    collaboration_mode: Literal["classic", "agent"] = "classic"
+    collaboration_mode: Literal["classic", "agent", "direct"] = "classic"
+
+
+class ClaudeCodeStatusResponse(BaseModel):
+    available: bool
+    cli_path: str | None = None
+    sdk_available: bool = False
+    sdk_error: str | None = None
+    message: str = ""
 
 
 class ImportStatusResponse(BaseModel):
@@ -94,7 +136,7 @@ class ImportStatusResponse(BaseModel):
     export_mode: str = ""
     theme_colors: list[str] = []
     error: str | None = None
-    collaboration_mode: Literal["classic", "agent"] = "classic"
+    collaboration_mode: Literal["classic", "agent", "direct"] = "classic"
 
 
 class TemplatePreviewResponse(BaseModel):
@@ -170,6 +212,11 @@ class TemplateImportFeedbackRequest(BaseModel):
     llm_config: ModelConfig = Field(alias="model_config")
     feedback: str
     draft: TemplateReviewDraftRequest | None = None
+
+
+class TemplateDesignSpecRequest(BaseModel):
+    llm_config: ModelConfig = Field(alias="model_config")
+    feedback: str | None = None
 
 
 class TemplateAgentConfigRequest(BaseModel):
@@ -450,11 +497,17 @@ async def _save_review_draft(import_id: str, payload: dict[str, Any]) -> dict[st
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 
+@router.get("/agent/claude-code/status", response_model=ClaudeCodeStatusResponse)
+async def get_template_agent_claude_code_status() -> ClaudeCodeStatusResponse:
+    """Check whether the backend can run Claude Code Agent mode."""
+    return ClaudeCodeStatusResponse(**claude_code_environment_status())
+
+
 @router.post("/upload", response_model=ImportStartResponse)
 async def upload_template_pptx(
     file: UploadFile,
     model_config_json: str | None = Form(None, alias="model_config"),
-    collaboration_mode: Literal["classic", "agent"] = Form("classic"),
+    collaboration_mode: Literal["classic", "agent", "direct"] = Form("classic"),
 ) -> ImportStartResponse:
     """Upload a PPTX file and start async template import."""
     if not file.filename or not file.filename.lower().endswith(".pptx"):
@@ -477,6 +530,11 @@ async def upload_template_pptx(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="LLM mode requires a valid model configuration.",
         )
+    if collaboration_mode == "direct" and llm_config is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Direct mode requires a valid model configuration to generate design_spec.md.",
+        )
 
     # Save uploaded file
     content = await file.read()
@@ -491,7 +549,7 @@ async def upload_template_pptx(
     await aensure_dir(upload_dir)
     pptx_path = upload_dir / file.filename
     await awrite_bytes(pptx_path, content)
-    if _v2_enabled():
+    if _v2_enabled() and collaboration_mode != "direct":
         await aoffload(template_import_v2.initialize_import, import_id, pptx_path)
         await aoffload(template_import_v2.set_import_collaboration_mode, import_id, collaboration_mode)
     else:
@@ -502,7 +560,7 @@ async def upload_template_pptx(
     # await it — the caller polls /import/{id} for completion.
     async def _run_import() -> None:
         try:
-            if _v2_enabled():
+            if _v2_enabled() and collaboration_mode != "direct":
                 result = await template_import_v2.run_import(
                     import_id,
                     pptx_path,
@@ -512,12 +570,18 @@ async def upload_template_pptx(
                 result = await aoffload(import_pptx_template, pptx_path, task_id=import_id)
                 if result.status == "processing" and collaboration_mode == "classic" and llm_config:
                     await assist_import_review(import_id, llm_config.model_dump(), required=True)
+                    _preview_cache_drop(import_id)
                 elif result.status == "processing" and collaboration_mode == "agent":
                     await aoffload(
                         mark_import_ready_for_review,
                         import_id,
                         message="Agent mode workspace is ready.",
                     )
+                elif result.status == "processing" and collaboration_mode == "direct":
+                    if llm_config is None:
+                        raise ValueError("Direct mode requires a valid model configuration to generate design_spec.md.")
+                    await generate_direct_import_design_spec(import_id, llm_config.model_dump())
+                    result = await aoffload(confirm_direct_import_template, import_id)
                 final_result = get_import_result(import_id) or result
                 _import_results[import_id] = final_result
                 return
@@ -561,10 +625,8 @@ async def get_import_status(import_id: str) -> ImportStatusResponse:
                 error=state.get("error"),
                 collaboration_mode=state.get("collaboration_mode") or "classic",
             )
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Import task '{import_id}' not found.",
-        )
+        # Direct mode intentionally uses the legacy raw-SVG importer even when
+        # the v2 flag is enabled; fall through to the legacy task map.
 
     # Check in-memory result first
     result = _import_results.get(import_id)
@@ -1015,6 +1077,17 @@ async def start_template_import_agent(
     feedback = payload.feedback.strip()
     if not feedback:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Feedback is required.")
+    if payload.config.mode != "claude_code":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Template Agent mode currently supports Claude Code only.",
+        )
+    agent_runtime = claude_code_environment_status()
+    if not agent_runtime.get("available"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=agent_runtime.get("message") or "Claude Code is not available.",
+        )
 
     # Make sure the review exists and persist the current UI draft first so
     # the agent sees exactly the same state the user is looking at.
@@ -1190,11 +1263,9 @@ async def update_template_import_agent_template_svg(
     payload: TemplateAgentTemplateSvgRequest,
 ) -> TemplatePreviewResponse:
     """Persist a manually edited Agent-mode template SVG and return fresh preview."""
-    svg = (payload.svg or "").strip()
+    svg = _sanitize_template_svg((payload.svg or "").strip())
     if not svg.startswith("<svg") or "</svg>" not in svg:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="A valid SVG document is required.")
-    if "<script" in svg.lower():
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Script tags are not allowed in template SVG.")
     review = await aoffload(get_import_review, import_id)
     if not review:
         raise HTTPException(
@@ -1343,6 +1414,97 @@ async def get_template_preview(template_id: str) -> TemplatePreviewResponse:
         design_spec=tmpl.design_spec[:40000] if tmpl.design_spec else "",
         theme_colors=theme_colors,
     )
+
+
+@router.post("/{template_id}/design-spec", response_model=TemplatePreviewResponse)
+async def generate_template_design_spec(
+    template_id: str,
+    payload: TemplateDesignSpecRequest,
+) -> TemplatePreviewResponse:
+    """Generate/update design_spec.md for a user template using workbench LLM config."""
+    if not template_id.startswith("user_"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only user-imported templates can update design_spec.md.",
+        )
+    template_dir = (settings.templates_dir / "layouts" / template_id).resolve()
+    layouts_root = (settings.templates_dir / "layouts").resolve()
+    try:
+        template_dir.relative_to(layouts_root)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid template id.") from None
+    if not template_dir.is_dir():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Template '{template_id}' not found.")
+
+    spec = await _generate_design_spec_for_template(template_id, template_dir, payload)
+    (template_dir / "design_spec.md").write_text(spec, encoding="utf-8")
+    return await get_template_preview(template_id)
+
+
+async def _generate_design_spec_for_template(
+    template_id: str,
+    template_dir: Path,
+    payload: TemplateDesignSpecRequest,
+) -> str:
+    cfg = payload.llm_config.model_dump()
+    provider = create_provider(
+        cfg["provider"],
+        cfg["api_key"],
+        base_url=cfg.get("base_url"),
+        deepseek_settings=cfg.get("deepseek_settings"),
+        openai_settings=cfg.get("openai_settings"),
+    )
+
+    def read_limited(path: Path, limit: int = 18000) -> str:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            return ""
+        text = re.sub(r"data:image/[^\"')\s]+", "data:image/*;base64,<omitted>", text)
+        return text[:limit]
+
+    page_files = {
+        "cover": "01_cover.svg",
+        "toc": "02_toc.svg",
+        "chapter": "02_chapter.svg",
+        "content": "03_content.svg",
+        "ending": "04_ending.svg",
+    }
+    svgs = {page: read_limited(template_dir / name) for page, name in page_files.items()}
+    current_spec = read_limited(template_dir / "design_spec.md", 12000)
+    reference_spec = read_limited(settings.templates_dir / "design_spec_reference.md", 36000)
+
+    system = (
+        "You are a senior presentation design-system writer. Generate a complete "
+        "design_spec.md for a PowerPoint SVG template pack. Follow the provided "
+        "reference structure exactly, including sections I through XI. Do not modify SVGs. "
+        "Output only Markdown; do not use code fences."
+    )
+    user = (
+        f"Template id: {template_id}\n"
+        f"User request: {(payload.feedback or '').strip() or 'Generate a complete design_spec.md.'}\n\n"
+        "Reference design_spec.md structure:\n"
+        f"{reference_spec or '(reference unavailable)'}\n\n"
+        "Current design_spec.md, if any:\n"
+        f"{current_spec or '(empty)'}\n\n"
+        "Template SVG excerpts by page type:\n"
+        f"{json.dumps(svgs, ensure_ascii=False)}\n\n"
+        "Write a Markdown design spec covering the reusable imported template: project/template information, "
+        "canvas, colors, typography, page-type layout rules, placeholder/content guidance, assets, speaker notes, "
+        "and technical constraints."
+    )
+    response = await provider.chat(
+        [LLMMessage.system(system), LLMMessage.user(user)],
+        cfg["model"],
+        temperature=0.2,
+        max_tokens=8192,
+    )
+    text = (response.content or "").strip()
+    text = re.sub(r"^```(?:markdown)?\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s*```$", "", text)
+    if not text:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="LLM returned an empty design spec.")
+    return text
 
 
 @router.put("/{template_id}", response_model=UserTemplateItem)

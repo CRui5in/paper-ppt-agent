@@ -53,6 +53,8 @@ export interface UseTemplateImportOptions {
   debounceMs?: number;
   /** Required by the assist/feedback endpoints. */
   modelConfig?: ModelConfig;
+  /** UI copy provider for local activity/error messages. */
+  t?: (key: string) => string;
   /** Called when a restored import id no longer exists on the backend. */
   onMissingImport?: (importId: string) => void;
 }
@@ -67,7 +69,7 @@ export interface UseTemplateImportReturn {
   /** Upload a .pptx and start an import. Returns the new import_id. */
   upload(
     file: File,
-    collaborationMode: "classic" | "agent",
+    collaborationMode: "classic" | "agent" | "direct",
     modelConfig?: ModelConfig,
   ): Promise<string>;
   /** Force-refresh status from the backend. */
@@ -177,6 +179,7 @@ export function useTemplateImport(
     pollIntervalMs = DEFAULT_POLL_MS,
     debounceMs = DEFAULT_DEBOUNCE_MS,
     modelConfig,
+    t,
     onMissingImport,
   } = options;
 
@@ -201,6 +204,8 @@ export function useTemplateImport(
   draftRef.current = draft;
   const modelConfigRef = useRef<ModelConfig | undefined>(modelConfig);
   modelConfigRef.current = modelConfig;
+  const tRef = useRef<typeof t>(t);
+  tRef.current = t;
   const statusRef = useRef<ImportStatus | null>(status);
   statusRef.current = status;
   const agentPreviewEnabledRef = useRef(false);
@@ -213,6 +218,11 @@ export function useTemplateImport(
 
   const waitForAnnotationSync = useCallback(async () => {
     await annotationSyncRef.current.catch(() => undefined);
+  }, []);
+
+  const msg = useCallback((key: string, fallback: string) => {
+    const translated = tRef.current?.(key);
+    return translated && translated !== key ? translated : fallback;
   }, []);
 
   const closeAgentSocket = useCallback(() => {
@@ -248,11 +258,11 @@ export function useTemplateImport(
   // ── upload ────────────────────────────────────────────────────────────────
   const upload = useCallback(async (
     file: File,
-    collaborationMode: "classic" | "agent",
+    collaborationMode: "classic" | "agent" | "direct",
     mc?: ModelConfig,
   ): Promise<string> => {
     if (!file.name.toLowerCase().endsWith(".pptx")) {
-      throw new Error("Only .pptx files are supported.");
+      throw new Error(msg("template.invalidFileType", "Only .pptx files are supported."));
     }
     setLoading(true);
     setError(null);
@@ -380,13 +390,21 @@ export function useTemplateImport(
     };
   }, [importId, pollIntervalMs, markImportMissing]);
 
-  // ── one-time review fetch when review_required ────────────────────────────
+  // ── review / preview fetches ──────────────────────────────────────────────
   useEffect(() => {
     if (!importId) return;
-    if (status?.status !== "review_required") return;
-    if (reviewLoadedForRef.current === importId) return;
+    const stage = status?.stage ?? "";
+    const hasLoadedCurrentImport = reviewLoadedForRef.current === importId;
+    const shouldLoadBaseline =
+      status?.status === "processing" &&
+      ["baseline_preview", "llm_review"].includes(stage) &&
+      !hasLoadedCurrentImport;
+    const shouldLoadFinalReview =
+      status?.status === "review_required" &&
+      (!hasLoadedCurrentImport || review?.llm?.status !== "complete");
+    if (!shouldLoadBaseline && !shouldLoadFinalReview) return;
     void refreshReview();
-  }, [importId, status, refreshReview]);
+  }, [importId, status?.status, status?.stage, review?.llm?.status, refreshReview]);
 
   // ── debounced draft sync ──────────────────────────────────────────────────
   const sendDraft = useCallback(async (next: TemplateReviewDraft) => {
@@ -483,7 +501,7 @@ export function useTemplateImport(
       if (!id) return;
       const mc = modelConfigRef.current;
       if (!mc) {
-        setError("LLM assist requires a model_config; pass it via useTemplateImport options.");
+        setError(msg("template.error.modelConfigRequired", "LLM assist requires a model configuration."));
         return;
       }
       setLoading(true);
@@ -493,25 +511,25 @@ export function useTemplateImport(
         if (feedback?.trim()) {
           pushLlmEvent(feedback.trim(), "complete", "user");
         }
-        pushLlmEvent("同步当前草稿", "running", "draft");
+        pushLlmEvent(msg("template.activity.syncDraft", "Syncing current draft"), "running", "draft");
         await flushDraft();
-        pushLlmEvent("调用 LLM 优化模板", "running", "llm");
+        pushLlmEvent(msg("template.activity.callLlm", "Calling LLM to optimize template"), "running", "llm");
         const next = feedback
           ? await optimizeTemplateImportWithFeedback(id, mc, feedback, draftRef.current)
           : await assistTemplateImport(id, mc);
-        pushLlmEvent("LLM 已返回修改计划", "complete", "llm");
+        pushLlmEvent(msg("template.activity.llmReturned", "LLM returned an action plan"), "complete", "llm");
         const nextDraft = deriveDraft(next);
         setReview(next);
         setDraft(nextDraft);
         draftRef.current = nextDraft;
         reviewLoadedForRef.current = id;
         try {
-          pushLlmEvent("刷新模板预览", "running", "preview");
+          pushLlmEvent(msg("template.activity.refreshPreview", "Refreshing template preview"), "running", "preview");
           const previewSnapshot = await previewTemplateImportDraft(id, nextDraft);
           setPreview(previewSnapshot);
-          pushLlmEvent("预览已更新", "complete", "preview");
+          pushLlmEvent(msg("template.activity.previewUpdated", "Preview updated"), "complete", "preview");
         } catch (previewError) {
-          pushLlmEvent("预览刷新失败", "error", "preview");
+          pushLlmEvent(msg("template.activity.previewFailed", "Preview refresh failed"), "error", "preview");
           setError(describeError(previewError));
         }
       } catch (e) {
@@ -521,12 +539,12 @@ export function useTemplateImport(
         setLoading(false);
       }
     },
-    [flushDraft, pushLlmEvent],
+    [flushDraft, msg, pushLlmEvent],
   );
 
   const confirm = useCallback(async (): Promise<ImportResult> => {
     const id = idRef.current;
-    if (!id) throw new Error("No import_id to confirm.");
+    if (!id) throw new Error(msg("template.error.noImportToConfirm", "No template import is active."));
     await flushDraft();
     setLoading(true);
     try {
@@ -539,7 +557,7 @@ export function useTemplateImport(
     } finally {
       setLoading(false);
     }
-  }, [flushDraft]);
+  }, [flushDraft, msg]);
 
   const retryStep = useCallback(
     async (stepId: string) => {
@@ -653,12 +671,12 @@ export function useTemplateImport(
               }
               if (event.type === "error") {
                 socket?.close();
-                reject(new Error(event.message || event.error || "Agent task failed"));
+                reject(new Error(event.message || event.error || msg("template.error.agentTaskFailed", "Agent task failed.")));
               }
             },
             undefined,
             undefined,
-            () => reject(new Error("Agent stream disconnected.")),
+            () => reject(new Error(msg("template.error.agentStreamDisconnected", "Agent stream disconnected."))),
           );
           agentSocketRef.current = socket;
         });
@@ -672,7 +690,7 @@ export function useTemplateImport(
         agentJobIdRef.current = null;
       }
     },
-    [flushDraft, refreshReview],
+    [flushDraft, msg, refreshReview],
   );
 
   const cancelAgent = useCallback(async () => {

@@ -113,7 +113,7 @@ export interface ImportStartResponse {
   import_id: string;
   status: string;
   template_id?: string | null;
-  collaboration_mode?: "classic" | "agent";
+  collaboration_mode?: "classic" | "agent" | "direct";
 }
 
 export interface ImportStatus {
@@ -130,7 +130,7 @@ export interface ImportStatus {
   export_mode?: string;
   theme_colors?: string[];
   error?: string | null;
-  collaboration_mode?: "classic" | "agent";
+  collaboration_mode?: "classic" | "agent" | "direct";
 }
 
 export interface TemplatePreview {
@@ -357,6 +357,14 @@ export interface TemplateAgentEvent {
   seq?: number;
   ts?: number;
   last_seq?: number;
+}
+
+export interface TemplateAgentClaudeCodeStatus {
+  available: boolean;
+  cli_path?: string | null;
+  sdk_available: boolean;
+  sdk_error?: string | null;
+  message: string;
 }
 
 export interface TemplateImportFileItem {
