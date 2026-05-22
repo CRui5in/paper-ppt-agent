@@ -123,9 +123,12 @@ def _get_image_dimensions(href: str, svg_dir: Path) -> tuple[int, int]:
         import base64
         import io
 
-        # Extract base64 data
+        # Extract base64 data. Some imported PPTX templates produce data URIs
+        # with missing padding; normalize so image probing does not abort export.
         _, data = href.split(",", 1)
-        img_bytes = base64.b64decode(data)
+        payload = "".join(data.split())
+        payload += "=" * (-len(payload) % 4)
+        img_bytes = base64.b64decode(payload, validate=False)
         try:
             img = Image.open(io.BytesIO(img_bytes))
             return img.size

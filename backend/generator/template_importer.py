@@ -575,6 +575,34 @@ try {
 }
 """
 
+_POWERSHELL_PNG_EXPORT = r"""
+param(
+    [Parameter(Mandatory = $true)][string]$PptxPath,
+    [Parameter(Mandatory = $true)][string]$OutputDir,
+    [Parameter(Mandatory = $true)][int]$Width,
+    [Parameter(Mandatory = $true)][int]$Height
+)
+$ErrorActionPreference = 'Stop'
+New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
+$powerpoint = $null
+$presentation = $null
+try {
+    $powerpoint = New-Object -ComObject PowerPoint.Application
+    $powerpoint.Visible = -1
+    $presentation = $powerpoint.Presentations.Open($PptxPath, $false, $false, $false)
+    foreach ($slide in $presentation.Slides) {
+        $fileName = ('slide_{0:D2}.png' -f $slide.SlideIndex)
+        $target = Join-Path $OutputDir $fileName
+        $slide.Export($target, 'PNG', $Width, $Height)
+    }
+} finally {
+    if ($presentation -ne $null) { $presentation.Close() }
+    if ($powerpoint -ne $null) { $powerpoint.Quit() }
+    [System.GC]::Collect()
+    [System.GC]::WaitForPendingFinalizers()
+}
+"""
+
 
 def _run_powershell(script: str, *args: str) -> subprocess.CompletedProcess[bytes]:
     with tempfile.NamedTemporaryFile("w", suffix=".ps1", delete=False, encoding="utf-8") as f:
@@ -658,6 +686,26 @@ def _export_slides_to_svg(pptx_path: Path, output_dir: Path) -> tuple[list[Path]
         logger.info("PyMuPDF export also failed (%s)", exc)
 
     return [], "metadata-only"
+
+
+def _export_slide_previews_to_png(pptx_path: Path, output_dir: Path, *, width: int = 1280, height: int = 720) -> list[Path]:
+    pptx_path = pptx_path.resolve()
+    output_dir = output_dir.resolve()
+    completed = _run_powershell(
+        _POWERSHELL_PNG_EXPORT,
+        "-PptxPath",
+        str(pptx_path),
+        "-OutputDir",
+        str(output_dir),
+        "-Width",
+        str(width),
+        "-Height",
+        str(height),
+    )
+    if completed.returncode != 0:
+        stderr = (completed.stderr or b"").decode("utf-8", errors="replace").strip()
+        raise RuntimeError(f"PowerPoint PNG preview export failed: {stderr}")
+    return sorted(output_dir.glob("slide_*.png"))
 
 
 # ── Review draft generation ─────────────────────────────────────────────────
@@ -779,7 +827,10 @@ def inline_svg_asset_refs(svg_path: Path, *, max_bytes: int = 240_000) -> str:
     except OSError:
         return ""
 
+    remaining_inline_budget = max(0, int(max_bytes) - len(text.encode("utf-8")))
+
     def repl(match: re.Match[str]) -> str:
+        nonlocal remaining_inline_budget
         attr = match.group("attr")
         quote = match.group("quote")
         href = match.group("href")
@@ -788,12 +839,25 @@ def inline_svg_asset_refs(svg_path: Path, *, max_bytes: int = 240_000) -> str:
         asset_path = _resolve_preview_asset(svg_path, href)
         if asset_path is None or not asset_path.exists():
             return match.group(0)
+        try:
+            asset_size = asset_path.stat().st_size
+        except OSError:
+            asset_size = 0
+        # Never truncate the SVG document. If inlining an asset would push the
+        # preview response over budget, keep the original local href instead.
+        if asset_size * 2 > remaining_inline_budget:
+            return match.group(0)
         data_uri = _data_uri_for_file(asset_path)
+        if not data_uri:
+            return match.group(0)
+        encoded_size = len(data_uri.encode("utf-8"))
+        if encoded_size > remaining_inline_budget:
+            return match.group(0)
+        remaining_inline_budget -= encoded_size
         return f"{attr}={quote}{data_uri or href}{quote}"
 
     pattern = re.compile(r'(?P<attr>(?:xlink:)?href)=(?P<quote>["\'])(?P<href>[^"\']+)(?P=quote)')
-    inlined = pattern.sub(repl, text)
-    return inlined[:max_bytes]
+    return pattern.sub(repl, text)
 
 
 def _asset_path_from_href(svg_path: Path, href: str) -> Path | None:
@@ -3007,6 +3071,16 @@ def import_pptx_template(pptx_path: Path, *, task_id: str | None = None) -> Impo
             raise RuntimeError(
                 "Could not render PPTX slides to SVG. Please run on a Windows host with PowerPoint available."
             )
+        try:
+            _export_slide_previews_to_png(pptx_path, work_dir / "preview_png")
+        except Exception as exc:
+            logger.info("PowerPoint PNG preview export failed (%s); falling back to SVG previews", exc)
+        try:
+            from backend.generator.pptx_scene import ensure_scene_cache, scene_paths
+
+            ensure_scene_cache(pptx_path, scene_paths(_import_dir(import_id) / "pptx_scene"))
+        except Exception as exc:
+            logger.info("PowerPoint scene cache generation failed (%s); lazy scene endpoints remain available", exc)
 
         _update_state(
             import_id,

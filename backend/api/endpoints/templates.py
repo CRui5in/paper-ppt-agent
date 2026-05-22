@@ -19,6 +19,7 @@ class TemplateInfoResponse(BaseModel):
     category: str = ""
     keywords: list[str] = []
     source: str = "builtin"
+    import_mode: str = "builtin"
     editable: bool = False
     slide_count: int = 0
     has_cover: bool = False
@@ -51,6 +52,7 @@ async def get_templates():
             category=t.category,
             keywords=t.keywords,
             source=t.source,
+            import_mode=t.import_mode,
             editable=t.editable,
             slide_count=t.slide_count,
             has_cover=t.has_cover,
@@ -78,6 +80,7 @@ async def get_template_detail(template_id: str):
         category=tmpl.info.category,
         keywords=tmpl.info.keywords,
         source=tmpl.info.source,
+        import_mode=tmpl.info.import_mode,
         editable=tmpl.info.editable,
         slide_count=tmpl.info.slide_count,
         content_area=tmpl.content_area,

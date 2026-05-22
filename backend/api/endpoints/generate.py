@@ -169,6 +169,7 @@ async def generate_presentation(request: GenerateRequest) -> GenerateResponse:
         gemini_api_key=request.options.gemini_api_key,
         template_id=request.options.template_id,
         research_config=request.options.research_config,
+        job_id=job.id,
     )
 
     scheduler = get_scheduler()

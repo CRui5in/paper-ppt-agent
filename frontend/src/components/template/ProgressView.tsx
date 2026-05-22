@@ -7,6 +7,7 @@ import type { ImportStatus } from "../../lib/types";
 export interface ProgressViewProps {
   status: ImportStatus;
   onRetry: (stepId: string) => void;
+  mode?: "direct" | "llm";
 }
 
 type StepStatus = "pending" | "active" | "complete" | "error" | "skipped";
@@ -22,6 +23,7 @@ interface StepLike {
 }
 
 const STEP_ORDER = ["uploaded", "analyzing", "rendering", "detecting_assets", "baseline_preview", "llm_review", "review"] as const;
+const DIRECT_STEP_ORDER = ["uploaded", "analyzing", "rendering", "review"] as const;
 
 /**
  * ProgressView (Task 16.3)
@@ -30,7 +32,7 @@ const STEP_ORDER = ["uploaded", "analyzing", "rendering", "detecting_assets", "b
  * surfaces `step.message`; an `error` step surfaces a localized
  * `error_kind` description plus a "Retry this stage" button (Req 1.5/1.6).
  */
-export function ProgressView({ status, onRetry }: ProgressViewProps) {
+export function ProgressView({ status, onRetry, mode = "llm" }: ProgressViewProps) {
   const { t } = useLocale();
   const [now, setNow] = useState(() => Date.now() / 1000);
 
@@ -43,9 +45,9 @@ export function ProgressView({ status, onRetry }: ProgressViewProps) {
   const steps = useMemo<StepLike[]>(() => {
     const provided = (status.steps ?? []) as StepLike[];
     const byId = new Map(provided.map((s) => [s.id, s]));
-    // Ensure all six in canonical order even if backend omits some.
-    return STEP_ORDER.map((id) => byId.get(id) ?? { id, label: t(`template.step.${id}`), status: "pending" });
-  }, [status.steps, t]);
+    const order = mode === "direct" ? DIRECT_STEP_ORDER : STEP_ORDER;
+    return order.map((id) => byId.get(id) ?? { id, label: t(`template.step.${id}`), status: "pending" });
+  }, [mode, status.steps, t]);
 
   const overallProgress = Math.max(0, Math.min(1, status.progress ?? 0));
   const overallPct = Math.round(overallProgress * 100);

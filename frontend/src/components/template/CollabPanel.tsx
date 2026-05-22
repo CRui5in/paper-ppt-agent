@@ -17,6 +17,7 @@ import {
   Send,
   Square,
   User,
+  Wand2,
   X,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
@@ -50,8 +51,8 @@ export interface CollabPanelProps {
   agentEvents?: TemplateAgentEvent[];
   replyLanguage: "zh" | "en";
   loading: boolean;
-  mode: "classic" | "agent" | "direct";
-  onModeChange: (mode: "classic" | "agent" | "direct") => void;
+  mode: "agent" | "direct";
+  onModeChange: (mode: "agent" | "direct") => void;
   modeLocked?: boolean;
   agentConfig: TemplateAgentConfig;
   onAgentConfigChange: (config: TemplateAgentConfig) => void;
@@ -59,6 +60,7 @@ export interface CollabPanelProps {
   agentCancelPending?: boolean;
   onSendFeedback: (text: string) => Promise<void> | void;
   onStopAgent?: () => Promise<void> | void;
+  onStartTemplateization?: () => Promise<void> | void;
   importId?: string | null;
   contextAttachments?: Array<{ id: string; label: string; detail?: string }>;
   modelConfigured: boolean;
@@ -70,6 +72,10 @@ export interface CollabPanelProps {
   importStatus?: ImportStatus | null;
   review?: TemplateReview | null;
   draftState?: TemplateReviewDraft;
+  directDesignSpec?: string;
+  directImportBusy?: boolean;
+  onConfirmDirectImport?: () => Promise<void> | void;
+  onEditDirectImport?: () => void;
 }
 
 /**
@@ -92,6 +98,7 @@ export function CollabPanel({
   agentCancelPending = false,
   onSendFeedback,
   onStopAgent,
+  onStartTemplateization,
   importId,
   contextAttachments = [],
   modelConfigured,
@@ -101,6 +108,10 @@ export function CollabPanel({
   importStatus,
   review,
   draftState,
+  directDesignSpec = "",
+  directImportBusy = false,
+  onConfirmDirectImport,
+  onEditDirectImport,
 }: CollabPanelProps) {
   const { t } = useLocale();
   const [draft, setDraft] = useState("");
@@ -108,6 +119,7 @@ export function CollabPanel({
   const [mentionOpen, setMentionOpen] = useState(false);
   const [pendingUser, setPendingUser] = useState<ChatMessage | null>(null);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const directScrollerRef = useRef<HTMLDivElement | null>(null);
 
   // Latest "usage" event drives the cost / token panel. Backend keeps
   // running totals so we just take the newest payload.
@@ -167,6 +179,15 @@ export function CollabPanel({
       setPendingUser(null);
     }
   }, [loading, agentRunning]);
+
+  useEffect(() => {
+    if (mode !== "direct" || !directDesignSpec) return;
+    const scroller = directScrollerRef.current;
+    if (!scroller) return;
+    requestAnimationFrame(() => {
+      scroller.scrollTo({ top: scroller.scrollHeight, behavior: "smooth" });
+    });
+  }, [directDesignSpec, mode]);
   const timeline = useMemo(() => {
     type MessageItem = {
       type: "message";
@@ -300,6 +321,7 @@ export function CollabPanel({
   }, [timeline.length, chatTimeline.length, loading]);
 
   const send = async () => {
+    if (mode === "direct") return;
     if (canStopAgent) {
       await onStopAgent?.();
       return;
@@ -460,6 +482,20 @@ export function CollabPanel({
     </div>
   );
 
+  const agentGuideActions = mode === "agent" ? (
+    <div className="ti-agent-guide-actions">
+      <button
+        type="button"
+        className="ti-focusable ti-agent-guide-primary"
+        onClick={() => void onStartTemplateization?.()}
+        disabled={loading || !modelConfigured || !onStartTemplateization}
+      >
+        <Wand2 size={13} />
+        <span>{t("template.agentGuide.startTemplateization")}</span>
+      </button>
+    </div>
+  ) : null;
+
   return (
     <aside
       className={`ti-console-panel flex h-full flex-col ${className ?? ""}`}
@@ -476,16 +512,25 @@ export function CollabPanel({
           disabled={loading}
           agentStatus={agentStatus}
         />
-        {mode === "classic" ? (
-          <LlmCollabWorkspace
-            status={importStatus}
-            review={review}
-            draft={draftState}
-            chatItems={chatTimeline}
-            loading={loading}
-            scrollerRef={scrollerRef}
-          />
+        {mode === "direct" ? (
+          <div ref={directScrollerRef} className="ti-console-timeline ti-direct-review-timeline">
+            {directDesignSpec ? (
+              <DirectDesignSpecReview
+                markdown={directDesignSpec}
+                busy={directImportBusy}
+                onConfirm={onConfirmDirectImport}
+                onEdit={onEditDirectImport}
+              />
+            ) : loading ? (
+              <div className="ti-direct-import-status">
+                <Loader2 size={14} className="animate-spin" />
+                <span>{t("template.directGeneratingDesignSpec")}</span>
+              </div>
+            ) : null}
+          </div>
         ) : (
+          <>
+          {agentGuideActions}
           <div
             ref={scrollerRef}
             className="ti-console-timeline"
@@ -507,10 +552,11 @@ export function CollabPanel({
                   <ActivityLine key={item.key} event={item.event} />
                 ),
               )
-            )}
-          </div>
+              )}
+            </div>
+          </>
         )}
-        {composer}
+        {mode === "agent" ? composer : null}
       </section>
     </aside>
   );
@@ -610,6 +656,57 @@ function LlmCollabWorkspace({
           {loading ? <ThinkingBubble /> : null}
         </div>
       </section>
+    </div>
+  );
+}
+
+function DirectDesignSpecReview({
+  markdown,
+  busy,
+  onConfirm,
+  onEdit,
+}: {
+  markdown: string;
+  busy: boolean;
+  onConfirm?: () => Promise<void> | void;
+  onEdit?: () => void;
+}) {
+  const { t } = useLocale();
+  return (
+    <div className="ti-direct-design-review">
+      <div className="ti-bubble-row" data-role="assistant">
+        <div className="ti-bubble">
+          <div className="ti-bubble-header">
+            <span className="ti-bubble-avatar" aria-hidden="true">
+              <Bot size={11} />
+            </span>
+            <span className="ti-bubble-name">{t("template.directDesignSpecPreview")}</span>
+          </div>
+          <div className="ti-bubble-content ti-markdown">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{markdown}</ReactMarkdown>
+          </div>
+        </div>
+      </div>
+      <div className="ti-direct-review-actions">
+        <button
+          type="button"
+          className="ti-focusable ti-direct-review-secondary"
+          disabled={busy}
+          onClick={onEdit}
+        >
+          <X size={13} />
+          <span>{t("template.directReview.edit")}</span>
+        </button>
+        <button
+          type="button"
+          className="ti-focusable ti-direct-review-primary"
+          disabled={busy || !onConfirm}
+          onClick={() => void onConfirm?.()}
+        >
+          {busy ? <Loader2 size={13} className="animate-spin" /> : <CheckCircle2 size={13} />}
+          <span>{t("template.directReview.confirm")}</span>
+        </button>
+      </div>
     </div>
   );
 }
@@ -725,8 +822,8 @@ function CollabModeControls({
   disabled,
   agentStatus,
 }: {
-  mode: "classic" | "agent" | "direct";
-  onModeChange: (mode: "classic" | "agent" | "direct") => void;
+  mode: "agent" | "direct";
+  onModeChange: (mode: "agent" | "direct") => void;
   modeLocked: boolean;
   agentConfig: TemplateAgentConfig;
   onAgentConfigChange: (config: TemplateAgentConfig) => void;
@@ -740,10 +837,10 @@ function CollabModeControls({
   return (
     <div className="flex flex-col gap-2">
       <div
-        className="grid grid-cols-3 rounded-[var(--ti-radius-sm,6px)] border p-0.5"
+        className="grid grid-cols-2 rounded-[var(--ti-radius-sm,6px)] border p-0.5"
         style={{ borderColor: "var(--ti-line)", background: "var(--ti-surface-inset)" }}
       >
-        {(["direct", "classic", "agent"] as const).map((item) => {
+        {(["direct", "agent"] as const).map((item) => {
           const active = mode === item;
           const agentBusy =
             item === "agent" &&
@@ -765,12 +862,10 @@ function CollabModeControls({
                 <Loader2 size={11} className="animate-spin" />
               ) : item === "agent" ? (
                 <Bot size={11} />
-              ) : item === "direct" ? (
-                <FileCheck2 size={11} />
               ) : (
-                <MessageSquareText size={11} />
+                <FileCheck2 size={11} />
               )}
-              {item === "agent" ? "Agent" : item === "direct" ? t("templates.upload.mode.direct") : "LLM"}
+              {item === "agent" ? "Agent" : t("templates.upload.mode.direct")}
             </button>
           );
         })}

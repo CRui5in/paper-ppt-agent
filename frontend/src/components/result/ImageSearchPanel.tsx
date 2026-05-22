@@ -23,6 +23,7 @@ interface ImageSearchPanelProps {
   slideTitle?: string;
   onClose: () => void;
   onImageApplied: () => Promise<void> | void;
+  onDeckImageSelected?: (item: ImageSearchResultItem) => Promise<void> | void;
 }
 
 function readSavedKey(storageKey: string): string {
@@ -73,6 +74,7 @@ export function ImageSearchPanel({
   slideTitle,
   onClose,
   onImageApplied,
+  onDeckImageSelected,
 }: ImageSearchPanelProps) {
   const { t } = useLocale();
   const [query, setQuery] = useState("");
@@ -134,24 +136,30 @@ export function ImageSearchPanel({
     setStatusMsg(null);
     const llm = readLlmProfile();
     try {
-      const response = await applySearchImage(jobId, {
-        image_url: selectedItem.url,
-        slide_index: slideIndex,
-        image_description: selectedItem.description || effectiveQuery,
-        api_key: llm?.apiKey,
-        provider: llm?.provider || "openai",
-        model: llm?.model || "gpt-4o",
-        base_url: llm?.baseUrl,
-      });
-      setHasApplied(true);
-      setStatusMsg(response.action === "replaced" ? t("imageSearch.replaced") : t("imageSearch.inserted"));
+      if (onDeckImageSelected) {
+        await onDeckImageSelected(selectedItem);
+        setHasApplied(false);
+        setStatusMsg(t("imageSearch.inserted"));
+      } else {
+        const response = await applySearchImage(jobId, {
+          image_url: selectedItem.url,
+          slide_index: slideIndex,
+          image_description: selectedItem.description || effectiveQuery,
+          api_key: llm?.apiKey,
+          provider: llm?.provider || "openai",
+          model: llm?.model || "gpt-4o",
+          base_url: llm?.baseUrl,
+        });
+        setHasApplied(true);
+        setStatusMsg(response.action === "replaced" ? t("imageSearch.replaced") : t("imageSearch.inserted"));
+      }
       await onImageApplied();
     } catch (err) {
       setError(errorMessage(err));
     } finally {
       setApplying(false);
     }
-  }, [busy, effectiveQuery, jobId, onImageApplied, selectedItem, slideIndex, t]);
+  }, [busy, effectiveQuery, jobId, onDeckImageSelected, onImageApplied, selectedItem, slideIndex, t]);
 
   const handleUndo = useCallback(async () => {
     if (busy) return;
@@ -229,7 +237,7 @@ export function ImageSearchPanel({
           {applying ? <Loader2 size={14} className="spin" /> : <ImagePlus size={14} />}
           {t("imageSearch.apply")}
         </Button>
-        <Button type="button" size="sm" variant="outline" disabled={!hasApplied || busy} onClick={() => void handleUndo()}>
+        <Button type="button" size="sm" variant="outline" disabled={Boolean(onDeckImageSelected) || !hasApplied || busy} onClick={() => void handleUndo()}>
           {undoing ? <Loader2 size={14} className="spin" /> : <RotateCcw size={14} />}
           {t("imageSearch.undo")}
         </Button>

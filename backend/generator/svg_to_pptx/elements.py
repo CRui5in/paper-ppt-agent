@@ -29,6 +29,13 @@ from .utils import (
 )
 
 
+def decode_base64_payload(data: str) -> bytes:
+    """Decode data-URI base64 that may be whitespace-wrapped or missing padding."""
+    payload = re.sub(r"\s+", "", data)
+    payload += "=" * (-len(payload) % 4)
+    return base64.b64decode(payload, validate=False)
+
+
 def _wrap_shape(
     shape_id: int,
     name: str,
@@ -68,6 +75,9 @@ def convert_rect(elem: Any, ctx: ConvertContext) -> str:
     h = parse_svg_length(elem.get("height", 0))
     if w <= 0 or h <= 0:
         return ""
+    if _matrix_has_rotation_or_flip(ctx.matrix):
+        d = f"M{x},{y} L{x + w},{y} L{x + w},{y + h} L{x},{y + h} Z"
+        return convert_path(_clone_with_attr(elem, "d", d), ctx)
 
     off_x = px_to_emu(ctx.ctx_x(x))
     off_y = px_to_emu(ctx.ctx_y(y))
@@ -187,7 +197,7 @@ def convert_path(elem: Any, ctx: ConvertContext) -> str:
         return ""
 
     path_xml, bx, by, bw, bh = path_commands_to_drawingml(
-        commands, ctx.translate_x, ctx.translate_y, ctx.scale_x, ctx.scale_y
+        commands, ctx.translate_x, ctx.translate_y, ctx.scale_x, ctx.scale_y, matrix=ctx.matrix
     )
 
     if bw <= 0 or bh <= 0:
@@ -316,7 +326,14 @@ def convert_image(elem: Any, ctx: ConvertContext) -> str:
         if not match:
             return ""
         mime = match.group(1)
-        img_data = base64.b64decode(match.group(2))
+        try:
+            img_data = decode_base64_payload(match.group(2))
+        except (ValueError, base64.binascii.Error):
+            import logging
+            logging.getLogger(__name__).warning(
+                "Invalid base64 image payload in SVG, skipping image element"
+            )
+            return ""
         ext = mime.split("/")[-1]
         if ext == "jpeg":
             ext = "jpg"
@@ -516,6 +533,11 @@ def _points_to_path(points_str: str, closed: bool) -> str:
     if closed:
         parts.append("Z")
     return " ".join(parts)
+
+
+def _matrix_has_rotation_or_flip(matrix: tuple[float, float, float, float, float, float]) -> bool:
+    a, b, c, d, _e, _f = matrix
+    return abs(b) > 1e-9 or abs(c) > 1e-9 or a < 0 or d < 0
 
 
 class _FakeElem:

@@ -117,7 +117,7 @@
 .ti-stage-container {
   position: relative;
   aspect-ratio: 16 / 9;
-  width: 100%;
+  box-sizing: border-box;
   max-width: 100%;
   max-height: 100%;
   margin: 0 auto;
@@ -547,6 +547,368 @@
    when earlier siblings (long markdown bubbles) overflow the viewport. */
 .ti-console-timeline > * {
   flex-shrink: 0;
+}
+
+.ti-direct-import-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ti-muted);
+  font-size: 12px;
+}
+
+.ti-direct-review-timeline {
+  font-family: inherit;
+}
+
+.ti-direct-design-review {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ti-direct-review-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.ti-direct-review-actions button {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: var(--ti-radius-sm);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.ti-direct-review-secondary {
+  border: 1px solid var(--ti-line);
+  background: var(--ti-surface);
+  color: var(--ti-text);
+}
+
+.ti-direct-review-primary {
+  border: 1px solid color-mix(in srgb, var(--ti-accent) 40%, var(--ti-line));
+  background: var(--ti-accent);
+  color: var(--ti-accent-fg);
+}
+
+.ti-agent-guide-actions {
+  display: flex;
+}
+
+.ti-agent-guide-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  border-radius: var(--ti-radius-sm);
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.ti-agent-guide-primary {
+  border: 1px solid color-mix(in srgb, var(--ti-accent) 55%, var(--ti-line));
+  background: var(--ti-accent);
+  color: var(--ti-accent-fg);
+}
+
+.ti-agent-guide-secondary {
+  border: 1px solid var(--ti-line);
+  background: var(--ti-surface-inset);
+  color: var(--ti-text);
+}
+
+.ti-agent-guide-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.ti-template-editor-wrap {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.ti-template-editor-wrap .pptist-template-host {
+  flex: 1 1 auto;
+}
+
+.ti-annotation-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 25;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: crosshair;
+  background: color-mix(in srgb, var(--ti-accent) 7%, transparent);
+  color: var(--ti-accent);
+  font-size: 12px;
+  font-weight: 800;
+  user-select: none;
+}
+
+.ti-annotation-draft-box {
+  position: absolute;
+  border: 2px solid var(--ti-accent);
+  background: color-mix(in srgb, var(--ti-accent) 12%, transparent);
+  box-shadow: 0 0 0 9999px color-mix(in srgb, #020617 12%, transparent);
+}
+
+.ti-review-bottom-tools {
+  display: grid;
+  grid-template-columns: minmax(240px, 0.55fr) minmax(0, 1fr);
+  flex-shrink: 0;
+  border-top: 1px solid var(--ti-line);
+  background: var(--ti-surface);
+}
+
+.ti-review-bottom-tools .ti-review-assignments {
+  border-top: 0;
+}
+
+.ti-review-annotations {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px 14px;
+  border-right: 1px solid var(--ti-line);
+  background: var(--ti-surface);
+}
+
+.ti-review-annotations-head,
+.ti-review-annotations-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.ti-review-annotations-head {
+  justify-content: space-between;
+}
+
+.ti-review-annotations-title {
+  color: var(--ti-text);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.ti-review-annotations-title > svg {
+  color: var(--ti-accent);
+}
+
+.ti-review-annotations-title strong {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: var(--ti-surface-inset);
+  color: var(--ti-muted);
+  font-size: 10px;
+}
+
+.ti-review-annotation-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--ti-line);
+  border-radius: var(--ti-radius-sm);
+  background: var(--ti-surface-inset);
+  color: var(--ti-text);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.ti-review-annotation-button[data-active="true"] {
+  border-color: color-mix(in srgb, var(--ti-accent) 48%, var(--ti-line));
+  background: color-mix(in srgb, var(--ti-accent) 9%, var(--ti-surface));
+  color: var(--ti-accent);
+}
+
+.ti-review-annotation-list {
+  display: flex;
+  min-width: 0;
+  gap: 6px;
+  overflow-x: auto;
+}
+
+.ti-review-annotation-empty {
+  color: var(--ti-muted);
+  font-size: 11px;
+}
+
+.ti-review-annotation-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 260px;
+  min-width: 0;
+  padding: 5px 7px;
+  border: 1px solid var(--ti-line);
+  border-radius: var(--ti-radius-sm);
+  background: var(--ti-surface-inset);
+  color: var(--ti-muted);
+  font-size: 11px;
+}
+
+.ti-review-annotation-chip > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ti-review-annotation-chip button {
+  flex-shrink: 0;
+  color: var(--ti-accent);
+  font-weight: 800;
+}
+
+.ti-review-assignments {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 10px 10px 0;
+  padding: 10px;
+  border: 1px solid var(--ti-line);
+  border-radius: var(--ti-radius-sm);
+  background: var(--ti-surface);
+}
+
+.ti-review-assignments-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--ti-text);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.ti-review-assignments-title > svg {
+  color: var(--ti-accent);
+}
+
+.ti-review-assignments-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ti-review-assignment-row {
+  display: grid;
+  grid-template-columns: minmax(72px, 0.8fr) minmax(92px, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.ti-review-assignment-label {
+  min-width: 0;
+  overflow: hidden;
+  border: 0;
+  background: transparent;
+  color: var(--ti-muted);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 0;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ti-review-assignment-row[data-active="true"] .ti-review-assignment-label {
+  color: var(--ti-accent);
+}
+
+.ti-review-assignment-select {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  border: 1px solid var(--ti-line);
+  border-radius: 6px;
+  background: var(--ti-surface-inset);
+  color: var(--ti-text);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.ti-review-assignments[data-layout="horizontal"] {
+  flex-shrink: 0;
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+  padding: 10px 14px;
+  border-width: 1px 0 0;
+  border-radius: 0;
+  background: var(--ti-surface);
+}
+
+.ti-review-assignments[data-layout="horizontal"] .ti-review-assignments-title {
+  flex: 0 0 auto;
+  min-width: 78px;
+}
+
+.ti-review-assignments[data-layout="horizontal"] .ti-review-assignments-list {
+  display: grid;
+  flex: 1 1 auto;
+  min-width: 0;
+  grid-template-columns: repeat(5, minmax(112px, 1fr));
+  gap: 8px;
+}
+
+.ti-review-assignments[data-layout="horizontal"] .ti-review-assignment-row {
+  grid-template-columns: minmax(34px, auto) minmax(72px, 1fr);
+  gap: 7px;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--ti-line);
+  border-radius: var(--ti-radius-sm);
+  background: var(--ti-surface-inset);
+}
+
+.ti-review-assignments[data-layout="horizontal"] .ti-review-assignment-row[data-active="true"] {
+  border-color: color-mix(in srgb, var(--ti-accent) 38%, var(--ti-line));
+  background: color-mix(in srgb, var(--ti-accent) 6%, var(--ti-surface-inset));
+}
+
+.ti-review-assignments[data-layout="horizontal"] .ti-review-assignment-select {
+  height: 28px;
+  background: var(--ti-surface);
+}
+
+@media (max-width: 1320px) {
+  .ti-review-bottom-tools {
+    grid-template-columns: 1fr;
+  }
+
+  .ti-review-annotations {
+    border-right: 0;
+    border-bottom: 1px solid var(--ti-line);
+  }
+
+  .ti-review-assignments[data-layout="horizontal"] {
+    align-items: flex-start;
+  }
+
+  .ti-review-assignments[data-layout="horizontal"] .ti-review-assignments-list {
+    grid-template-columns: repeat(3, minmax(118px, 1fr));
+  }
 }
 
 /* ─── LLM collaboration mode: separate progress, review, feedback ───── */
@@ -1484,7 +1846,7 @@
 .ti-upload-mode-switch {
   display: grid;
   width: 100%;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
   border: 1px solid var(--ti-line);
   border-radius: 8px;
@@ -1662,6 +2024,11 @@
 
 .templates-slide-panel > .slide-workspace-header {
   flex-shrink: 0;
+}
+
+.templates-workspace-title-spacer {
+  flex: 1 1 auto;
+  min-width: 1px;
 }
 
 .templates-slide-panel > .slide-stage,
@@ -2126,7 +2493,7 @@
 
 .templates-big-preview-frame {
   position: relative;
-  width: 100%;
+  box-sizing: border-box;
   max-width: 100%;
   max-height: 100%;
   aspect-ratio: 16 / 9;
@@ -2226,6 +2593,126 @@
   margin-right: auto;
   margin-left: auto;
   cursor: default;
+}
+
+.templates-empty-pptist-shell {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border: 1px solid var(--ti-line);
+  border-radius: 8px;
+  background: var(--ti-surface-inset);
+  color: var(--ti-muted);
+}
+
+.templates-empty-pptist-toolbar {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  flex: 0 0 48px;
+  min-height: 48px;
+  border-bottom: 1px solid var(--ti-line);
+  background: var(--ti-surface);
+}
+
+.templates-empty-pptist-title {
+  border-right: 1px solid var(--ti-line);
+}
+
+.templates-empty-pptist-tools {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  padding: 0 28px;
+  opacity: 0.55;
+}
+
+.templates-empty-pptist-tools span,
+.templates-empty-pptist-tools i {
+  display: block;
+  width: 16px;
+  height: 16px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--ti-muted) 42%, transparent);
+}
+
+.templates-empty-pptist-tools i {
+  width: 1px;
+  height: 22px;
+  border-radius: 0;
+  background: var(--ti-line);
+}
+
+.templates-empty-pptist-tools .wide {
+  width: 70px;
+}
+
+.templates-empty-pptist-body {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.templates-empty-pptist-rail {
+  padding: 18px 14px;
+  border-right: 1px solid var(--ti-line);
+  background: var(--ti-surface);
+}
+
+.templates-empty-pptist-thumb {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  opacity: 0.76;
+}
+
+.templates-empty-pptist-thumb strong {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ti-accent);
+}
+
+.templates-empty-pptist-thumb span {
+  display: block;
+  aspect-ratio: 16 / 9;
+  border: 2px solid var(--ti-accent);
+  border-radius: 6px;
+  background: var(--ti-surface);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--ti-accent) 16%, transparent);
+}
+
+.templates-empty-pptist-stage {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) 72px;
+  gap: 14px;
+  min-width: 0;
+  min-height: 0;
+  padding: 18px;
+}
+
+.templates-empty-pptist-canvas {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  border: 1px dashed color-mix(in srgb, var(--ti-line) 76%, transparent);
+  border-radius: 8px;
+  background: var(--ti-surface);
+  color: var(--ti-muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.templates-empty-pptist-notes {
+  border: 1px solid var(--ti-line);
+  border-radius: 8px;
+  background: var(--ti-surface);
 }
 
 .templates-canvas-empty-text {

@@ -593,7 +593,9 @@ def _resolve_sha1_for_href(
         if match is None:
             return None
         try:
-            blob = base64.b64decode(match.group(2), validate=False)
+            payload = "".join(match.group(2).split())
+            payload += "=" * (-len(payload) % 4)
+            blob = base64.b64decode(payload, validate=False)
         except (ValueError, base64.binascii.Error):
             return None
         if len(blob) > _MAX_ASSET_BYTES:

@@ -238,6 +238,26 @@ def _extract_design_spec_section(content: str, roman: str) -> str:
     return match.group(0) if match else ""
 
 
+def _has_required_design_spec_section(text: str, roman: str, title: str) -> bool:
+    pattern = rf"(?im)^#+\s*{roman}\.\s+.*{re.escape(title)}"
+    if re.search(pattern, text):
+        return True
+    if roman != "XI":
+        return False
+
+    # LLMs sometimes keep section XI but rename it to equivalent execution notes.
+    return bool(
+        re.search(
+            r"(?im)^#+\s*XI\.\s+.*(?:"
+            r"Technical|Constraints?|Requirements?|Guidelines?|Notes?|"
+            r"Specification|Implementation|Execution|Rendering|SVG|Output|"
+            r"技术|约束|限制|要求|规范|实现|执行|渲染|输出"
+            r")",
+            text,
+        )
+    )
+
+
 _PAGE_TYPE_ALIASES: dict[str, tuple[str, ...]] = {
     "cover": ("cover", "封面", "封面页", "标题页"),
     "chapter": ("chapter", "transition", "section", "章节", "章节页", "章标题", "过渡", "过渡页", "转场"),
@@ -308,8 +328,7 @@ def _design_spec_validation_error(
         "XI": "Technical Constraints",
     }
     for roman, title in required.items():
-        pattern = rf"(?im)^#+\s*{roman}\.\s+.*{re.escape(title)}"
-        if not re.search(pattern, text):
+        if not _has_required_design_spec_section(text, roman, title):
             return f"design_spec.md is missing section {roman}. {title}"
 
     if expected_page_count is not None:

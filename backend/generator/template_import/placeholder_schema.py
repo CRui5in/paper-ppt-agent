@@ -15,20 +15,20 @@ if TYPE_CHECKING:  # pragma: no cover
 
 
 PLACEHOLDER_WHITELIST: frozenset[str] = frozenset({
-    "PAGE_TITLE", "SUBTITLE",
-    "CHAPTER_NUM", "CHAPTER_TITLE",
-    "TOC_LIST",
+    "TITLE", "PAGE_TITLE", "SUBTITLE", "AUTHOR", "DATE", "GROUP",
+    "CHAPTER_NUM", "CHAPTER_NUMBER", "CHAPTER_TITLE",
+    "TOC_LIST", "TOC_ITEM_1", "TOC_ITEM_2", "TOC_ITEM_3", "TOC_ITEM_4", "TOC_ITEM_5",
     "CONTENT_AREA",
-    "ENDING_MESSAGE",
+    "ENDING_TITLE", "ENDING_MESSAGE",
     "LOGO_HEADER", "LOGO_FOOTER",
 })
 
 PAGE_TYPE_ALLOWLIST: dict[str, frozenset[str]] = {
-    "cover":   frozenset({"PAGE_TITLE", "SUBTITLE", "LOGO_HEADER", "LOGO_FOOTER"}),
-    "toc":     frozenset({"PAGE_TITLE", "TOC_LIST", "LOGO_HEADER", "LOGO_FOOTER"}),
-    "chapter": frozenset({"CHAPTER_NUM", "CHAPTER_TITLE", "LOGO_HEADER", "LOGO_FOOTER"}),
+    "cover":   frozenset({"TITLE", "PAGE_TITLE", "SUBTITLE", "AUTHOR", "DATE", "GROUP", "LOGO_HEADER", "LOGO_FOOTER"}),
+    "toc":     frozenset({"PAGE_TITLE", "TOC_LIST", "TOC_ITEM_1", "TOC_ITEM_2", "TOC_ITEM_3", "TOC_ITEM_4", "TOC_ITEM_5", "LOGO_HEADER", "LOGO_FOOTER"}),
+    "chapter": frozenset({"CHAPTER_NUM", "CHAPTER_NUMBER", "CHAPTER_TITLE", "LOGO_HEADER", "LOGO_FOOTER"}),
     "content": frozenset({"PAGE_TITLE", "CONTENT_AREA", "LOGO_HEADER", "LOGO_FOOTER"}),
-    "ending":  frozenset({"ENDING_MESSAGE", "LOGO_HEADER", "LOGO_FOOTER"}),
+    "ending":  frozenset({"ENDING_TITLE", "ENDING_MESSAGE", "LOGO_HEADER", "LOGO_FOOTER"}),
 }
 
 

@@ -142,7 +142,12 @@ def has_deliverable(project_dir: Path | str | None) -> bool:
 
 
 def prepare_for_finalize(project_dir: Path) -> None:
-    """Copy svg_output/ to svg_final/ in preparation for post-processing."""
+    """Copy svg_output/ to svg_final/ in preparation for post-processing.
+
+    Imported templates can reference sibling assets such as
+    ``assets/logo.png`` from the generated SVG.  Keep those resources next to
+    the copied SVGs so the finalization image-embedding pass can resolve them.
+    """
     svg_output = project_dir / "svg_output"
     svg_final = project_dir / "svg_final"
 
@@ -152,6 +157,36 @@ def prepare_for_finalize(project_dir: Path) -> None:
 
     for svg_file in sorted(svg_output.glob("*.svg")):
         shutil.copy2(svg_file, svg_final / svg_file.name)
+
+    sync_svg_output_assets_to_final(project_dir)
+
+
+def sync_svg_output_assets_to_final(project_dir: Path) -> None:
+    """Copy non-SVG resource directories from svg_output/ to svg_final/.
+
+    This is intentionally separate from :func:`prepare_for_finalize` so older
+    workspaces can be repaired during re-export without overwriting edited
+    ``svg_final/*.svg`` files.
+    """
+    svg_output = project_dir / "svg_output"
+    svg_final = project_dir / "svg_final"
+    if not svg_output.exists() or not svg_final.exists():
+        return
+
+    for child in sorted(svg_output.iterdir(), key=lambda path: path.name):
+        if child.is_file() or child.suffix.lower() == ".svg":
+            continue
+        if child.name.startswith(".__"):
+            continue
+        target = svg_final / child.name
+        if target.exists():
+            shutil.rmtree(target)
+        if child.is_dir():
+            shutil.copytree(
+                child,
+                target,
+                ignore=shutil.ignore_patterns(".__*", "__pycache__"),
+            )
 
 
 def get_svg_files(project_dir: Path, source: str = "final") -> list[Path]:

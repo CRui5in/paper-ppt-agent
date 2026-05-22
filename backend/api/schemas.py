@@ -133,6 +133,11 @@ class PreviewSlide(BaseModel):
     content: str
     notes: str = ""
     document: dict[str, Any] | None = Field(default=None, exclude_if=lambda value: value is None)
+    render_url: str | None = None
+    edit_base_url: str | None = None
+    scene_url: str | None = None
+    scene_version: int | None = None
+    edit_capabilities: dict[str, Any] | None = None
 
 
 class PreviewResponse(BaseModel):
