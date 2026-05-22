@@ -90,7 +90,9 @@ export function translateJobMessage(message: string | undefined, locale: Locale)
     "Enriching with external research APIs...": "正在通过外部研究 API 补充信息...",
     "Querying external research sources...": "正在查询外部信息源...",
     "External research returned no results": "外部研究未返回结果",
+    "Preparing paper brief": "正在准备论文概要",
     "Generating manuscript": "正在生成讲稿",
+    "Generating manuscript from brief": "正在根据论文概要生成讲稿",
     "Pass 1/4 — Deep reading": "第 1/4 轮 — 深度研读",
     "Pass 2/4 — Narrative arc": "第 2/4 轮 — 叙事弧线",
     "Pass 3/4 — Manuscript": "第 3/4 轮 — 讲稿生成",
@@ -123,7 +125,9 @@ export function translateJobMessage(message: string | undefined, locale: Locale)
 
   const parsedMatch = message.match(/^Parsed:\s*(.+)$/);
   if (parsedMatch) {
-    return `已解析：${parsedMatch[1]}`;
+    const title = parsedMatch[1].replace(/\s+\(layout fallback used\)$/, "");
+    const fallbackUsed = title !== parsedMatch[1];
+    return `已解析：${title}${fallbackUsed ? "（已使用版面兜底解析）" : ""}`;
   }
 
   const generatedSlideMatch = message.match(/^Generated slide (\d+)\/(\d+)$/);
@@ -176,6 +180,59 @@ export function translateJobMessage(message: string | undefined, locale: Locale)
   }
 
   return message;
+}
+
+export function translateTemplateImportMessage(message: string | undefined | null, locale: Locale): string | undefined {
+  if (!message || locale !== "zh") {
+    return message ?? undefined;
+  }
+
+  const exact: Record<string, string> = {
+    "Agent mode workspace is ready.": "智能体模式工作区已准备好。",
+    "Direct import workspace is ready.": "直接导入工作区已准备好。",
+    "Claude Code is installed and the Agent SDK is available.": "已安装 Claude Code，Agent SDK 可用。",
+    "Claude Code CLI and claude-agent-sdk are not available in the backend environment.": "后端环境中 Claude Code CLI 和 claude-agent-sdk 均不可用。",
+    "Claude Code CLI is not installed or not on PATH.": "Claude Code CLI 未安装或不在 PATH 中。",
+    "Agent job not found.": "未找到智能体任务。",
+    "Upload received.": "已收到上传文件。",
+    "Template import requires an LLM model configuration.": "模板导入需要先配置 LLM 模型。",
+    "Optimizing template draft with feedback.": "正在根据反馈优化模板草稿。",
+    "Running intelligent template analysis.": "正在进行智能模板分析。",
+    "LLM template analysis failed.": "LLM 模板分析失败。",
+    "Review page types and reusable assets before registering the template.": "注册模板前请检查页面类型和可复用资产。",
+    "Generating Direct template design_spec.md with LLM.": "正在使用 LLM 生成直接导入模板的 design_spec.md。",
+    "Direct template design_spec.md generation failed.": "直接导入模板的 design_spec.md 生成失败。",
+    "Analyzing PPTX structure.": "正在分析 PPTX 结构。",
+    "Rendering slides to SVG.": "正在将幻灯片渲染为 SVG。",
+    "Cleaning SVGs and detecting reusable assets.": "正在清理 SVG 并检测可复用资产。",
+    "Generating a rule-based template draft with placeholders.": "正在生成带占位符的规则模板草稿。",
+    "Waiting for mandatory LLM template analysis.": "正在等待必需的 LLM 模板分析。",
+    "Template import failed.": "模板导入失败。",
+    "Registering reviewed template.": "正在注册已审核模板。",
+    "Template registered.": "模板已注册。",
+    "Direct template validation failed.": "直接导入模板校验失败。",
+    "Registering direct template.": "正在注册直接导入模板。",
+    "Direct template registered.": "直接导入模板已注册。",
+    "Agent task queued.": "智能体任务已排队。",
+    "Starting Claude Agent.": "正在启动 Claude Agent。",
+    "Agent running.": "智能体正在运行。",
+    "Agent stream interrupted; resuming the session.": "智能体流中断，正在恢复会话。",
+    "Template artifacts updated.": "模板产物已更新。",
+    "Agent task complete.": "智能体任务已完成。",
+    "Agent task cancelled.": "智能体任务已取消。",
+    "Agent task failed.": "智能体任务失败。",
+    "Template already installed.": "模板已安装。",
+    "Direct import uses the five uploaded slides as-is; no templateization was applied.": "直接导入将按原样使用上传的 5 页幻灯片，不执行模板化处理。",
+    "Direct import installed the five uploaded slides as-is; no templateization was applied.": "直接导入已按原样安装上传的 5 页幻灯片，未执行模板化处理。",
+    "Agent templateization has not produced a complete five-page template pack yet.": "智能体尚未产出完整的五页模板包。",
+    "Preview includes Agent-authored template SVG outputs.": "预览包含智能体生成的模板 SVG 输出。",
+    "Template was rebuilt from PPTist deck JSON because no server SVG renderer was available.": "由于服务器 SVG 渲染器不可用，模板已从 PPTist deck JSON 重建。",
+    "Preview was rebuilt from the saved PPTist deck because server SVG rendering is unavailable.": "由于服务器 SVG 渲染不可用，预览已从保存的 PPTist deck 重建。",
+    "Skipped until the user saves a PPTist deck.": "已跳过，等待用户保存 PPTist deck。",
+    "User/Agent workflow owns template planning.": "模板规划由用户/智能体工作流接管。",
+  };
+
+  return exact[message] ?? message;
 }
 
 function translateEnrichmentToken(value: string): string {

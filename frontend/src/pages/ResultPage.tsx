@@ -112,6 +112,7 @@ export function ResultPage() {
   // ── refine state ───────────────────────────────────────────────────────────
   type SecondaryPanel = "log" | "critic";
   const [secondaryPanel, setSecondaryPanel] = useState<SecondaryPanel | null>(null);
+  const [workspaceSideTab, setWorkspaceSideTab] = useState<"sources" | "config">("sources");
   const [feedback, setFeedback] = useState("");
   const [refineLoading, setRefineLoading] = useState(false);
   const [cancelLoading, setCancelLoading] = useState(false);
@@ -501,7 +502,29 @@ export function ResultPage() {
 
   return (
     <Layout showSidebar={false} contentClassName="studio-page result-page result-workspace-page">
-      <section className="scholarly-workspace result-studio-workspace">
+      <section className="scholarly-workspace result-studio-workspace" data-side-tab={workspaceSideTab}>
+        <div className="workspace-side-tabs" role="tablist" aria-label={`${t("source.title")} / ${t("result.refineTitle")}`}>
+          <button
+            type="button"
+            className={`workspace-side-tab ${workspaceSideTab === "sources" ? "workspace-side-tab-active" : ""}`}
+            aria-selected={workspaceSideTab === "sources"}
+            role="tab"
+            onClick={() => setWorkspaceSideTab("sources")}
+          >
+            <Database size={16} />
+            <span>{t("source.title")}</span>
+          </button>
+          <button
+            type="button"
+            className={`workspace-side-tab ${workspaceSideTab === "config" ? "workspace-side-tab-active" : ""}`}
+            aria-selected={workspaceSideTab === "config"}
+            role="tab"
+            onClick={() => setWorkspaceSideTab("config")}
+          >
+            <Wand2 size={16} />
+            <span>{t("result.refineTitle")}</span>
+          </button>
+        </div>
         <aside className="sources-panel result-sources-panel">
           <div className="workspace-panel-header">
             <div className="workspace-panel-title">
