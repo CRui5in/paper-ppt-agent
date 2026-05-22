@@ -47,7 +47,8 @@ A multi-agent pipeline for automatically generating editable PowerPoint presenta
 | **Real-time Observability** | Agent log stream, Token usage aggregation, per-page Critic detail panel |
 | **Multi-language** | Chinese, English, bilingual, and custom language output |
 | **Multi-model** | OpenAI / Anthropic / Gemini / DeepSeek and custom-compatible APIs |
-| **Template System** | Pre-built industry-style templates with custom font configuration |
+| **Template Import** | Import PPTX files directly as five-page templates, or use the Claude Code Agent mode for automated analysis, templateization, and preview |
+| **PPT Editor** | Built-in PPTist-based visual editor for editing generated decks and imported templates, including slides, notes, fonts, saving, and re-export |
 | **Deep Research** | External research enrichment (arXiv / Semantic Scholar / Web) with relevance filtering |
 
 ## 📸 Demo
@@ -65,6 +66,8 @@ A multi-agent pipeline for automatically generating editable PowerPoint presenta
 | 🟢 Node.js | 18+ |
 
 An API key for at least one model provider: OpenAI / Anthropic / Gemini / DeepSeek or a custom BaseURL-compatible API.
+
+Optional: the template-import Agent mode requires the backend environment to have access to the Claude Code CLI and Agent SDK.
 
 ## 🚀 Quick Start
 
@@ -110,6 +113,8 @@ cd frontend && npm run dev -- --host 127.0.0.1 --port 5173 --strictPort
 - 🖥️ **Real-time SVG Preview + Log Panel + Critic Detail View** — Live slide preview, Agent logs, and review details during generation
 - 🎯 **Icon RAG Semantic Search** — Gemini Embedding-based semantic search for icon candidates, independently toggleable
 - 🎨 **Template System & Custom Fonts** — Pre-built industry-style templates with custom heading/body font configuration
+- 🧩 **Template Import** — PPTX direct import, five-page template mapping, and Claude Code Agent mode for automated template analysis and templateization
+- 📝 **PPT Editor** — Visual PPT editor integrated into generated results and template-import workflows, with slide editing, notes, saving, and re-export
 - 🔬 **Deep Research Workflow** — External research enrichment (arXiv / Semantic Scholar / Web) with relevance filtering
 - 🖼️ **Online Image Search** — Search for images online using Tavily / SerpAPI, with AI layout analysis, one-click undo, and download
 - 🎨 **UI Refactor** — Rewrote UI with Konva canvas editor and upgraded SVG-to-PPTX converter
@@ -126,7 +131,8 @@ cd frontend && npm run dev -- --host 127.0.0.1 --port 5173 --strictPort
 
 ## 🗺️ Roadmap
 
-- [ ] 📐 Template management further implementation and optimization
+- [ ] 🤖 Claude Code-powered PPT generation integration
+- [ ] 🧭 Codex-powered PPT generation integration
 - [ ] 🧠 Local model support
 
 ---
@@ -135,6 +141,7 @@ cd frontend && npm run dev -- --host 127.0.0.1 --port 5173 --strictPort
 
 - [PPTAgent](https://github.com/icip-cas/PPTAgent) — Pipeline design and Agent architecture reference
 - [ppt-master](https://github.com/hugohe3/ppt-master) — Parts of the engineering approach reference
+- [PPTist](https://github.com/pipipi-pikachu/PPTist) — PPT editor reference and integration foundation. Thanks to the pipipi-pikachu/PPTist project.
 
 ## ⭐ Star History
 

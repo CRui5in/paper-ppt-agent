@@ -47,7 +47,8 @@
 | **实时可观测** | Agent 日志流、Token 用量聚合、Critic 逐页详情面板 |
 | **多语言** | 支持中英双语及自定义语言输出 |
 | **多模型** | OpenAI / Anthropic / Gemini / DeepSeek 及自定义兼容接口 |
-| **模板系统** | 预设多种行业风格模板，支持自定义模板导入与字体配置 |
+| **模板导入** | 支持 PPTX 直接导入为五页模板，也支持基于 Claude Code 的 Agent 模式自动分析、模板化与预览 |
+| **PPT 编辑器** | 内置基于 PPTist 的可视化编辑器，支持结果页和模板导入页中直接调整页面、备注、字体与导出 |
 | **Deep Research** | 外部研究增强（arXiv / Semantic Scholar / Web），相关性自动过滤 |
 
 ## 📸 效果展示
@@ -65,6 +66,8 @@
 | 🟢 Node.js | 18+ |
 
 至少一种模型提供商的 API Key：OpenAI / Anthropic / Gemini / DeepSeek 或自定义 BaseURL 兼容接口。
+
+可选：使用模板导入的 Agent 模式时，需要后端环境可访问 Claude Code CLI 与 Agent SDK。
 
 ## 🚀 快速开始
 
@@ -110,6 +113,8 @@ cd frontend && npm run dev -- --host 127.0.0.1 --port 5173 --strictPort
 - 🖥️ **实时 SVG 预览 + 日志面板 + Critic 详情视图** — 生成过程中实时查看幻灯片、Agent 日志与审查详情
 - 🎯 **图标 RAG 语义搜索** — 基于 Gemini Embedding 从图标库中语义检索匹配候选，可独立开关
 - 🎨 **模板系统与自定义字体** — 预设行业风格模板，支持自定义标题/正文字体配置
+- 🧩 **模板导入** — 支持 PPTX 直接导入、五页模板映射，以及基于 Claude Code 的 Agent 模式自动分析和模板化
+- 📝 **PPT 编辑器** — 在生成结果与模板导入流程中接入可视化 PPT 编辑器，支持页面编辑、备注、保存、重新导出
 - 🔬 **Deep Research 工作流** — 外部研究增强（arXiv / Semantic Scholar / Web）+ 相关性过滤
 - 🖼️ **在线搜图** — 利用 Tavily / SerpAPI Key 在线搜索配图，支持 AI 智能布局分析与插入、一键撤消、图片下载
 - 🎨 **UI 重构** — 基于 Konva 画布编辑器重写 UI，升级 SVG-to-PPTX 转换器
@@ -126,7 +131,8 @@ cd frontend && npm run dev -- --host 127.0.0.1 --port 5173 --strictPort
 
 ## 🗺️ 开发计划
 
-- [ ] 📐 模板管理进一步实现和优化
+- [ ] 🤖 Claude Code 生成 PPT 接入
+- [ ] 🧭 Codex 生成 PPT 接入
 - [ ] 🧠 本地大模型支持
 
 ---
@@ -135,6 +141,7 @@ cd frontend && npm run dev -- --host 127.0.0.1 --port 5173 --strictPort
 
 - [PPTAgent](https://github.com/icip-cas/PPTAgent) — 流程设计与 Agent 架构参考
 - [ppt-master](https://github.com/hugohe3/ppt-master) — 部分工程实现参考
+- [PPTist](https://github.com/pipipi-pikachu/PPTist) — PPT 编辑器能力参考与集成基础，感谢 pipipi-pikachu/PPTist 项目
 
 ## 📄 许可证
 
