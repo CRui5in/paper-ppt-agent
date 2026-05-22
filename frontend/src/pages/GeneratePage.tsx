@@ -247,6 +247,7 @@ export function GeneratePage() {
   const [templates, setTemplates] = useState<TemplateInfo[]>([]);
   const [cancelLoading, setCancelLoading] = useState(false);
   const [secondaryPanel, setSecondaryPanel] = useState<SecondaryPanel | null>(null);
+  const [workspaceSideTab, setWorkspaceSideTab] = useState<"sources" | "config">("sources");
   const freshRequested = searchParams.get("fresh") === "1";
   const targetJobId = searchParams.get("job") ?? undefined;
   const targetHistoryEntry = targetJobId
@@ -584,7 +585,29 @@ export function GeneratePage() {
 
   return (
     <Layout showSidebar={false} contentClassName="studio-page scholarly-workspace-page">
-      <section className="scholarly-workspace">
+      <section className="scholarly-workspace" data-side-tab={workspaceSideTab}>
+        <div className="workspace-side-tabs" role="tablist" aria-label={`${t("source.title")} / ${t("config.title")}`}>
+          <button
+            type="button"
+            className={`workspace-side-tab ${workspaceSideTab === "sources" ? "workspace-side-tab-active" : ""}`}
+            aria-selected={workspaceSideTab === "sources"}
+            role="tab"
+            onClick={() => setWorkspaceSideTab("sources")}
+          >
+            <Database size={16} />
+            <span>{t("source.title")}</span>
+          </button>
+          <button
+            type="button"
+            className={`workspace-side-tab ${workspaceSideTab === "config" ? "workspace-side-tab-active" : ""}`}
+            aria-selected={workspaceSideTab === "config"}
+            role="tab"
+            onClick={() => setWorkspaceSideTab("config")}
+          >
+            <Settings2 size={16} />
+            <span>{t("config.title")}</span>
+          </button>
+        </div>
         <SourcesPanel
           uploadSession={uploadSession}
           job={job}

@@ -448,6 +448,56 @@ onBeforeUnmount(() => {
   }
 }
 
+@media screen and (width <= 1500px) {
+  .editor-header {
+    padding-right: 6px;
+  }
+  .left {
+    width: 136px;
+    min-width: 136px;
+  }
+  .title {
+    padding-left: 16px;
+
+    .title-input,
+    .title-text {
+      max-width: 104px;
+    }
+
+    .title-input {
+      width: 104px;
+    }
+  }
+  .header-canvas-tool {
+    min-width: 0;
+    flex: 1 1 0;
+  }
+  .right {
+    gap: 2px;
+  }
+  .menu-item {
+    padding: 0 7px;
+  }
+  .group-menu-item {
+    margin: 0 1px;
+    padding: 0 1px;
+  }
+  .menu-divider {
+    margin: 0 2px;
+  }
+  .paper-save .save-text,
+  .toolbar-toggle .tool-text,
+  .github-link {
+    display: none;
+  }
+  .paper-export-menu .result-export-main {
+    padding: 0 10px;
+  }
+  .paper-export-menu .result-export-caret {
+    width: 30px;
+  }
+}
+
 @media screen and (width <= 1200px) {
   .paper-export-menu .result-export-main span,
   .toolbar-toggle .tool-text,
