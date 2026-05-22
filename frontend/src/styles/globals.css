@@ -721,7 +721,7 @@ body::before {
     "sources monitor config";
   gap: 12px;
   height: calc(100vh - 64px);
-  min-height: 720px;
+  min-height: min(720px, calc(100vh - 64px));
   padding: 12px 8px 10px;
   overflow: hidden;
 }
@@ -778,6 +778,46 @@ body::before {
   min-width: 0;
   flex-direction: column;
   overflow: hidden;
+}
+
+.workspace-side-tabs {
+  grid-area: sideTabs;
+  display: none;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.workspace-side-tab {
+  display: inline-flex;
+  min-width: 0;
+  height: 32px;
+  flex: 1 1 0;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--muted);
+  background: transparent;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.workspace-side-tab span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-side-tab-active {
+  color: var(--primary);
+  background: rgba(37, 99, 235, 0.1);
 }
 
 .workspace-panel-header {
@@ -6299,11 +6339,11 @@ body::before {
 
 @media (max-width: 1320px) {
   .scholarly-workspace {
-    grid-template-columns: 280px minmax(0, 1fr);
-    grid-template-rows: auto auto auto;
+    grid-template-columns: minmax(236px, 280px) minmax(0, 1fr);
+    grid-template-rows: 42px minmax(0, 1fr) minmax(116px, 148px);
     grid-template-areas:
-      "sources slides"
-      "config slides"
+      "sideTabs slides"
+      "sidePanel slides"
       "monitor monitor";
   }
 
@@ -7333,6 +7373,295 @@ body::before {
   color: #fff;
   background: rgba(15, 23, 42, 0.55);
   cursor: pointer;
+}
+
+@media (min-width: 1321px) and (max-width: 1500px) {
+  .scholarly-workspace {
+    grid-template-columns: minmax(230px, 260px) minmax(0, 1fr);
+    grid-template-rows: 42px minmax(0, 1fr) minmax(116px, 15vh);
+    grid-template-areas:
+      "sideTabs slides"
+      "sidePanel slides"
+      "monitor monitor";
+    gap: 10px;
+    padding: 10px 8px 8px;
+  }
+
+  .configuration-panel {
+    max-height: none;
+  }
+
+  .configuration-scroll {
+    overflow: auto;
+  }
+
+  .sources-content,
+  .configuration-scroll {
+    gap: 10px;
+    padding: 10px;
+  }
+
+  .sources-panel .upload-zone {
+    min-height: 132px;
+  }
+
+  .slide-workspace-header,
+  .agent-monitor-header {
+    min-height: 40px;
+    padding-right: 12px;
+    padding-left: 12px;
+  }
+
+  .agent-monitor-body,
+  .result-monitor-body {
+    grid-template-columns: 40px minmax(0, 1fr) minmax(180px, 0.8fr) minmax(150px, 0.65fr);
+    gap: 14px;
+    min-height: 86px;
+    padding: 10px 12px;
+  }
+
+  .agent-avatar {
+    width: 38px;
+    height: 38px;
+  }
+
+  .agent-avatar svg {
+    width: 22px;
+    height: 22px;
+  }
+
+  .monitor-event:last-child {
+    display: none;
+  }
+
+  .monitor-progress-block {
+    padding: 0 14px;
+  }
+
+  .recent-task-list {
+    max-height: min(280px, 34vh);
+  }
+
+  .paper-pptist-app .layout-content-left {
+    width: 132px;
+  }
+
+  .paper-pptist-app .layout-content-right {
+    width: 220px;
+  }
+
+  .paper-pptist-app .layout-content-center {
+    width: calc(100% - 132px - 220px);
+  }
+
+  .paper-pptist-app .layout-content-center-expanded {
+    width: calc(100% - 132px);
+  }
+
+  .generate-pptist-empty-shell {
+    grid-template-columns: 148px minmax(0, 1fr);
+  }
+
+  .generate-pptist-disabled-title {
+    width: 148px;
+    min-width: 148px;
+    padding-left: 16px;
+  }
+
+  .generate-pptist-empty-body {
+    grid-template-rows: minmax(0, 1fr) 68px;
+    gap: 10px;
+    padding: 12px 14px 14px;
+  }
+
+  .generate-pptist-empty-canvas {
+    padding: 12px;
+  }
+
+  .generate-pptist-live-slide {
+    width: min(100%, calc((100dvh - 292px) * 16 / 9));
+  }
+
+  .generate-pptist-disabled-actions .generate-pptist-disabled-button:not(.generate-pptist-disabled-primary),
+  .generate-pptist-disabled-actions .generate-pptist-disabled-github {
+    display: none;
+  }
+}
+
+@media (max-width: 1320px) {
+  .result-studio-workspace {
+    grid-template-rows: 42px minmax(0, 1fr) minmax(116px, 148px);
+  }
+}
+
+@media (max-width: 1500px) {
+  .scholarly-workspace > .workspace-side-tabs {
+    display: flex;
+  }
+
+  .scholarly-workspace > .sources-panel,
+  .scholarly-workspace > .configuration-panel {
+    grid-area: sidePanel;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .scholarly-workspace[data-side-tab="sources"] > .sources-panel,
+  .scholarly-workspace[data-side-tab="config"] > .configuration-panel {
+    display: flex;
+  }
+
+  .scholarly-workspace[data-side-tab="sources"] > .configuration-panel,
+  .scholarly-workspace[data-side-tab="config"] > .sources-panel {
+    display: none;
+  }
+}
+
+@media (max-width: 1180px) {
+  .generate-pptist-empty-shell {
+    grid-template-columns: 120px minmax(0, 1fr);
+  }
+
+  .generate-pptist-disabled-title {
+    width: 120px;
+    min-width: 120px;
+    padding-right: 10px;
+    padding-left: 12px;
+  }
+
+  .generate-pptist-disabled-tool {
+    min-width: 0;
+  }
+
+  .generate-pptist-disabled-actions {
+    padding: 0 6px;
+  }
+
+  .generate-pptist-disabled-button {
+    margin: 0;
+  }
+
+  .generate-pptist-disabled-actions .generate-pptist-disabled-button:not(.generate-pptist-disabled-primary),
+  .generate-pptist-disabled-actions .generate-pptist-disabled-github {
+    display: none;
+  }
+
+  .paper-pptist-app .layout-content-left {
+    width: 112px;
+  }
+
+  .paper-pptist-app .layout-content-right {
+    display: none;
+  }
+
+  .paper-pptist-app .layout-content-center,
+  .paper-pptist-app .layout-content-center-expanded {
+    width: calc(100% - 112px);
+  }
+
+  .paper-pptist-app .editor-header .header-canvas-tool {
+    display: none;
+  }
+}
+
+@media (min-width: 1501px) and (max-height: 820px) {
+  .scholarly-workspace {
+    grid-template-rows: minmax(0, 1fr) minmax(96px, 13vh);
+  }
+
+  .sources-panel .upload-zone {
+    min-height: 112px;
+  }
+
+  .recent-task-row-shell,
+  .recent-task-row {
+    min-height: 44px;
+  }
+
+  .agent-monitor-body,
+  .result-monitor-body {
+    min-height: 74px;
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+
+  .generate-pptist-empty-body {
+    grid-template-rows: minmax(0, 1fr) 58px;
+  }
+
+  .generate-pptist-empty-notes {
+    min-height: 48px;
+  }
+}
+
+@media (min-width: 1321px) and (max-width: 1500px) and (max-height: 820px) {
+  .scholarly-workspace {
+    grid-template-rows: 42px minmax(0, 1fr) minmax(96px, 13vh);
+  }
+
+  .sources-panel .upload-zone {
+    min-height: 112px;
+  }
+
+  .recent-task-row-shell,
+  .recent-task-row {
+    min-height: 44px;
+  }
+
+  .agent-monitor-body,
+  .result-monitor-body {
+    min-height: 74px;
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+
+  .generate-pptist-empty-body {
+    grid-template-rows: minmax(0, 1fr) 58px;
+  }
+
+  .generate-pptist-empty-notes {
+    min-height: 48px;
+  }
+}
+
+@media (max-width: 920px) {
+  .scholarly-workspace {
+    grid-template-columns: 1fr;
+    grid-template-rows: 42px minmax(360px, auto) minmax(360px, auto) minmax(116px, auto);
+    grid-template-areas:
+      "sideTabs"
+      "sidePanel"
+      "slides"
+      "monitor";
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  .slide-workspace-panel,
+  .configuration-panel,
+  .agent-monitor-panel {
+    min-height: 360px;
+  }
+
+  .generate-pptist-empty-shell {
+    grid-template-columns: 1fr;
+    grid-template-rows: 42px auto minmax(360px, 62vh);
+  }
+
+  .generate-pptist-empty-rail {
+    flex-direction: row;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .generate-pptist-empty-thumb {
+    min-width: 116px;
+  }
+
+  .generate-pptist-empty-body {
+    min-height: 360px;
+  }
 }
 
 .delete-confirm-tooltip {

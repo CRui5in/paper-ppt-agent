@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, CircleDashed, Loader2, RotateCcw, SkipForward } from "lucide-react";
 
-import { useLocale } from "../../i18n";
+import { useLocale, type Locale } from "../../i18n";
+import { translateTemplateImportMessage } from "../../lib/i18nStatus";
 import type { ImportStatus } from "../../lib/types";
 
 export interface ProgressViewProps {
@@ -33,7 +34,7 @@ const DIRECT_STEP_ORDER = ["uploaded", "analyzing", "rendering", "review"] as co
  * `error_kind` description plus a "Retry this stage" button (Req 1.5/1.6).
  */
 export function ProgressView({ status, onRetry, mode = "llm" }: ProgressViewProps) {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const [now, setNow] = useState(() => Date.now() / 1000);
 
   // Tick every second so "active" elapsed time triggers the >10s message.
@@ -57,7 +58,7 @@ export function ProgressView({ status, onRetry, mode = "llm" }: ProgressViewProp
       <div>
         <div className="mb-2 flex items-center justify-between text-sm">
           <strong style={{ color: "var(--ti-text)" }}>
-            {status.message || t("template.processing")}
+            {translateTemplateImportMessage(status.message, locale) || t("template.processing")}
           </strong>
           <span style={{ color: "var(--ti-muted)" }}>{overallPct}%</span>
         </div>
@@ -85,9 +86,9 @@ export function ProgressView({ status, onRetry, mode = "llm" }: ProgressViewProp
         ))}
       </div>
 
-      <ActiveDetail steps={steps} now={now} t={t} />
+      <ActiveDetail steps={steps} now={now} t={t} locale={locale} />
 
-      <ErrorPanel status={status} steps={steps} onRetry={onRetry} t={t} />
+      <ErrorPanel status={status} steps={steps} onRetry={onRetry} t={t} locale={locale} />
     </div>
   );
 }
@@ -169,10 +170,12 @@ function ActiveDetail({
   steps,
   now,
   t,
+  locale,
 }: {
   steps: StepLike[];
   now: number;
   t: (key: string) => string;
+  locale: Locale;
 }) {
   const active = steps.find((s) => s.status === "active");
   if (!active) return null;
@@ -195,7 +198,7 @@ function ActiveDetail({
       <span className="mr-2 font-semibold" style={{ color: "var(--ti-accent)" }}>
         {label}
       </span>
-      <span>{active.message}</span>
+      <span>{translateTemplateImportMessage(active.message, locale)}</span>
     </div>
   );
 }
@@ -205,11 +208,13 @@ function ErrorPanel({
   steps,
   onRetry,
   t,
+  locale,
 }: {
   status: ImportStatus;
   steps: StepLike[];
   onRetry: (stepId: string) => void;
   t: (key: string) => string;
+  locale: Locale;
 }) {
   const errored = steps.find((s) => s.status === "error");
   const topLevelError = status.status === "error" ? status.error : null;
@@ -217,7 +222,7 @@ function ErrorPanel({
 
   const stepId = errored?.id ?? "";
   const errorKind = errored?.error_kind || inferErrorKind(stepId);
-  const message = errored?.error || errored?.message || topLevelError || t("template.importError");
+  const message = translateTemplateImportMessage(errored?.error || errored?.message || topLevelError, locale) || t("template.importError");
 
   return (
     <div

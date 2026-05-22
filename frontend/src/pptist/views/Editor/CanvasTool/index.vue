@@ -428,6 +428,33 @@ const openImageLibPanel = () => {
   }
 }
 
+@media screen and (width <= 1500px) {
+  .canvas-tool {
+    gap: 6px;
+    padding: 0 6px;
+  }
+  .left-handler,
+  .right-handler {
+    flex: 0 0 auto;
+  }
+  .add-element-handler {
+    position: static;
+    flex: 1 1 auto;
+    min-width: 0;
+    justify-content: center;
+    overflow: hidden;
+    transform: none;
+
+    .insert-handler-item {
+      margin: 0 1px;
+      padding: 0 7px;
+    }
+  }
+  .handler-item {
+    margin: 0 1px;
+  }
+}
+
 @media screen and (width <= 1600px) {
   .add-element-handler {
     .insert-handler-item {

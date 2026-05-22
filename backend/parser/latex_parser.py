@@ -143,42 +143,85 @@ class LaTeXParser(PaperParser):
             figures_dir=images_dir,
         )
 
-    def _resolve_includes(self, tex_path: Path, base_dir: Path, depth: int = 0) -> str:
+    def _resolve_includes(
+        self,
+        tex_path: Path,
+        base_dir: Path,
+        depth: int = 0,
+        visited: set[Path] | None = None,
+        root_path: Path | None = None,
+    ) -> str:
         r"""Recursively resolve \input{} and \include{} directives."""
-        if depth > 10:  # Prevent infinite recursion
+        if depth > 20:  # Prevent infinite recursion
             return ""
 
+        visited = visited or set()
         try:
-            content = tex_path.read_text(encoding="utf-8", errors="ignore")
+            resolved_tex_path = tex_path.resolve()
+            project_root = base_dir.resolve()
+        except OSError:
+            return ""
+
+        if resolved_tex_path in visited:
+            return ""
+        visited.add(resolved_tex_path)
+        root_path = root_path or resolved_tex_path
+
+        try:
+            content = resolved_tex_path.read_text(encoding="utf-8", errors="ignore")
         except Exception:
             return ""
 
+        content = self._strip_latex_comments(content)
+        if resolved_tex_path != root_path:
+            body = self._extract_document_body(content)
+            if body:
+                content = body
+
         def replace_include(match: re.Match) -> str:
-            filename = match.group(1)
-            if not filename.endswith(".tex"):
-                filename += ".tex"
-            included_path = base_dir / filename
-            if included_path.exists():
-                return self._resolve_includes(included_path, base_dir, depth + 1)
+            raw_filename = match.group(1).strip()
+            if not raw_filename or raw_filename.startswith("\\"):
+                return match.group(0)
+
+            filename = raw_filename if raw_filename.endswith(".tex") else f"{raw_filename}.tex"
+            search_dirs = [resolved_tex_path.parent, project_root]
+            for search_dir in search_dirs:
+                included_path = (search_dir / filename).resolve()
+                try:
+                    included_path.relative_to(project_root)
+                except ValueError:
+                    continue
+                if included_path.exists():
+                    return self._resolve_includes(
+                        included_path,
+                        project_root,
+                        depth + 1,
+                        visited,
+                        root_path,
+                    )
             return match.group(0)  # Keep original if file not found
 
         # Resolve \input{...} and \include{...}
-        content = re.sub(r"\\input\{([^}]+)\}", replace_include, content)
-        content = re.sub(r"\\include\{([^}]+)\}", replace_include, content)
+        content = re.sub(r"\\(?:input|include)\s*\{([^}]+)\}", replace_include, content)
 
         return content
 
     def _extract_title(self, content: str) -> str:
-        match = re.search(r"\\title\{([^}]+)\}", content)
-        if match:
-            return self._clean_latex(match.group(1))
+        title = self._extract_command_argument(content, "title")
+        if title:
+            return self._clean_latex(title)
+
+        setup_title = self._extract_setup_title(content)
+        if setup_title:
+            return self._clean_latex(setup_title)
+
         return "Untitled"
 
     def _extract_authors(self, content: str) -> list[str]:
-        match = re.search(r"\\author\{(.+?)\}", content, re.DOTALL)
-        if not match:
+        author_arg = self._extract_command_argument(content, "author")
+        if not author_arg:
             return []
-        raw = self._clean_latex(match.group(1))
+        raw = self._clean_latex(author_arg)
         # Split on \and, commas, or newlines
         parts = re.split(r"\\and|,|\n", raw)
         return [a.strip() for a in parts if a.strip()]
@@ -380,16 +423,31 @@ class LaTeXParser(PaperParser):
     def _basic_latex_to_markdown(self, content: str) -> str:
         """Basic LaTeX to Markdown conversion without pandoc."""
         # Extract document body
-        match = re.search(
-            r"\\begin\{document\}(.+?)\\end\{document\}", content, re.DOTALL
-        )
-        if match:
-            content = match.group(1)
+        body = self._extract_document_body(content)
+        if body:
+            content = body
+
+        content = self._strip_latex_comments(content)
 
         # Convert sections
-        content = re.sub(r"\\section\{([^}]+)\}", r"## \1", content)
-        content = re.sub(r"\\subsection\{([^}]+)\}", r"### \1", content)
-        content = re.sub(r"\\subsubsection\{([^}]+)\}", r"#### \1", content)
+        heading_levels = {
+            "part": "##",
+            "chapter": "##",
+            "section": "##",
+            "subsection": "###",
+            "subsubsection": "####",
+        }
+
+        def replace_heading(match: re.Match) -> str:
+            command = match.group(1)
+            title = self._clean_latex(match.group(2))
+            return f"\n{heading_levels[command]} {title}\n\n"
+
+        content = re.sub(
+            r"\\(part|chapter|section|subsection|subsubsection)\*?\s*(?:\[[^\]]*\])?\{([^{}]+)\}",
+            replace_heading,
+            content,
+        )
 
         # Convert emphasis
         content = re.sub(r"\\textbf\{([^}]+)\}", r"**\1**", content)
@@ -409,7 +467,7 @@ class LaTeXParser(PaperParser):
         content = re.sub(r"\\bibliographystyle\{[^}]+\}", "", content)
         content = re.sub(r"\\bibliography\{[^}]+\}", "", content)
 
-        return self._clean_latex(content)
+        return self._clean_latex_block(content)
 
     def _parse_sections(
         self, markdown: str, figures: list[PaperFigure]
@@ -487,11 +545,96 @@ class LaTeXParser(PaperParser):
             pass
         return refs
 
+    def _strip_latex_comments(self, text: str) -> str:
+        """Remove unescaped LaTeX comments while preserving line structure."""
+        lines: list[str] = []
+        for line in text.splitlines():
+            cut_at: int | None = None
+            for idx, char in enumerate(line):
+                if char != "%":
+                    continue
+                slash_count = 0
+                cursor = idx - 1
+                while cursor >= 0 and line[cursor] == "\\":
+                    slash_count += 1
+                    cursor -= 1
+                if slash_count % 2 == 0:
+                    cut_at = idx
+                    break
+            lines.append(line[:cut_at] if cut_at is not None else line)
+        return "\n".join(lines)
+
+    def _extract_document_body(self, content: str) -> str:
+        match = re.search(
+            r"\\begin\{document\}(.+?)\\end\{document\}", content, re.DOTALL
+        )
+        return match.group(1) if match else ""
+
+    def _extract_command_argument(self, content: str, command: str) -> str:
+        pattern = re.compile(rf"\\{re.escape(command)}\*?\s*(?:\[[^\]]*\]\s*)?\{{")
+        match = pattern.search(content)
+        if not match:
+            return ""
+        return self._read_braced_content(content, match.end() - 1)
+
+    def _extract_setup_title(self, content: str) -> str:
+        for match in re.finditer(r"\\[a-zA-Z@]*setup\s*\{", content):
+            setup_body = self._read_braced_content(content, match.end() - 1)
+            title = self._extract_keyed_braced_value(setup_body, "title")
+            if title:
+                return title
+        return ""
+
+    def _extract_keyed_braced_value(self, content: str, key: str) -> str:
+        for match in re.finditer(rf"\b{re.escape(key)}\s*=", content):
+            cursor = match.end()
+            while cursor < len(content) and content[cursor].isspace():
+                cursor += 1
+            if cursor < len(content) and content[cursor] == "{":
+                return self._read_braced_content(content, cursor)
+        return ""
+
+    def _read_braced_content(self, text: str, open_brace_index: int) -> str:
+        if open_brace_index >= len(text) or text[open_brace_index] != "{":
+            return ""
+        depth = 0
+        start = open_brace_index + 1
+        for idx in range(open_brace_index, len(text)):
+            char = text[idx]
+            escaped = idx > 0 and text[idx - 1] == "\\"
+            if escaped:
+                continue
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    return text[start:idx]
+        return ""
+
+    def _clean_latex_block(self, text: str) -> str:
+        """Clean LaTeX text while preserving line breaks for Markdown headings."""
+        cleaned_lines: list[str] = []
+        previous_blank = False
+        for raw_line in text.splitlines():
+            cleaned = self._clean_latex(raw_line)
+            if cleaned:
+                cleaned_lines.append(cleaned)
+                previous_blank = False
+            elif not previous_blank and cleaned_lines:
+                cleaned_lines.append("")
+                previous_blank = True
+        return "\n".join(cleaned_lines).strip()
+
     def _clean_latex(self, text: str) -> str:
         """Remove common LaTeX commands from text."""
+        text = re.sub(r"~", " ", text)
+        text = re.sub(r"\\(?:cite|citep|citet|ref|eqref|label)\*?(?:\[[^\]]*\])?\{[^}]*\}", "", text)
+        text = re.sub(r"\\(?:begin|end)\{[^}]+\}", "", text)
         text = re.sub(r"\\[a-zA-Z]+\{([^}]*)\}", r"\1", text)
         text = re.sub(r"\\[a-zA-Z]+\[[^\]]*\]", "", text)
         text = re.sub(r"\\[a-zA-Z]+", "", text)
+        text = re.sub(r"\\([{}%&_#])", r"\1", text)
         text = re.sub(r"[{}]", "", text)
         text = re.sub(r"\s+", " ", text)
         return text.strip()

@@ -30,6 +30,7 @@ import { Layout } from "../components/layout/Layout";
 import { useLocale } from "../i18n";
 import { useGeneration } from "../hooks/useGeneration";
 import { useTemplateImport } from "../hooks/useTemplateImport";
+import { translateTemplateImportMessage } from "../lib/i18nStatus";
 import {
   deleteTemplate,
   fetchTemplateAgentClaudeCodeStatus,
@@ -212,6 +213,7 @@ export function TemplatesPage() {
   const [preview, setPreview] = useState<TemplatePreview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [focusedPageType, setFocusedPageType] = useState<TemplatePageType>("cover");
+  const [workspaceSideTab, setWorkspaceSideTab] = useState<"sources" | "config">("sources");
 
   // ── Import state ──────────────────────────────────────────────────────
   const [modelConfig] = useState<TemplateImportModelConfig | undefined>(readModelConfig);
@@ -829,7 +831,29 @@ export function TemplatesPage() {
 
   return (
     <Layout showSidebar={false} contentClassName="studio-page templates-workspace-page">
-      <section className="templates-workspace ti-surface">
+      <section className="templates-workspace ti-surface" data-side-tab={workspaceSideTab}>
+        <div className="workspace-side-tabs templates-side-tabs" role="tablist" aria-label={`${t("templates.libraryHeader")} / ${t("templates.collab.title")}`}>
+          <button
+            type="button"
+            className={`workspace-side-tab ${workspaceSideTab === "sources" ? "workspace-side-tab-active" : ""}`}
+            aria-selected={workspaceSideTab === "sources"}
+            role="tab"
+            onClick={() => setWorkspaceSideTab("sources")}
+          >
+            <Library size={16} />
+            <span>{t("templates.libraryHeader")}</span>
+          </button>
+          <button
+            type="button"
+            className={`workspace-side-tab ${workspaceSideTab === "config" ? "workspace-side-tab-active" : ""}`}
+            aria-selected={workspaceSideTab === "config"}
+            role="tab"
+            onClick={() => setWorkspaceSideTab("config")}
+          >
+            <Sparkles size={16} />
+            <span>{t("templates.collab.title")}</span>
+          </button>
+        </div>
         {/* ───────── LEFT COLUMN: Library + upload ───────── */}
         <aside
           className="sources-panel flex flex-col gap-3 overflow-hidden"
@@ -1036,7 +1060,7 @@ export function TemplatesPage() {
                 <div>
                   {collabMode === "agent" ? (
                     <AgentImportingView
-                      message={status?.message || t("template.uploading")}
+                      message={translateTemplateImportMessage(status?.message, locale) || t("template.uploading")}
                       onCancel={handleCancelImport}
                     />
                   ) : (
