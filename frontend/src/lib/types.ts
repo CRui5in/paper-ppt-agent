@@ -46,6 +46,15 @@ export interface TemplateInfo {
   theme_mode: string;
   category: string;
   keywords: string[];
+  source?: "builtin" | "user";
+  import_mode?: "builtin" | "direct" | "agent" | "llm" | "classic" | string;
+  editable?: boolean;
+  slide_count?: number;
+  has_cover?: boolean;
+  has_chapter?: boolean;
+  has_content?: boolean;
+  has_ending?: boolean;
+  has_toc?: boolean;
 }
 
 export interface ResearchConfig {
@@ -105,25 +114,74 @@ export interface ImportStartResponse {
   import_id: string;
   status: string;
   template_id?: string | null;
+  collaboration_mode?: "classic" | "agent" | "direct";
 }
 
 export interface ImportStatus {
   import_id: string;
-  status: "processing" | "complete" | "error";
+  status: "processing" | "review_required" | "complete" | "error";
+  stage?: string;
+  progress?: number;
+  message?: string;
+  steps?: Array<{
+    id: string;
+    label: string;
+    status: string;
+    message?: string;
+    error?: string;
+    started_at?: number;
+    ended_at?: number;
+    duration_ms?: number;
+  }>;
+  review_required?: boolean;
   template_id?: string | null;
   label?: string | null;
   slide_count?: number;
   export_mode?: string;
   theme_colors?: string[];
   error?: string | null;
+  collaboration_mode?: "classic" | "agent" | "direct";
 }
 
 export interface TemplatePreview {
   template_id: string;
   label: string;
   cover_svg?: string;
+  toc_svg?: string;
+  chapter_svg?: string;
   content_svg?: string;
+  ending_svg?: string;
+  design_spec?: string;
   theme_colors?: string[];
+}
+
+export interface PptistBootstrapSource {
+  kind?: "preview" | "templateImport";
+  id?: string;
+  source_pptx_url?: string | null;
+  source_pptx_path?: string | null;
+  fallback_slides?: Array<Record<string, unknown>>;
+  saved_deck?: boolean;
+  deck_source?: unknown;
+}
+
+export interface PptistDeckPayload {
+  title: string;
+  width: number;
+  height: number;
+  theme?: Record<string, unknown> | null;
+  slides: Array<Record<string, unknown>>;
+  source?: PptistBootstrapSource | Record<string, unknown> | string | null;
+  updated_at?: string | null;
+}
+
+export interface PptistSaveResult {
+  status: string;
+  output_path?: string | null;
+  export_path?: string | null;
+  slide_count?: number;
+  updated_at?: string | null;
+  warnings?: string[];
 }
 
 export interface UserTemplateItem {
@@ -131,6 +189,136 @@ export interface UserTemplateItem {
   label: string;
   summary?: string;
   slide_count?: number;
+}
+
+/**
+ * A user-drawn rectangular annotation on a slide preview. Coordinates are
+ * normalized to ``[0, 1]`` against the slide canvas.
+ */
+export interface UserAnnotation {
+  annotation_id: string;
+  slide_index: number;
+  bbox_norm: { x: number; y: number; width: number; height: number };
+  note: string;
+  linked_element_id?: string | null;
+  created_at: number;
+  resolved?: boolean;
+}
+
+export type TemplateAssetRole = "logo" | "background" | "decoration" | "content_image" | "ignore";
+export type TemplatePageType = "cover" | "toc" | "chapter" | "content" | "ending";
+
+export interface TemplateImportSlide {
+  index: number;
+  page_type: TemplatePageType;
+  text_samples?: string[];
+  preview_svg?: string;
+  preview_svg_url?: string;
+  preview_image_url?: string;
+  render_url?: string;
+  edit_base_url?: string;
+  scene_url?: string;
+  scene_version?: number;
+  edit_capabilities?: Record<string, unknown>;
+}
+
+export interface TemplateImportAsset {
+  asset_id: string;
+  file_name: string;
+  image_size?: { width: number; height: number };
+  preview_data_uri?: string;
+  preview_url?: string;
+  usage_count: number;
+  pages: number[];
+  position_stable: boolean;
+  recommended_role: TemplateAssetRole;
+  recommendation_source?: "rule" | "llm";
+  llm_reason?: string;
+  llm_confidence?: number;
+  role: TemplateAssetRole;
+  name: string;
+  occurrences: Array<{
+    slide_index: number;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  }>;
+}
+
+export interface TemplateReviewDraft {
+  label?: string;
+  page_selections?: Partial<Record<TemplatePageType, number | null>>;
+  assets?: Record<string, { role?: TemplateAssetRole; name?: string | null }>;
+  preserve_texts?: string[];
+  placeholder_hints?: Partial<Record<TemplatePageType, Record<string, string>>>;
+  element_actions?: Array<{
+    page_type: TemplatePageType;
+    element_id: string;
+    action: "keep" | "remove" | "replace_with_placeholder";
+    placeholder?: string;
+    reason?: string;
+  }>;
+  design_spec?: string;
+  annotations?: UserAnnotation[];
+}
+
+export interface TemplateReview {
+  import_id: string;
+  template_id: string;
+  label: string;
+  status: string;
+  export_mode?: string;
+  slide_count?: number;
+  page_types: TemplatePageType[];
+  asset_roles: TemplateAssetRole[];
+  page_type_candidates: Partial<Record<TemplatePageType, number[]>>;
+  slides: TemplateImportSlide[];
+  assets: TemplateImportAsset[];
+  draft: {
+    label?: string;
+    page_selections?: Partial<Record<TemplatePageType, number | null>>;
+    assets?: Record<string, { role: TemplateAssetRole; name: string }>;
+    preserve_texts?: string[];
+    placeholder_hints?: Partial<Record<TemplatePageType, Record<string, string>>>;
+    element_actions?: TemplateReviewDraft["element_actions"];
+    design_spec?: string;
+  };
+  theme_colors?: string[];
+  text_candidates?: Array<{ text: string; pages: number[]; page_count: number }>;
+  feedback_history?: Array<{ feedback: string; created_at?: number }>;
+  annotations?: UserAnnotation[];
+  conversation?: Array<{
+    role: "user" | "assistant" | string;
+    content: string;
+    created_at?: number;
+    meta?: Record<string, unknown>;
+  }>;
+  pptist_version?: string | null;
+  llm_trace?: {
+    iteration?: number;
+    updated_at?: number;
+    user_feedback?: string;
+    changed?: boolean;
+    retried_no_change?: boolean;
+    rule_patches?: string[];
+    input?: unknown;
+    action_plan?: unknown;
+  };
+  llm?: {
+    enabled?: boolean;
+    status?: "not_run" | "missing_config" | "complete" | "error" | string;
+    provider?: string;
+    model?: string;
+    agent?: boolean;
+    templateized?: boolean;
+    templateized_at?: number;
+    error?: string;
+    notes?: string[];
+    changed?: boolean;
+    retried_no_change?: boolean;
+    rule_patches?: string[];
+  };
 }
 
 export interface DeepSeekSettings {
@@ -155,6 +343,104 @@ export interface GenerateRequestPayload {
     openai_settings?: OpenAISettings;
   };
   options: GenerationOptions;
+}
+
+export type TemplateImportModelConfig = GenerateRequestPayload["model_config"];
+
+export type TemplateAgentConfigMode = "claude_code" | "custom";
+
+export interface TemplateAgentConfig {
+  mode: TemplateAgentConfigMode;
+  api_key?: string;
+  auth_token?: string;
+  base_url?: string;
+  model?: string;
+  custom_model_option?: string;
+  load_project_settings?: boolean;
+  max_turns?: number;
+  reply_language?: "zh" | "en";
+}
+
+export interface TemplateAgentStartResponse {
+  agent_job_id: string;
+  import_id: string;
+  status: string;
+}
+
+export interface TemplateAgentStatus {
+  agent_job_id: string;
+  import_id: string;
+  status: "queued" | "running" | "complete" | "error" | "cancelled" | string;
+  message?: string;
+  error?: string | null;
+  created_at?: number;
+  updated_at?: number;
+  started_at?: number | null;
+  completed_at?: number | null;
+}
+
+export interface TemplateAgentEvent {
+  type:
+    | "snapshot"
+    | "status"
+    | "message"
+    | "tool"
+    | "stderr"
+    | "system"
+    | "result"
+    | "usage"
+    | "llm_step"
+    | "artifact_updated"
+    | "complete"
+    | "cancelled"
+    | "error"
+    | "ping";
+  agent_job_id?: string;
+  import_id?: string;
+  stage?: string;
+  status?: string;
+  message?: string;
+  error?: string | null;
+  data?: Record<string, unknown> | unknown;
+  seq?: number;
+  ts?: number;
+  last_seq?: number;
+}
+
+export interface TemplateAgentClaudeCodeStatus {
+  available: boolean;
+  cli_path?: string | null;
+  sdk_available: boolean;
+  sdk_error?: string | null;
+  message: string;
+}
+
+export interface TemplateImportFileItem {
+  name: string;
+  path: string;
+  type: "file" | "directory";
+  size?: number | null;
+  image?: boolean;
+  preview_url?: string | null;
+}
+
+export interface TemplateImportFileList {
+  cwd: string;
+  parent?: string | null;
+  items: TemplateImportFileItem[];
+}
+
+/** Aggregated cost / usage snapshot derived from agent ``usage`` events. */
+export interface TemplateAgentUsage {
+  model?: string | null;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_input_tokens: number;
+  cache_creation_input_tokens: number;
+  total_cost_usd: number;
+  num_turns: number;
+  duration_ms: number;
+  model_usage?: Record<string, Record<string, number | string>> | null;
 }
 
 export interface GenerateResponse {
@@ -185,7 +471,7 @@ export interface ReexportResponse {
   warnings?: string[];
 }
 
-export type SlideDocumentElementType = "text" | "rect" | "image" | "table";
+export type SlideDocumentElementType = "text" | "rect" | "image" | "path" | "table";
 
 export interface SlideDocumentElement {
   id: string;
@@ -217,7 +503,128 @@ export interface PreviewSlide {
   content: string;
   notes?: string;
   document?: SlideDocument | null;
+  render_url?: string | null;
+  edit_base_url?: string | null;
+  scene_url?: string | null;
+  scene_version?: number | null;
+  edit_capabilities?: Record<string, unknown> | null;
 }
+
+export interface SlideSceneRun {
+  text: string;
+  fontSize?: number;
+  bold?: boolean;
+  italic?: boolean;
+  fill?: string;
+  fontFamily?: string;
+}
+
+export interface SlideSceneElement {
+  id: string;
+  shape_id?: string;
+  name?: string;
+  type: "text" | "image" | "rect" | "ellipse" | "line" | "shape" | "table" | "graphic" | "group" | "unknown";
+  z?: number;
+  bbox: { x: number; y: number; width: number; height: number; rotation?: number };
+  rotation?: number;
+  locked?: boolean;
+  visible?: boolean;
+  capabilities?: string[];
+  text?: string;
+  runs?: SlideSceneRun[];
+  textBox?: { insetLeft?: number; insetRight?: number; insetTop?: number; insetBottom?: number };
+  style?: { fill?: string; stroke?: string; strokeWidth?: number };
+  geometry?: string;
+  media_name?: string;
+  image_url?: string;
+  cells?: string[][];
+  children?: SlideSceneElement[];
+  [key: string]: unknown;
+}
+
+export interface SlideScene {
+  version: number;
+  slide_index: number;
+  width: number;
+  height: number;
+  width_emu?: number;
+  height_emu?: number;
+  scene_version?: number;
+  render_url?: string;
+  edit_base_url?: string;
+  elements: SlideSceneElement[];
+}
+
+export interface DeckScene {
+  source: "preview" | "template" | string;
+  id: string;
+  scene_version?: number;
+  slides: SlideScene[];
+}
+
+export interface EditorSelection {
+  ids: string[];
+  primaryId?: string;
+  selectedType?: SlideSceneElement["type"];
+  bounds?: { x: number; y: number; width: number; height: number };
+}
+
+export interface ScenePatchResult {
+  scene: SlideScene;
+  scene_version?: number;
+  conflicts?: string[];
+}
+
+export interface DeckImageAsset {
+  asset_id: string;
+  media_name: string;
+  mime_type: string;
+  size: number;
+}
+
+export interface DeckCheckAction {
+  label: string;
+  action?: "select" | "replaceImage" | string;
+  element_id?: string;
+  operation?: SlideSceneOperation;
+}
+
+export interface DeckCheckIssue {
+  id: string;
+  rule: string;
+  severity: "error" | "warning";
+  slide_index: number;
+  element_ids: string[];
+  bbox?: { x: number; y: number; width: number; height: number } | null;
+  detail: string;
+  recommended_actions: DeckCheckAction[];
+}
+
+export interface DeckCheckResult {
+  passed: boolean;
+  error_count: number;
+  warning_count: number;
+  issues: DeckCheckIssue[];
+}
+
+export type SlideSceneOperation =
+  | { type: "move" | "groupMove"; id: string; x: number; y: number }
+  | { type: "resize"; id: string; x: number; y: number; width: number; height: number }
+  | { type: "rotate"; id: string; rotation: number }
+  | { type: "reorder"; id: string; direction: "front" | "back" | "forward" | "backward" }
+  | { type: "updateText"; id: string; text: string }
+  | { type: "updateStyle"; id: string; fill?: string; stroke?: string; strokeWidth?: number }
+  | { type: "updateTextStyle"; id: string; fontSize?: number; fontFamily?: string; fill?: string; color?: string; bold?: boolean; italic?: boolean; align?: "left" | "center" | "right" | "justify" }
+  | { type: "updateImage"; id: string; src?: string; media_name?: string; asset_id?: string }
+  | { type: "updateTableCell"; id: string; row: number; col: number; text: string }
+  | { type: "addText"; x: number; y: number; width: number; height: number; text: string; fontSize?: number; fontFamily?: string; color?: string }
+  | { type: "addShape"; x: number; y: number; width: number; height: number; geometry?: string; fill?: string; stroke?: string; strokeWidth?: number }
+  | { type: "addImage"; x: number; y: number; width: number; height: number; src?: string; media_name?: string; asset_id?: string }
+  | { type: "addTable"; x: number; y: number; width: number; height: number; rows?: number; cols?: number; header?: string }
+  | { type: "align"; ids: string[]; mode: "left" | "center" | "right" | "top" | "middle" | "bottom"; scope?: "selection" | "slide" }
+  | { type: "distribute"; ids: string[]; axis: "horizontal" | "vertical" }
+  | { type: "delete"; id: string }
+  | { type: "duplicate"; id: string; x?: number; y?: number };
 
 export interface PreviewResponse {
   job_id: string;

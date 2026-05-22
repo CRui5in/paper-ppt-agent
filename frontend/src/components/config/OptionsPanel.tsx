@@ -51,7 +51,6 @@ interface OptionsPanelProps {
   onEnableIconRagChange: (value: boolean) => void;
   onGeminiApiKeyChange: (value: string) => void;
   onTemplateChange: (value: string) => void;
-  onManageTemplates: () => void;
   onDensityChange: (value: string) => void;
   onCustomFontChange: (value: string) => void;
   onHeadingFontChange: (value: string) => void;
@@ -82,24 +81,19 @@ export function OptionsPanel(props: OptionsPanelProps) {
           <Select
             value={props.templateId || "__none__"}
             onValueChange={(value) => {
-              if (value === "__manage__") {
-                props.onManageTemplates();
-              } else {
-                props.onTemplateChange(value === "__none__" ? "" : value);
-              }
+              props.onTemplateChange(value === "__none__" ? "" : value);
             }}
           >
             <SelectTrigger className="template-select-trigger">
               <SelectValue />
             </SelectTrigger>
-            <SelectContent>
+            <SelectContent className="template-select-content" viewportClassName="template-select-viewport">
               <SelectItem value="__none__">{t("options.templateNone")}</SelectItem>
               {props.templates.map((tmpl) => (
                 <SelectItem key={tmpl.template_id} value={tmpl.template_id}>
                   {tmpl.label || tmpl.template_id}
                 </SelectItem>
               ))}
-              <SelectItem value="__manage__">{t("options.templateManage")}</SelectItem>
             </SelectContent>
           </Select>
         </label>
@@ -272,6 +266,9 @@ export function OptionsPanel(props: OptionsPanelProps) {
             </span>
             <span className="visual-qa-copy">
               <span className="visual-qa-name">{t("options.parallelGeneration")}</span>
+              <span className="visual-qa-mode">
+                {t(`options.generationMode.${props.generationMode}`)}
+              </span>
               <span className="visual-qa-experimental parallel-experimental-badge">{t("common.experimental")}</span>
             </span>
             <ConfigHelp text={t("options.parallelGenerationTooltip")} />

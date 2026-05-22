@@ -6,6 +6,7 @@ Coordinate mapping, color parsing, font handling, and unit conversion.
 from __future__ import annotations
 
 import re
+import math
 
 # 1 SVG px = 9525 EMU (at 96 DPI)
 EMU_PER_PX = 9525
@@ -260,3 +261,85 @@ def parse_transform(transform_str: str) -> tuple[float, float, float, float, flo
         angle += float(m.group(1))
 
     return dx, dy, sx, sy, angle
+
+
+Matrix = tuple[float, float, float, float, float, float]
+
+
+def identity_matrix() -> Matrix:
+    return (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+
+
+def multiply_matrices(left: Matrix, right: Matrix) -> Matrix:
+    """Compose two SVG affine matrices, returning left * right."""
+    a1, b1, c1, d1, e1, f1 = left
+    a2, b2, c2, d2, e2, f2 = right
+    return (
+        a1 * a2 + c1 * b2,
+        b1 * a2 + d1 * b2,
+        a1 * c2 + c1 * d2,
+        b1 * c2 + d1 * d2,
+        a1 * e2 + c1 * f2 + e1,
+        b1 * e2 + d1 * f2 + f1,
+    )
+
+
+def transform_point(matrix: Matrix, x: float, y: float) -> tuple[float, float]:
+    a, b, c, d, e, f = matrix
+    return a * x + c * y + e, b * x + d * y + f
+
+
+def parse_transform_matrix(transform_str: str) -> Matrix:
+    """Parse an SVG transform list into a full affine matrix.
+
+    SVG transform commands are composed in list order. For a point column
+    vector, that means the accumulated matrix is post-multiplied by each
+    command matrix: ``translate(...) scale(...)`` becomes ``T * S``.
+    """
+    if not transform_str:
+        return identity_matrix()
+
+    matrix = identity_matrix()
+    for name, raw_args in re.findall(r"([a-zA-Z]+)\(([^)]*)\)", transform_str):
+        values = [
+            float(part)
+            for part in re.findall(r"[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?", raw_args)
+        ]
+        op = name.lower()
+        if op == "matrix" and len(values) >= 6:
+            op_matrix: Matrix = tuple(values[:6])  # type: ignore[assignment]
+        elif op == "translate":
+            tx = values[0] if values else 0.0
+            ty = values[1] if len(values) > 1 else 0.0
+            op_matrix = (1.0, 0.0, 0.0, 1.0, tx, ty)
+        elif op == "scale":
+            sx = values[0] if values else 1.0
+            sy = values[1] if len(values) > 1 else sx
+            op_matrix = (sx, 0.0, 0.0, sy, 0.0, 0.0)
+        elif op == "rotate":
+            angle = math.radians(values[0] if values else 0.0)
+            cos_a = math.cos(angle)
+            sin_a = math.sin(angle)
+            rotate_matrix: Matrix = (cos_a, sin_a, -sin_a, cos_a, 0.0, 0.0)
+            if len(values) >= 3:
+                cx, cy = values[1], values[2]
+                op_matrix = multiply_matrices(
+                    multiply_matrices((1.0, 0.0, 0.0, 1.0, cx, cy), rotate_matrix),
+                    (1.0, 0.0, 0.0, 1.0, -cx, -cy),
+                )
+            else:
+                op_matrix = rotate_matrix
+        elif op == "skewx" and values:
+            op_matrix = (1.0, 0.0, math.tan(math.radians(values[0])), 1.0, 0.0, 0.0)
+        elif op == "skewy" and values:
+            op_matrix = (1.0, math.tan(math.radians(values[0])), 0.0, 1.0, 0.0, 0.0)
+        else:
+            continue
+        matrix = multiply_matrices(matrix, op_matrix)
+    return matrix
+
+
+def matrix_to_legacy_components(matrix: Matrix) -> tuple[float, float, float, float]:
+    """Return translation and axis-aligned scales for legacy converters."""
+    a, _b, _c, d, e, f = matrix
+    return e, f, a, d

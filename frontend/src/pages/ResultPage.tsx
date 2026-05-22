@@ -1,24 +1,22 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { BringToFront, Bot, ChevronDown, CircleCheck, Copy, Database, Download, FileText, Image, ImagePlus, Info, Layers, Loader2, MessageSquareText, MousePointer2, Play, Plus, Redo2, Save, SendToBack, Sparkles, Square, Table2, Trash2, Type, Undo2, Wand2, X } from "lucide-react";
+import { Bot, CircleCheck, Database, FileText, Info, Loader2, MessageSquareText, Sparkles, Type, Wand2, X } from "lucide-react";
 import { Layout } from "../components/layout/Layout";
 import { AgentLog } from "../components/progress/AgentLog";
 import { FloatingInspector } from "../components/progress/FloatingInspector";
 import { inferActiveStage, PROGRESS_STAGES, ProgressPanel } from "../components/progress/ProgressPanel";
-import { KonvaSlideEditor, type EditorCommand, type EditorCommandType, type EditorState } from "../components/preview/KonvaSlideEditor";
 import { VersionHistory } from "../components/result/VersionHistory";
-import { ImageSearchPanel } from "../components/result/ImageSearchPanel";
 import { useGeneration } from "../hooks/useGeneration";
 import { useLocale } from "../i18n";
-import { createPreviewSlide, deletePreviewSlide, fetchCriticHistory, fetchJobStatus, fetchPreview, fetchProjectPreview, getDownloadUrl, getDownloadUrlForOutput, isNotFoundError, reexportPresentation, updatePreviewSlide } from "../lib/api";
+import { createPreviewSlide, deletePreviewSlide, duplicatePreviewSlide, fetchCriticHistory, fetchJobStatus, fetchPreview, fetchProjectPreview, getDownloadUrl, getDownloadUrlForOutput, isNotFoundError, reexportPresentation, updatePreviewSlide } from "../lib/api";
 import { FontCustomizer } from "../components/result/FontCustomizer";
 import { HoverTooltip } from "../components/common/HoverTooltip";
-import { DeleteConfirmTooltip } from "../components/common/DeleteConfirmTooltip";
 import { translateJobMessage, translateStageStatus } from "../lib/i18nStatus";
-import type { CriticEvent, DeepSeekSettings, GenerateRequestPayload, GenerationHistoryItem, JobStatus, OpenAISettings, PreviewResponse, PreviewSlide, SlideDocument } from "../lib/types";
+import type { CriticEvent, DeepSeekSettings, GenerateRequestPayload, GenerationHistoryItem, JobStatus, OpenAISettings, PreviewResponse, PreviewSlide, SlideDocument, SlideScene } from "../lib/types";
 import { Switch } from "../components/ui/switch";
 import { Progress } from "../components/ui/progress";
 import { RecentTasksPanel } from "../components/history/RecentTasksPanel";
+import { PptistStudioHost } from "../components/pptist/PptistStudioHost";
 
 // Routing profile stored by GeneratePage so we can re-use model config here.
 const ROUTING_PROFILE_STORAGE_KEY = "paper-ppt-agent-routing-profiles-v1";
@@ -63,7 +61,6 @@ export function ResultPage() {
   const jobId = params.get("job");
   const { t, locale } = useLocale();
   const {
-    reset,
     history,
     startRefine,
     cancelCurrentRun,
@@ -106,7 +103,7 @@ export function ResultPage() {
   const resultStatus = job?.status ?? result?.status ?? historyEntry?.status;
   const canEditPreview = resultStatus === "complete" && !loadError && Boolean(jobId);
   const downloadHref = outputPath
-    ? getDownloadUrlForOutput(outputPath)
+    ? (jobId ? getDownloadUrl(jobId) : getDownloadUrlForOutput(outputPath))
     : jobId
       ? getDownloadUrl(jobId)
       : undefined;
@@ -448,12 +445,46 @@ export function ResultPage() {
     }
   };
 
+  const handleDuplicateSlide = async (slide: PreviewSlide) => {
+    if (!jobId || !canEditPreview) return;
+    setReexportError(null);
+    try {
+      const preview = slide.scene_url
+        ? await duplicatePreviewSlide(jobId, slide.index)
+        : {
+            ...(result ?? { job_id: jobId, slides, status: resultStatus ?? "complete" }),
+            slides: [...slides, await createPreviewSlide(jobId, slide.content, slide.document ?? undefined, slide.notes ?? "")],
+          };
+      setResult(preview);
+      setSlides(preview.slides);
+      setSelectedSlide(preview.slides.find((item) => item.index === slide.index + 1) ?? preview.slides[preview.slides.length - 1]);
+    } catch (err) {
+      setReexportError(err instanceof Error ? err.message : "Failed to duplicate slide.");
+    }
+  };
+
   const handleSaveSlideNotes = async (slide: PreviewSlide, notes: string) => {
     if (!jobId || !canEditPreview) return;
     const updated = await updatePreviewSlide(jobId, slide.index, slide.content, slide.document ?? undefined, notes);
     setSlides((current) => current.map((item) => item.index === updated.index ? updated : item));
     setSelectedSlide(updated);
     setResult((current) => current ? { ...current, slides: current.slides.map((item) => item.index === updated.index ? updated : item) } : current);
+  };
+
+  const handleSceneSlideChange = (scene: SlideScene) => {
+    const patchSlide = (slide: PreviewSlide): PreviewSlide => (
+      slide.index === scene.slide_index
+        ? {
+            ...slide,
+            render_url: scene.render_url ?? slide.render_url,
+            edit_base_url: scene.edit_base_url ?? slide.edit_base_url,
+            scene_version: scene.scene_version ?? slide.scene_version,
+          }
+        : slide
+    );
+    setSlides((current) => current.map(patchSlide));
+    setSelectedSlide((current) => (current && current.index === scene.slide_index ? patchSlide(current) : current));
+    setResult((current) => current ? { ...current, slides: current.slides.map(patchSlide) } : current);
   };
 
   const handleRefreshPreview = async (preferredSlideIndex?: number) => {
@@ -523,16 +554,13 @@ export function ResultPage() {
           reexportLoading={reexportLoading}
           reexportNotice={reexportNotice}
           onDismissReexportNotice={() => setReexportNotice(null)}
-          editable={canEditPreview}
           onSaveSlide={handleSaveSlideContent}
           onSaveNotes={handleSaveSlideNotes}
+          onSceneSlideChange={handleSceneSlideChange}
           onCreateSlide={() => void handleCreateSlide()}
           onDeleteSlide={handleDeleteSlide}
+          onDuplicateSlide={handleDuplicateSlide}
           onImageApplied={(slideIndex) => handleRefreshPreview(slideIndex)}
-          onNewRun={() => {
-            reset();
-            navigate("/generate?fresh=1");
-          }}
           loading={isResultLoading}
           onDeleteRun={jobId ? async () => {
             await removeHistory(jobId);
@@ -691,21 +719,11 @@ function ResultSourceSummary({ historyEntry }: { historyEntry?: GenerationHistor
 
 function ResultSlideWorkspace({
   jobId,
-  slides,
-  selectedSlide,
-  onSelect,
   downloadHref,
   onReexport,
   reexportLoading,
   reexportNotice,
   onDismissReexportNotice,
-  editable,
-  onSaveSlide,
-  onSaveNotes,
-  onCreateSlide,
-  onDeleteSlide,
-  onImageApplied,
-  onNewRun,
   loading,
   onDeleteRun,
 }: {
@@ -718,189 +736,19 @@ function ResultSlideWorkspace({
   reexportLoading: boolean;
   reexportNotice: string | null;
   onDismissReexportNotice: () => void;
-  editable: boolean;
   onSaveSlide: (slide: PreviewSlide, content: string, document: SlideDocument) => Promise<void>;
   onSaveNotes: (slide: PreviewSlide, notes: string) => Promise<void>;
+  onSceneSlideChange: (scene: SlideScene) => void;
   onCreateSlide: () => void;
   onDeleteSlide: (slide: PreviewSlide) => Promise<void>;
+  onDuplicateSlide: (slide: PreviewSlide) => Promise<void>;
   onImageApplied: (slideIndex: number) => Promise<void>;
-  onNewRun: () => void;
   loading?: boolean;
   onDeleteRun?: () => Promise<void>;
 }) {
   const { t } = useLocale();
-  const [editorCommand, setEditorCommand] = useState<EditorCommand | undefined>(undefined);
-  const [editorState, setEditorState] = useState<EditorState>({
-    autoSave: true,
-    saveState: "idle",
-    canEdit: editable,
-    canUndo: false,
-    canRedo: false,
-  });
-  const [thumbnailMenu, setThumbnailMenu] = useState<{ left: number; top: number; slide: PreviewSlide } | null>(null);
-  const [pendingDeleteIndexes, setPendingDeleteIndexes] = useState<number[]>([]);
-  const [notesDraft, setNotesDraft] = useState(selectedSlide?.notes ?? "");
-  const [slideshowOpen, setSlideshowOpen] = useState(false);
-  const [slideshowIndex, setSlideshowIndex] = useState(0);
-  const [imageSearchOpen, setImageSearchOpen] = useState(false);
-  const exportMenuRef = useRef<HTMLDivElement | null>(null);
-  const deleteRunRef = useRef<HTMLButtonElement | null>(null);
-  const [exportMenuOpen, setExportMenuOpen] = useState(false);
-  const [deleteRunConfirmOpen, setDeleteRunConfirmOpen] = useState(false);
-  const [deleteRunLoading, setDeleteRunLoading] = useState(false);
-  const visibleSlides = slides.filter((slide) => !pendingDeleteIndexes.includes(slide.index));
-  const runCommand = (type: EditorCommandType) => {
-    if (type === "save" && pendingDeleteIndexes.length) {
-      void flushPendingSlideDeletes();
-    }
-    setEditorCommand({ type, id: Date.now() });
-  };
-  const markSlideForDelete = (slide: PreviewSlide) => {
-    if (slides.length - pendingDeleteIndexes.length <= 1) return;
-    setPendingDeleteIndexes((current) => current.includes(slide.index) ? current : [...current, slide.index]);
-    if (selectedSlide?.index === slide.index) {
-      const fallback = slides.find((item) => item.index !== slide.index && !pendingDeleteIndexes.includes(item.index));
-      if (fallback) onSelect(fallback);
-    }
-  };
-  const flushPendingSlideDeletes = async () => {
-    const targets = [...pendingDeleteIndexes].sort((a, b) => b - a);
-    for (const index of targets) {
-      const slide = slides.find((item) => item.index === index);
-      if (slide) await onDeleteSlide(slide);
-    }
-    setPendingDeleteIndexes([]);
-  };
-  useEffect(() => {
-    setNotesDraft(selectedSlide?.notes ?? "");
-  }, [selectedSlide?.index, selectedSlide?.notes]);
-  useEffect(() => {
-    if (!slideshowOpen) return undefined;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setSlideshowOpen(false);
-      if (event.key === "ArrowRight" || event.key === " ") setSlideshowIndex((index) => Math.min(visibleSlides.length - 1, index + 1));
-      if (event.key === "ArrowLeft") setSlideshowIndex((index) => Math.max(0, index - 1));
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [slideshowOpen, visibleSlides.length]);
-  useEffect(() => {
-    if (!thumbnailMenu) return undefined;
-    const close = () => setThumbnailMenu(null);
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") close();
-    };
-    window.addEventListener("click", close);
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      window.removeEventListener("click", close);
-      window.removeEventListener("keydown", onKeyDown);
-    };
-  }, [thumbnailMenu]);
-  useEffect(() => {
-    if (!exportMenuOpen) return undefined;
-    const closeOnOutside = (event: PointerEvent) => {
-      if (exportMenuRef.current && !exportMenuRef.current.contains(event.target as Node)) {
-        setExportMenuOpen(false);
-      }
-    };
-    window.addEventListener("pointerdown", closeOnOutside);
-    return () => window.removeEventListener("pointerdown", closeOnOutside);
-  }, [exportMenuOpen]);
   return (
-    <main className="slide-workspace-panel">
-      <div className="slide-workspace-header">
-        <p>
-          <span>{t("preview.slidePreview")}</span>
-          <HoverTooltip content={t("preview.editorWarning")}><span className="preview-info-tip"><Info size={15} /></span></HoverTooltip>
-        </p>
-        {onDeleteRun ? (
-          <button
-            ref={deleteRunRef}
-            type="button"
-            className="result-delete-run-button"
-            aria-label={t("versions.delete")}
-            onClick={() => setDeleteRunConfirmOpen((open) => !open)}
-          >
-            <Trash2 size={16} />
-            <span>{t("result.deleteTask")}</span>
-          </button>
-        ) : null}
-        <div ref={exportMenuRef} className="result-export-menu">
-          <div className="result-export-split">
-            {reexportLoading ? (
-              <button type="button" className="result-export-main" disabled>
-                <Loader2 size={16} className="spin" />
-                <span>{t("result.reexportLoading")}</span>
-              </button>
-            ) : downloadHref ? (
-              <a className="result-export-main" href={downloadHref} onClick={() => setExportMenuOpen(false)}>
-                <Download size={16} />
-                <span>{t("result.download")}</span>
-              </a>
-            ) : (
-              <button type="button" className="result-export-main" disabled>
-                <Download size={16} />
-                <span>{t("common.pending")}</span>
-              </button>
-            )}
-            <button
-              type="button"
-              className="result-export-caret"
-              aria-expanded={exportMenuOpen}
-              aria-label={t("result.download")}
-              disabled={reexportLoading}
-              onClick={() => setExportMenuOpen((open) => !open)}
-            >
-              <ChevronDown size={14} />
-            </button>
-          </div>
-          {exportMenuOpen ? (
-            <div className="result-export-menu-content">
-            <button
-              type="button"
-              onClick={() => {
-                setExportMenuOpen(false);
-                onReexport();
-              }}
-              disabled={reexportLoading || !editable}
-            >
-              {reexportLoading ? <Loader2 size={15} className="spin" /> : <Wand2 size={15} />}
-              <span>{reexportLoading ? t("result.reexportLoading") : t("result.reexport")}</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setExportMenuOpen(false);
-                onNewRun();
-              }}
-            >
-              <Plus size={15} />
-              <span>{t("result.newRun")}</span>
-            </button>
-            </div>
-          ) : null}
-        </div>
-        {deleteRunConfirmOpen && onDeleteRun ? (
-          <DeleteConfirmTooltip
-            anchorRef={deleteRunRef}
-            message={t("sidebar.confirmDeleteFiles")}
-            confirmLabel={t("versions.delete")}
-            cancelLabel={t("versions.close")}
-            loading={deleteRunLoading}
-            onCancel={() => setDeleteRunConfirmOpen(false)}
-            onConfirm={async () => {
-              setDeleteRunLoading(true);
-              try {
-                await onDeleteRun();
-              } finally {
-                setDeleteRunLoading(false);
-                setDeleteRunConfirmOpen(false);
-              }
-            }}
-          />
-        ) : null}
-      </div>
+    <main className="slide-workspace-panel result-pptist-panel">
       {reexportLoading || reexportNotice ? (
         <div className={`result-export-status ${reexportLoading ? "result-export-status-loading" : ""}`}>
           {reexportLoading ? <Loader2 size={15} className="spin" /> : <Info size={15} />}
@@ -909,7 +757,7 @@ function ResultSlideWorkspace({
             <button
               type="button"
               className="result-export-status-close"
-              aria-label={t("versions.close")}
+              aria-label={t("common.close")}
               onClick={onDismissReexportNotice}
             >
               <X size={14} />
@@ -917,163 +765,21 @@ function ResultSlideWorkspace({
           ) : null}
         </div>
       ) : null}
-      <div className="slide-toolbar">
-        <button type="button" disabled={!editable} onClick={onCreateSlide}><Plus size={15} /> {t("preview.newSlide")}</button>
-        <span className="toolbar-divider" />
-        <HoverTooltip content={t("editor.textTool")}><button type="button" disabled={!editable} onClick={() => runCommand("addText")}><Type size={15} /></button></HoverTooltip>
-        <HoverTooltip content={t("editor.shapeTool")}><button type="button" disabled={!editable} onClick={() => runCommand("addRect")}><Square size={15} /></button></HoverTooltip>
-        <HoverTooltip content={t("editor.pictureTool")}><button type="button" disabled={!editable} onClick={() => runCommand("addImage")}><Image size={15} /></button></HoverTooltip>
-        <HoverTooltip content={t("imageSearch.title")}>
-          <button
-            type="button"
-            className={imageSearchOpen ? "slide-toolbar-button-active" : undefined}
-            disabled={!editable || !jobId || !selectedSlide}
-            onClick={() => setImageSearchOpen((open) => !open)}
-          >
-            <ImagePlus size={15} /> {t("imageSearch.shortTitle")}
-          </button>
-        </HoverTooltip>
-        <HoverTooltip content={t("editor.tableTool")}><button type="button" disabled={!editable} onClick={() => runCommand("addTable")}><Table2 size={15} /></button></HoverTooltip>
-        <span className="toolbar-divider" />
-        <HoverTooltip content={t("editor.undo")}><button type="button" disabled={!editable || !editorState.canUndo} onClick={() => runCommand("undo")}><Undo2 size={15} /></button></HoverTooltip>
-        <HoverTooltip content={t("editor.redo")}><button type="button" disabled={!editable || !editorState.canRedo} onClick={() => runCommand("redo")}><Redo2 size={15} /></button></HoverTooltip>
-        <HoverTooltip content={t("editor.duplicate")}><button type="button" disabled={!editable || !editorState.selectedType} onClick={() => runCommand("duplicate")}><Copy size={15} /></button></HoverTooltip>
-        <HoverTooltip content={t("editor.delete")}><button type="button" disabled={!editable || !editorState.selectedType} onClick={() => runCommand("delete")}><Trash2 size={15} /></button></HoverTooltip>
-        <span className="toolbar-divider" />
-        <HoverTooltip content={t("editor.sendBackward")}><button type="button" disabled={!editable || !editorState.selectedType} onClick={() => runCommand("backward")}><SendToBack size={15} /></button></HoverTooltip>
-        <HoverTooltip content={t("editor.bringForward")}><button type="button" disabled={!editable || !editorState.selectedType} onClick={() => runCommand("forward")}><BringToFront size={15} /></button></HoverTooltip>
-        <span className="toolbar-divider" />
-        <HoverTooltip content={t("editor.autosave")}>
-          <button type="button" disabled={!editable} onClick={() => runCommand("toggleAutosave")}>
-            <Layers size={15} /> {editorState.autoSave ? t("editor.autosave") : t("editor.manual")}
-          </button>
-        </HoverTooltip>
-        <HoverTooltip content={t("editor.saveEdits")}>
-          <button type="button" disabled={!editable || editorState.saveState === "saving"} onClick={() => runCommand("save")}>
-            <Save size={15} /> {editorState.saveState === "saving" ? t("editor.saving") : editorState.saveState === "saved" ? t("editor.saved") : t("editor.save")}
-          </button>
-        </HoverTooltip>
-        <span className="toolbar-spacer" />
-        <HoverTooltip content={t("preview.startSlideshow")}>
-          <button
-            type="button"
-            disabled={!visibleSlides.length}
-            onClick={() => {
-              setSlideshowIndex(Math.max(0, visibleSlides.findIndex((slide) => slide.index === selectedSlide?.index)));
-              setSlideshowOpen(true);
-            }}
-          >
-            <Play size={15} /> {t("preview.slideshow")}
-          </button>
-        </HoverTooltip>
-        <button type="button" disabled><MousePointer2 size={15} /> {t("editor.fit")}</button>
-        <button type="button" disabled>16:9</button>
-      </div>
-      <div className="slide-stage result-slide-stage">
-        <div className="thumbnail-rail">
-          {loading ? Array.from({ length: 5 }).map((_, index) => (
-            <button type="button" className={`rail-slide ${index === 0 ? "rail-slide-active" : ""}`} key={index} disabled>
-              <span>{index + 1}</span>
-              <div className="rail-placeholder motion-skeleton" />
-            </button>
-          )) : visibleSlides.length > 0 ? visibleSlides.map((slide) => (
-            <button
-              type="button"
-              key={slide.index}
-              className={`rail-slide ${selectedSlide?.index === slide.index ? "rail-slide-active" : ""}`}
-              onClick={() => onSelect(slide)}
-              onContextMenu={(event) => {
-                event.preventDefault();
-                onSelect(slide);
-                setThumbnailMenu({ left: event.clientX, top: event.clientY, slide });
-              }}
-            >
-              <span>{slide.index}</span>
-              <div dangerouslySetInnerHTML={{ __html: slide.content }} />
-            </button>
-          )) : Array.from({ length: 1 }).map((_, index) => (
-            <button type="button" className={`rail-slide ${index === 0 ? "rail-slide-active" : ""}`} key={index}>
-              <span>{index + 1}</span>
-              <div className="rail-placeholder" />
-            </button>
-          ))}
-          <HoverTooltip content={editable ? t("preview.newSlide") : t("common.pending")}>
-            <button className="rail-add" type="button" disabled={!editable} onClick={onCreateSlide}>
-              <Plus size={18} />
-            </button>
-          </HoverTooltip>
-          {thumbnailMenu ? (
-            <div
-              className="konva-context-menu thumbnail-context-menu"
-              style={{ left: thumbnailMenu.left, top: thumbnailMenu.top }}
-              onClick={(event) => event.stopPropagation()}
-            >
-              <strong>{t("preview.slidePreview")}</strong>
-              <button
-                type="button"
-                disabled={!editable || slides.length - pendingDeleteIndexes.length <= 1}
-                onClick={() => {
-                markSlideForDelete(thumbnailMenu.slide);
-                setThumbnailMenu(null);
-              }}
-              >
-                {t("editor.delete")}
-              </button>
-            </div>
-          ) : null}
-        </div>
-        <div className="slide-canvas-area">
-          {loading ? (
-            <div className="scholarly-slide-frame slide-loading-frame motion-skeleton" />
-          ) : selectedSlide ? (
-            <KonvaSlideEditor
-              slide={selectedSlide}
-              editable={editable}
-              command={editorCommand}
-              onStateChange={setEditorState}
-              onSave={onSaveSlide}
-            />
-          ) : (
-            <div className="scholarly-slide-frame viewer-empty" />
-          )}
-          <label className="speaker-notes speaker-notes-editable">
-            <textarea
-              value={notesDraft}
-              maxLength={1000}
-              disabled={!editable || !selectedSlide}
-              placeholder={t("preview.notesPlaceholder")}
-              onChange={(event) => setNotesDraft(event.target.value)}
-              onBlur={() => {
-                if (selectedSlide && notesDraft !== (selectedSlide.notes ?? "")) void onSaveNotes(selectedSlide, notesDraft);
-              }}
-            />
-            <em>{notesDraft.length} / 1000</em>
-          </label>
-          {imageSearchOpen && jobId && selectedSlide ? (
-            <ImageSearchPanel
-              jobId={jobId}
-              slideIndex={selectedSlide.index}
-              slideTitle={selectedSlide.name}
-              onClose={() => setImageSearchOpen(false)}
-              onImageApplied={() => onImageApplied(selectedSlide.index)}
-            />
-          ) : null}
-        </div>
-      </div>
-      {slideshowOpen && visibleSlides[slideshowIndex] ? (
-        <div className="slideshow-overlay" role="dialog" aria-modal="true" onClick={() => setSlideshowIndex((index) => Math.min(visibleSlides.length - 1, index + 1))}>
-          <HoverTooltip content={t("preview.exitSlideshow")}>
-            <button type="button" className="slideshow-close" onClick={(event) => { event.stopPropagation(); setSlideshowOpen(false); }}>
-              <X size={18} />
-            </button>
-          </HoverTooltip>
-          <div className="slideshow-slide" dangerouslySetInnerHTML={{ __html: visibleSlides[slideshowIndex].content }} />
-          <div className="slideshow-footer">
-            <span>{slideshowIndex + 1} / {visibleSlides.length}</span>
-            <span>{t("preview.slideshowHint")}</span>
-          </div>
-        </div>
-      ) : null}
+      {jobId ? (
+        <PptistStudioHost
+          source={{ kind: "preview", jobId }}
+          className="pptist-result-host"
+          downloadHref={downloadHref}
+          onReexport={onReexport}
+          onDeleteRun={onDeleteRun}
+          onSaved={() => onDismissReexportNotice()}
+          onError={() => undefined}
+        />
+      ) : loading ? (
+        <div className="viewer-empty">{t("common.loading")}</div>
+      ) : (
+        <div className="viewer-empty">{t("monitor.waiting")}</div>
+      )}
     </main>
   );
 }
@@ -1246,7 +952,7 @@ function ConfigViewer({
   if (options?.language) entries.push({ label: t("config.language"), value: options.language });
   if (options?.detail_level) entries.push({ label: t("config.detailLevel"), value: options.detail_level });
   if (options?.generation_mode && options.generation_mode !== "sequential") {
-    entries.push({ label: t("options.parallelGeneration"), value: options.generation_mode });
+    entries.push({ label: t("options.parallelGeneration"), value: t(`options.generationMode.${options.generation_mode}`) });
     if (options.generation_mode === "page_parallel" && options.parallel_concurrency) {
       entries.push({ label: t("options.parallelPageConcurrency"), value: String(options.parallel_concurrency) });
     }
@@ -1315,6 +1021,16 @@ function pickSelectedSlide(slides: PreviewSlide[], selectedSlide?: PreviewSlide)
     return slides[0];
   }
   return slides.find((slide) => slide.index === selectedSlide.index) ?? slides[0];
+}
+
+function imageFilenameFromUrl(url: string) {
+  try {
+    const parsed = new URL(url);
+    const name = parsed.pathname.split("/").filter(Boolean).pop();
+    return name || "search-image.png";
+  } catch {
+    return "search-image.png";
+  }
 }
 
 function formatStatusLabel(

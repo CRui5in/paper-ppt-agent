@@ -1,5 +1,6 @@
 import type { PreviewSlide } from "../../lib/types";
 import { useLocale } from "../../i18n";
+import { SlideVisual } from "./SlideVisual";
 
 interface SlidePreviewProps {
   slides: PreviewSlide[];
@@ -29,7 +30,7 @@ export function SlidePreview({ slides, selectedSlide, onSelect }: SlidePreviewPr
             onClick={() => onSelect(slide)}
             title={`PPT ${slide.index}`}
           >
-            <div className="thumbnail-svg" dangerouslySetInnerHTML={{ __html: slide.content }} />
+            <SlideVisual slide={slide} className="thumbnail-svg" />
             <div className="thumbnail-caption">
               <strong>{`PPT ${slide.index}`}</strong>
               <span>{slide.name}</span>

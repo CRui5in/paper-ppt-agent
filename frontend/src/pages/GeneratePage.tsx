@@ -1,34 +1,34 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   Bot,
   BarChart3,
-  BringToFront,
   ChevronDown,
   CircleCheck,
-  Copy,
   Database,
-  FileText,
-  Image,
-  ImagePlus,
-  Info,
-  Layers,
+  Download,
+  Eye,
+  Image as ImageIcon,
   LoaderCircle,
   Link as LinkIcon,
+  Maximize2,
   MessageSquareText,
+  Minus,
+  MoreHorizontal,
   MousePointer2,
+  Omega,
   Play,
   Plus,
   Redo2,
   Save,
-  SendToBack,
+  Search,
   Settings2,
   Sparkles,
   Square,
   Table2,
-  Trash2,
   Type,
   Undo2,
+  Video,
   Wand2,
   X,
 } from "lucide-react";
@@ -41,7 +41,7 @@ import { FloatingInspector } from "../components/progress/FloatingInspector";
 import { inferActiveStage, PROGRESS_STAGES, ProgressPanel } from "../components/progress/ProgressPanel";
 import { UploadZone } from "../components/upload/UploadZone";
 import { RecentTasksPanel } from "../components/history/RecentTasksPanel";
-import { ImageSearchPanel } from "../components/result/ImageSearchPanel";
+import { PptistStudioHost } from "../components/pptist/PptistStudioHost";
 import { useGeneration } from "../hooks/useGeneration";
 import { useLocale } from "../i18n";
 import { fetchTemplates } from "../lib/api";
@@ -57,7 +57,6 @@ import type {
   TemplateInfo,
   UploadResponse,
 } from "../lib/types";
-import { TemplateManager } from "../components/template/TemplateManager";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Progress } from "../components/ui/progress";
@@ -170,7 +169,6 @@ export function GeneratePage() {
     logs,
     criticEvents,
     enrichmentStats,
-    selectedSlide,
     connectionStatus,
     error,
     currentRunConfig,
@@ -183,9 +181,7 @@ export function GeneratePage() {
     cancelCurrentRun,
     connect,
     resumeCurrentRun,
-    hydrateResult,
     refreshHistoryStatuses,
-    selectSlide,
     reset,
   } = useGeneration();
   const [initialSettings] = useState(readPresentationSettingsDraft);
@@ -249,7 +245,6 @@ export function GeneratePage() {
   });
   const [templateId, setTemplateId] = useState(initialSettings.templateId ?? "");
   const [templates, setTemplates] = useState<TemplateInfo[]>([]);
-  const [templateManagerOpen, setTemplateManagerOpen] = useState(false);
   const [cancelLoading, setCancelLoading] = useState(false);
   const [secondaryPanel, setSecondaryPanel] = useState<SecondaryPanel | null>(null);
   const freshRequested = searchParams.get("fresh") === "1";
@@ -609,17 +604,8 @@ export function GeneratePage() {
           jobId={jobId}
           job={job}
           slides={slides}
-          selectedSlide={selectedSlide}
-          onSelect={selectSlide}
-          canvasFormat={canvasFormat}
           isGenerating={canCancelCurrentRun}
           loading={Boolean(targetJobId && !job && slides.length === 0)}
-          onImageApplied={async (slideIndex) => {
-            if (!jobId) return;
-            await hydrateResult(jobId);
-            const refreshed = useGeneration.getState().runs[jobId]?.slides ?? useGeneration.getState().slides;
-            selectSlide(refreshed.find((slide) => slide.index === slideIndex) ?? refreshed[0]);
-          }}
         />
 
         <aside className="configuration-panel">
@@ -683,7 +669,6 @@ export function GeneratePage() {
                 onEnableIconRagChange={setEnableIconRag}
                 onGeminiApiKeyChange={setGeminiApiKey}
                 onTemplateChange={setTemplateId}
-                onManageTemplates={() => setTemplateManagerOpen(true)}
                 density={density}
                 customFont={customFont}
                 headingFont={headingFont}
@@ -761,17 +746,6 @@ export function GeneratePage() {
       >
         <CriticPanel criticEvents={criticEvents} jobId={jobId} />
       </FloatingInspector>
-      <TemplateManager
-        open={templateManagerOpen}
-        onClose={() => setTemplateManagerOpen(false)}
-        onSelect={(tid) => {
-          setTemplateId(tid);
-          // Refresh templates list to include newly imported ones
-          fetchTemplates()
-            .then((list) => setTemplates(list))
-            .catch(() => undefined);
-        }}
-      />
     </Layout>
   );
 }
@@ -897,12 +871,7 @@ function SourceList({
           </span>
           <CircleCheck size={15} className="source-check" />
         </div>
-      )) : (
-        <div className="source-empty-state">
-          <FileText size={22} />
-          <span>{t("source.empty")}</span>
-        </div>
-      )}
+      )) : null}
     </div>
   );
 }
@@ -911,140 +880,187 @@ function SlideWorkspace({
   jobId,
   job,
   slides,
-  selectedSlide,
-  onSelect,
-  canvasFormat,
   isGenerating,
   loading,
-  onImageApplied,
 }: {
   jobId?: string;
   job?: JobStatus;
   slides?: PreviewSlide[];
-  selectedSlide?: PreviewSlide;
-  onSelect: (slide: PreviewSlide) => void;
-  canvasFormat: string;
   isGenerating: boolean;
   loading?: boolean;
-  onImageApplied?: (slideIndex: number) => Promise<void> | void;
 }) {
   const { t } = useLocale();
   const safeSlides = Array.isArray(slides) ? slides : [];
-  const lastSlideIndex = safeSlides.length > 0 ? safeSlides[safeSlides.length - 1].index : 0;
-  const totalSlides = Math.max(job?.total_slides ?? 0, lastSlideIndex, safeSlides.length);
+  const slideSignature = safeSlides.map((slide) => slide.index).join(":");
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  const canOpenPptPreview = Boolean(
+    jobId && (job?.output_path || job?.status === "complete" || job?.status === "error" || job?.status === "cancelled"),
+  );
+  const hostKey = `generate:${jobId ?? "empty"}:${canOpenPptPreview ? "preview" : "pending"}:${safeSlides.length}:${job?.slides_completed ?? 0}`;
+
+  useEffect(() => {
+    setSelectedIndex((current) => {
+      if (!safeSlides.length) return null;
+      if (current && safeSlides.some((slide) => slide.index === current)) return current;
+      return safeSlides[safeSlides.length - 1]?.index ?? safeSlides[0].index;
+    });
+  }, [slideSignature, safeSlides.length]);
+
+  if (canOpenPptPreview && jobId) {
+    return (
+      <main className="slide-workspace-panel result-pptist-panel generate-pptist-panel">
+        <PptistStudioHost
+          key={hostKey}
+          source={{ kind: "preview", jobId }}
+          className="pptist-generate-host"
+        />
+      </main>
+    );
+  }
+
+  const lastSlideIndex = safeSlides.length > 0 ? Math.max(...safeSlides.map((slide) => slide.index)) : 0;
+  const expectedSlides = Math.max(job?.total_slides ?? 0, lastSlideIndex, safeSlides.length, isGenerating ? 1 : 0);
+  const thumbnailCount = Math.max(1, expectedSlides || 1);
   const slideByIndex = new Map(safeSlides.map((slide) => [slide.index, slide]));
-  const railItems = totalSlides > 0
-    ? Array.from({ length: totalSlides }, (_, index) => slideByIndex.get(index + 1) ?? index + 1)
-    : [];
-  const [imageSearchOpen, setImageSearchOpen] = useState(false);
-  const canUseImageSearch = Boolean(jobId && selectedSlide && !loading);
+  const selectedSlide = selectedIndex ? slideByIndex.get(selectedIndex) : safeSlides[safeSlides.length - 1];
+  const message = loading || isGenerating ? t("monitor.waiting") : t("preview.emptyState");
+
   return (
-    <main className="slide-workspace-panel">
-      <div className="slide-workspace-header">
-        <p>
-          <span>{t("preview.slidePreview")}</span>
-          <HoverTooltip content={t("preview.editorWarning")}><span className="preview-info-tip"><Info size={15} /></span></HoverTooltip>
-        </p>
-      </div>
-      <div className="slide-toolbar">
-        <HoverTooltip content={t("common.pending")}><button type="button" disabled><Plus size={15} /> {t("preview.newSlide")}</button></HoverTooltip>
-        <span className="toolbar-divider" />
-        <HoverTooltip content={t("editor.textTool")}><button type="button" disabled><Type size={15} /></button></HoverTooltip>
-        <HoverTooltip content={t("editor.shapeTool")}><button type="button" disabled><Square size={15} /></button></HoverTooltip>
-        <HoverTooltip content={t("editor.pictureTool")}><button type="button" disabled><Image size={15} /></button></HoverTooltip>
-        <HoverTooltip content={t("imageSearch.title")}>
-          <button
-            type="button"
-            className={imageSearchOpen ? "slide-toolbar-button-active" : undefined}
-            disabled={!canUseImageSearch}
-            onClick={() => setImageSearchOpen((open) => !open)}
-          >
-            <ImagePlus size={15} /> {t("imageSearch.shortTitle")}
-          </button>
-        </HoverTooltip>
-        <HoverTooltip content={t("editor.tableTool")}><button type="button" disabled><Table2 size={15} /></button></HoverTooltip>
-        <span className="toolbar-divider" />
-        <HoverTooltip content={t("editor.undo")}><button type="button" disabled><Undo2 size={15} /></button></HoverTooltip>
-        <HoverTooltip content={t("editor.redo")}><button type="button" disabled><Redo2 size={15} /></button></HoverTooltip>
-        <HoverTooltip content={t("editor.duplicate")}><button type="button" disabled><Copy size={15} /></button></HoverTooltip>
-        <HoverTooltip content={t("editor.delete")}><button type="button" disabled><Trash2 size={15} /></button></HoverTooltip>
-        <span className="toolbar-divider" />
-        <HoverTooltip content={t("editor.sendBackward")}><button type="button" disabled><SendToBack size={15} /></button></HoverTooltip>
-        <HoverTooltip content={t("editor.bringForward")}><button type="button" disabled><BringToFront size={15} /></button></HoverTooltip>
-        <span className="toolbar-divider" />
-        <HoverTooltip content={t("editor.autosave")}><button type="button" disabled><Layers size={15} /> {t("editor.manual")}</button></HoverTooltip>
-        <HoverTooltip content={t("editor.saveEdits")}><button type="button" disabled><Save size={15} /> {t("editor.save")}</button></HoverTooltip>
-        <span className="toolbar-spacer" />
-        <HoverTooltip content={t("preview.startSlideshow")}><button type="button" disabled><Play size={15} /> {t("preview.slideshow")}</button></HoverTooltip>
-        <button type="button" disabled><MousePointer2 size={15} /> {t("editor.fit")}</button>
-        <button type="button" disabled>{canvasFormat === "ppt43" ? "4:3" : "16:9"} <ChevronDown size={13} /></button>
-      </div>
-      <div className="slide-stage">
-        <div className="thumbnail-rail">
-          {loading ? Array.from({ length: 4 }).map((_, index) => (
-            <button type="button" className={`rail-slide ${index === 0 ? "rail-slide-active" : ""}`} key={index} disabled>
-              <span>{index + 1}</span>
-              <div className="rail-placeholder motion-skeleton" />
-            </button>
-          )) : railItems.length > 0 ? railItems.map((item) => (
-            typeof item === "number" ? (
-              <button
-                type="button"
-                key={`pending-${item}`}
-                className="rail-slide rail-slide-pending"
-                disabled
-                aria-label={`PPT ${item} pending`}
-              >
-                <span>{item}</span>
-                <div className="rail-placeholder rail-placeholder-pending motion-skeleton" />
-              </button>
-            ) : (
-              <button
-                type="button"
-                key={item.index}
-                className={`rail-slide ${selectedSlide?.index === item.index ? "rail-slide-active" : ""}`}
-                onClick={() => onSelect(item)}
-              >
-                <span>{item.index}</span>
-                <div dangerouslySetInnerHTML={{ __html: item.content }} />
-              </button>
-            )
-          )) : Array.from({ length: 1 }).map((_, index) => (
-            <button type="button" className={`rail-slide ${index === 0 ? "rail-slide-active" : ""}`} key={index}>
-              <span>{index + 1}</span>
-              <div className="rail-placeholder" />
+    <main className="slide-workspace-panel generate-pptist-panel">
+      <div className="generate-pptist-empty-shell">
+        <DisabledPptistWorkbenchHeader />
+        <div className="generate-pptist-empty-rail">
+          {Array.from({ length: thumbnailCount }).map((_, index) => (
+            <button
+              type="button"
+              key={index}
+              className={`generate-pptist-empty-thumb ${selectedSlide?.index === index + 1 || (!selectedSlide && index === 0) ? "generate-pptist-empty-thumb-active" : ""}`}
+              disabled={!slideByIndex.has(index + 1)}
+              onClick={() => setSelectedIndex(index + 1)}
+            >
+              <span>{String(index + 1).padStart(2, "0")}</span>
+              <div className={!slideByIndex.has(index + 1) && (loading || isGenerating) ? "motion-skeleton" : ""}>
+                {slideByIndex.has(index + 1) ? (
+                  <div dangerouslySetInnerHTML={{ __html: slideByIndex.get(index + 1)?.content ?? "" }} />
+                ) : null}
+              </div>
             </button>
           ))}
-          <HoverTooltip content={isGenerating ? t("common.pending") : "Manual slide creation is not available yet"}><button className={`rail-add ${isGenerating ? "rail-add-busy" : ""}`} type="button" disabled>
-            {isGenerating ? <LoaderCircle size={18} /> : <Plus size={18} />}
-          </button></HoverTooltip>
         </div>
-        <div className="slide-canvas-area">
-          {loading ? (
-            <div className="scholarly-slide-frame slide-loading-frame motion-skeleton" />
-          ) : selectedSlide ? (
-            <div className="scholarly-slide-frame" dangerouslySetInnerHTML={{ __html: selectedSlide.content }} />
-          ) : (
-            <div className="scholarly-slide-frame slide-empty-preview">
-              <span>{isGenerating ? t("monitor.waiting") : t("preview.emptyState")}</span>
-            </div>
-          )}
-          <label className="speaker-notes speaker-notes-editable">
-            <textarea value="" disabled placeholder={t("preview.notesPlaceholder")} readOnly />
+        <div className="generate-pptist-empty-body">
+          <div className="generate-pptist-empty-canvas">
+            {selectedSlide ? (
+              <div className="generate-pptist-live-slide" dangerouslySetInnerHTML={{ __html: selectedSlide.content }} />
+            ) : (
+              <span>{message}</span>
+            )}
+          </div>
+          <label className="generate-pptist-empty-notes">
+            <span>{selectedSlide?.notes || t("preview.notesPlaceholder")}</span>
             <em>0 / 1000</em>
           </label>
-          {imageSearchOpen && jobId && selectedSlide ? (
-            <ImageSearchPanel
-              jobId={jobId}
-              slideIndex={selectedSlide.index}
-              slideTitle={selectedSlide.name}
-              onClose={() => setImageSearchOpen(false)}
-              onImageApplied={() => onImageApplied?.(selectedSlide.index)}
-            />
-          ) : null}
         </div>
       </div>
     </main>
+  );
+}
+
+function DisabledPptistWorkbenchHeader() {
+  const { t } = useLocale();
+  return (
+    <div className="generate-pptist-disabled-header" aria-disabled="true">
+      <div className="generate-pptist-disabled-title" aria-hidden="true" />
+
+      <div className="generate-pptist-disabled-tool">
+        <div className="generate-pptist-disabled-left-tools">
+          <DisabledToolbarButton icon={<Undo2 size={16} />} label={t("editor.undo")} compact />
+          <DisabledToolbarButton icon={<Redo2 size={16} />} label={t("editor.redo")} compact />
+          <span className="generate-pptist-disabled-divider" />
+          <DisabledToolbarButton icon={<MoreHorizontal size={16} />} label={t("pptist.more")} compact />
+          <DisabledToolbarButton icon={<MessageSquareText size={16} />} label={t("pptist.comments")} compact />
+          <DisabledToolbarButton icon={<MousePointer2 size={16} />} label={t("pptist.selectionPane")} compact />
+          <DisabledToolbarButton icon={<Search size={16} />} label={t("pptist.searchReplace")} compact />
+        </div>
+
+        <div className="generate-pptist-disabled-insert-tools">
+          <DisabledToolbarButton icon={<Type size={16} />} label={t("pptist.textbox")} caret />
+          <DisabledToolbarButton icon={<Square size={16} />} label={t("editor.shapeTool")} caret />
+          <DisabledToolbarButton icon={<ImageIcon size={16} />} label={t("editor.pictureTool")} caret />
+          <DisabledToolbarButton icon={<Minus size={16} />} label={t("pptist.line")} />
+          <DisabledToolbarButton icon={<BarChart3 size={16} />} label={t("pptist.chart")} />
+          <DisabledToolbarButton icon={<Table2 size={16} />} label={t("editor.tableTool")} />
+          <DisabledToolbarButton icon={<span className="generate-pptist-sigma">Σ</span>} label={t("pptist.formula")} />
+          <DisabledToolbarButton icon={<Video size={16} />} label={t("pptist.media")} />
+          <DisabledToolbarButton icon={<Omega size={16} />} label={t("pptist.symbol")} />
+        </div>
+
+        <div className="generate-pptist-disabled-right-tools">
+          <DisabledToolbarButton icon={<Minus size={15} />} label={t("pptist.zoomOut")} compact />
+          <span className="generate-pptist-disabled-scale">100%</span>
+          <DisabledToolbarButton icon={<Plus size={15} />} label={t("pptist.zoomIn")} compact />
+          <DisabledToolbarButton icon={<Maximize2 size={15} />} label={t("editor.fit")} compact />
+        </div>
+      </div>
+
+      <div className="generate-pptist-disabled-actions">
+        <DisabledToolbarButton icon={<Save size={16} />} label={t("editor.save")} />
+        <DisabledToolbarButton icon={<Play size={16} />} label={t("preview.slideshow")} caret compact />
+        <span className="generate-pptist-disabled-divider" />
+        <DisabledToolbarButton icon={<Download size={16} />} label={t("result.download")} caret className="generate-pptist-disabled-primary" />
+        <DisabledToolbarButton icon={<Eye size={16} />} label={t("pptist.properties")} />
+        <a
+          className="generate-pptist-disabled-github"
+          href="https://github.com/pipipi-pikachu/PPTist"
+          target="_blank"
+          rel="noreferrer"
+          title="PPTist by pipipi-pikachu"
+        >
+          <GitHubMark />
+        </a>
+      </div>
+    </div>
+  );
+}
+
+function DisabledToolbarButton({
+  icon,
+  label,
+  caret,
+  compact,
+  className,
+}: {
+  icon: ReactNode;
+  label: string;
+  caret?: boolean;
+  compact?: boolean;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      className={`generate-pptist-disabled-button ${compact ? "generate-pptist-disabled-button-compact" : ""} ${className ?? ""}`}
+      disabled
+      title={label}
+    >
+      {icon}
+      {!compact ? <span>{label}</span> : null}
+      {caret ? <ChevronDown size={13} /> : null}
+    </button>
+  );
+}
+
+function GitHubMark() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="17"
+      height="17"
+      aria-hidden="true"
+      focusable="false"
+      fill="currentColor"
+    >
+      <path d="M12 2C6.48 2 2 6.58 2 12.21c0 4.51 2.87 8.33 6.84 9.68.5.09.68-.22.68-.49 0-.24-.01-.88-.01-1.73-2.78.62-3.37-1.37-3.37-1.37-.45-1.18-1.11-1.49-1.11-1.49-.91-.63.07-.62.07-.62 1 .07 1.53 1.05 1.53 1.05.89 1.56 2.34 1.11 2.91.85.09-.66.35-1.11.63-1.37-2.22-.26-4.56-1.14-4.56-5.06 0-1.12.39-2.03 1.03-2.75-.1-.26-.45-1.3.1-2.71 0 0 .84-.27 2.75 1.05A9.29 9.29 0 0 1 12 6.91c.85 0 1.71.12 2.51.34 1.9-1.32 2.74-1.05 2.74-1.05.55 1.41.2 2.45.1 2.71.64.72 1.03 1.63 1.03 2.75 0 3.93-2.34 4.8-4.57 5.05.36.32.68.94.68 1.9 0 1.37-.01 2.47-.01 2.81 0 .27.18.59.69.49A10.15 10.15 0 0 0 22 12.21C22 6.58 17.52 2 12 2Z" />
+    </svg>
   );
 }
 

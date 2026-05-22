@@ -1,5 +1,6 @@
 import type { PreviewSlide } from "../../lib/types";
 import { useLocale } from "../../i18n";
+import { SlideVisual } from "./SlideVisual";
 
 interface SlideViewerProps {
   slide?: PreviewSlide;
@@ -19,7 +20,7 @@ export function SlideViewer({ slide }: SlideViewerProps) {
         </div>
       </div>
       {slide ? (
-        <div className="viewer-frame" dangerouslySetInnerHTML={{ __html: slide.content }} />
+        <SlideVisual slide={slide} className="viewer-frame" />
       ) : (
         <div className="viewer-empty">
           <p>{t("viewer.empty")}</p>

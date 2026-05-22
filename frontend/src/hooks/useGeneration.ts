@@ -131,6 +131,7 @@ interface GenerationState {
   syncHistory: (jobId?: string) => void;
   removeHistory: (jobId: string) => Promise<void>;
   reset: () => void;
+  reportError: (message: string) => void;
   dismissError: () => void;
 }
 
@@ -552,6 +553,9 @@ export const useGeneration = create<GenerationState>()(
         // local error state (loadError / refineError on ResultPage) is
         // managed via local component state and is unaffected.
         set({ error: undefined });
+      },
+      reportError(message) {
+        set({ error: message || undefined });
       },
       async uploadFile(file) {
         const uploadSession = await uploadPaper(file);
