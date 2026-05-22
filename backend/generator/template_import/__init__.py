@@ -25,7 +25,7 @@ from backend.config import settings
 
 from . import persistence
 from .llm_client import LLMClient, merge_llm_plan
-from .pipeline import Pipeline, inline_svg_asset_refs
+from .pipeline import Pipeline, build_editable_template_deck, inline_svg_asset_refs, preview_templateized
 from .types import (
     ImportResult,
     ImportTaskState,
@@ -84,6 +84,7 @@ def initialize_import(
     ctx = _build_context(import_id, pptx_path, label, None)
     state = persistence.read_state(import_id) or {}
     state.setdefault("import_id", import_id)
+    state["importer_version"] = "template_import.v2"
     state["template_id"] = template_id
     state.setdefault("label", ctx.label)
     state.setdefault("source_file", str(pptx_path))
@@ -101,7 +102,7 @@ def set_import_collaboration_mode(import_id: str, mode: str) -> ImportTaskState:
     state = persistence.read_state(import_id)
     if state is None:
         raise FileNotFoundError(import_id)
-    state["collaboration_mode"] = "agent" if mode == "agent" else "classic"  # type: ignore[typeddict-item]
+    state["collaboration_mode"] = mode if mode in {"direct", "agent", "classic"} else "direct"  # type: ignore[typeddict-item]
     state["updated_at"] = time.time()
     persistence.write_state(import_id, state)
     return state
@@ -182,6 +183,16 @@ async def preview_draft(import_id: str) -> dict[str, str]:
     return out
 
 
+async def preview_clean_template(import_id: str) -> dict[str, Any]:
+    """Return a clean templateized preview for the current PPTist/review state."""
+    return preview_templateized(import_id)
+
+
+def editable_template_deck(import_id: str) -> dict[str, Any] | None:
+    """Return a PPTist-editable clean template deck when Agent output exists."""
+    return build_editable_template_deck(import_id)
+
+
 async def confirm_import(import_id: str) -> ImportResult:
     """Materialize the reviewed draft into a layout pack."""
     state = persistence.read_state(import_id)
@@ -208,18 +219,29 @@ def update_review(import_id: str, draft: dict[str, Any]) -> ReviewDraft:
     review = persistence.read_review(import_id)
     if review is None:
         raise FileNotFoundError(import_id)
+    current = review.setdefault("draft", {})
+    if not isinstance(current, dict):
+        current = {}
+        review["draft"] = current  # type: ignore[typeddict-item]
 
     if "label" in draft and draft["label"] is not None:
-        review["label"] = str(draft["label"]).strip() or review.get("label", "")  # type: ignore[typeddict-item]
+        label = str(draft["label"]).strip() or review.get("label", "")
+        review["label"] = label  # type: ignore[typeddict-item]
+        current["label"] = label
     if "page_selections" in draft and isinstance(draft["page_selections"], dict):
         selections = dict(review.get("page_selections") or {})
+        draft_selections = dict(current.get("page_selections") or {})
         for pt in ("cover", "toc", "chapter", "content", "ending"):
             if pt in draft["page_selections"]:
                 value = draft["page_selections"][pt]
-                selections[pt] = int(value) if value else None
+                normalized = int(value) if value else None
+                selections[pt] = normalized
+                draft_selections[pt] = normalized
         review["page_selections"] = selections  # type: ignore[typeddict-item]
+        current["page_selections"] = draft_selections
     if "assets" in draft and isinstance(draft["assets"], dict):
         assets = dict(review.get("assets") or {})
+        draft_assets = dict(current.get("assets") or {})
         for asset_id, value in draft["assets"].items():
             if not isinstance(value, dict):
                 continue
@@ -231,7 +253,48 @@ def update_review(import_id: str, draft: dict[str, Any]) -> ReviewDraft:
                 entry["name"] = str(value["name"])
             entry["role_source"] = "user"
             assets[asset_id] = entry  # type: ignore[assignment]
+            draft_assets[asset_id] = {
+                "role": entry.get("role"),
+                "name": entry.get("name", ""),
+            }
         review["assets"] = assets  # type: ignore[typeddict-item]
+        current["assets"] = draft_assets
+
+    if "preserve_texts" in draft and isinstance(draft["preserve_texts"], list):
+        preserve_texts = [
+            str(item)
+            for item in draft["preserve_texts"]
+            if str(item).strip()
+        ]
+        review["preserve_texts"] = preserve_texts  # type: ignore[typeddict-item]
+        current["preserve_texts"] = preserve_texts
+
+    if "placeholder_hints" in draft and isinstance(draft["placeholder_hints"], dict):
+        hints: dict[str, dict[str, str]] = {}
+        for page_type, values in draft["placeholder_hints"].items():
+            if not isinstance(values, dict):
+                continue
+            hints[str(page_type)] = {
+                str(name): str(original)
+                for name, original in values.items()
+                if str(name).strip() and str(original).strip()
+            }
+        review["placeholder_hints"] = hints  # type: ignore[typeddict-item]
+        current["placeholder_hints"] = hints
+
+    if "element_actions" in draft and isinstance(draft["element_actions"], list):
+        element_actions = [
+            dict(item)
+            for item in draft["element_actions"]
+            if isinstance(item, dict)
+        ]
+        review["element_actions"] = element_actions  # type: ignore[typeddict-item]
+        current["element_actions"] = element_actions
+
+    if "design_spec" in draft and draft["design_spec"] is not None:
+        design_spec = str(draft["design_spec"])
+        review["design_spec_md"] = design_spec  # type: ignore[typeddict-item]
+        current["design_spec"] = design_spec
 
     if "annotations" in draft and isinstance(draft["annotations"], list):
         # Replace whole list — frontend always sends the full array.
@@ -439,6 +502,7 @@ __all__ = [
     "run_import",
     "retry_import_step",
     "preview_draft",
+    "editable_template_deck",
     "confirm_import",
     "get_review",
     "get_status",

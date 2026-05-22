@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" width="1280" height="720" data-source="pptist-deck" data-slide-index="1">
+  <rect width="1280" height="720" fill="#fff"/>
+  <g data-pptist-id="_dXxJd6rm6" data-pptist-type="shape"><g><g transform="translate(319.71 437.21) scale(2.773895 0.533156)"><path d="M 0 0 L 200 0 L 200 200 L 0 200 Z" fill="#174994" stroke="#203864" stroke-width="0.00" opacity="1.000"/></g></g></g>
+  <g data-pptist-id="eOVPtXsvzh" data-pptist-type="shape"><g><g transform="translate(0.00 414.58) scale(1.333333 1.333333)"><path d="M 0 0 L 0 201.8843 L 125.7722 201.8843 Z" fill="#6D9FEC" stroke="#203864" stroke-width="0.00" opacity="1.000"/></g></g></g>
+  <g data-pptist-id="yscjbhCC4m" data-pptist-type="shape"><g><g transform="translate(0.00 450.90) scale(1.333333 1.333333)"><path d="M 0 0 L 0 174.6456 L 108.8027 174.6456 Z" fill="#174994" stroke="#203864" stroke-width="0.00" opacity="1.000"/></g></g></g>
+  <g data-pptist-id="QWHm3C0pL2" data-pptist-type="shape"><g transform="translate(1196.15 134.25) scale(-1 -1) translate(-1196.15 -134.25)"><g transform="translate(1112.30 -0.34) scale(1.333333 1.333333)"><path d="M 0 0 L 0 201.8843 L 125.7722 201.8843 Z" fill="#6D9FEC" stroke="#203864" stroke-width="0.00" opacity="1.000"/></g></g></g>
+  <g data-pptist-id="jJpW6UDfsC" data-pptist-type="shape"><g transform="translate(1207.46 116.43) scale(-1 -1) translate(-1207.46 -116.43)"><g transform="translate(1134.93 0.00) scale(1.333333 1.333333)"><path d="M 0 0 L 0 174.6456 L 108.8027 174.6456 Z" fill="#174994" stroke="#203864" stroke-width="0.00" opacity="1.000"/></g></g></g>
+  <g data-pptist-id="ErSFMIgnMX" data-pptist-type="text"></g>
+  <g data-pptist-id="WknRS7RxhR" data-pptist-type="line"><line x1="0.00" y1="0.00" x2="814.54" y2="0.00" stroke="#174994" stroke-width="3.00"/></g>
+  <g data-pptist-id="YlAXJPkUL0" data-pptist-type="shape"><g><g transform="translate(433.90 361.44) scale(1.632000 0.215571)"><path d="M 0 0 L 200 0 L 200 200 L 0 200 Z" fill="#174994" stroke="#203864" stroke-width="0.00" opacity="1.000"/></g></g></g>
+  <g data-pptist-id="9rwIQPqFbv" data-pptist-type="text"></g>
+  <g data-pptist-id="VjKARQEZAe" data-pptist-type="text"></g>
+  <g data-pptist-id="kuo6-po2tK" data-pptist-type="image"><image href="assets/inline_10f97b4d2b51.png" x="63.67" y="43.99" width="278.89" height="58.85" preserveAspectRatio="xMidYMid meet"/></g>
+  <g data-pptist-id="1N4-pDZ7rn" data-pptist-type="shape"><g><g transform="translate(0.00 677.05) scale(5.973333 0.214745)"><path d="M 0 0 L 200 0 L 200 200 L 0 200 Z" fill="#174994" stroke="#203864" stroke-width="0.00" opacity="1.000"/></g></g></g>
+  <g data-pptist-id="iwSWo-lHBy" data-pptist-type="shape"><g><g transform="translate(694.53 682.18) scale(2.407667 0.177000)"><path d="M 0 0 L 200 0 L 200 200 L 0 200 Z" fill="none" stroke="#000000" stroke-width="0.00" opacity="1.000"/></g></g><text x="694.53" y="705.55" text-anchor="start" data-pptist-box="694.53 682.18 481.53 35.40" fill="#FFFFFF" font-family="微软雅黑, sans-serif" font-size="21.0" font-weight="700"><tspan x="694.53" dy="0" font-size="21.0" fill="#FFFFFF" font-family="微软雅黑, sans-serif" font-weight="700">University of Chinese Academy of Sciences</tspan></text></g>
+
+  <text data-pptist-id="tpl_7853a2ccd2" x="597.10" y="503.32" text-anchor="middle" fill="#FFFFFF" font-family="微软雅黑, sans-serif" font-size="44.8">{{AUTHOR}}</text>
+  <text data-pptist-id="tpl_af6f9337b1" x="610.79" y="229.24" text-anchor="middle" fill="#2f5596" font-family="微软雅黑, sans-serif" font-size="54.0">{{TITLE}}</text>
+  <text data-pptist-id="tpl_b57d1700d5" x="597.34" y="384.15" text-anchor="middle" fill="#FFFFFF" font-family="微软雅黑, sans-serif" font-size="14.7">{{GROUP}}</text>
+  <text data-pptist-id="tpl_4278a8fece" x="597.11" y="630.19" text-anchor="middle" fill="#174994" font-family="微软雅黑, sans-serif" font-size="14.7">{{DATE}}</text>
+</svg>

@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import hashlib
+import html
 import json
 import os
 import re
@@ -20,6 +21,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Literal
 from xml.etree import ElementTree as ET
@@ -112,6 +114,7 @@ class TemplateAgentJob:
     session_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     session_state: TemplateAgentSessionState | None = None
     planning: bool = True
+    silent: bool = False
     status: AgentStatus = "queued"
     message: str = ""
     error: str | None = None
@@ -166,6 +169,7 @@ class TemplateAgentManager:
             import_id=import_id,
             feedback=feedback.strip(),
             config=config,
+            silent=silent,
         )
         job.session_state = self._load_session_state(import_id)
         self._seed_job_from_session_state(job)
@@ -177,7 +181,12 @@ class TemplateAgentManager:
                 import_id,
                 "user",
                 job.feedback,
-                {"mode": "agent", "agent_job_id": job_id},
+                {
+                    "mode": "agent",
+                    "agent_job_id": job_id,
+                    "planning": planning,
+                    "read_only": not planning,
+                },
             )
         await self._publish(
             job,
@@ -355,8 +364,29 @@ class TemplateAgentManager:
 
             if job.planning:
                 _seed_agent_template_sources(import_dir)
-            _write_agent_context(import_dir)
-            prompt = _build_prompt(job.import_id, import_dir, job.feedback, job.config.reply_language)
+            _write_agent_context(import_dir, planning=job.planning)
+            prompt = _build_prompt(
+                job.import_id,
+                import_dir,
+                job.feedback,
+                job.config.reply_language,
+                planning=job.planning,
+            )
+            allowed_tools = (
+                [
+                    "Read",
+                    "Write",
+                    "Edit",
+                    "MultiEdit",
+                    "Grep",
+                    "Glob",
+                    "LS",
+                    "Bash",
+                    "TodoWrite",
+                ]
+                if job.planning
+                else ["Read", "Grep", "Glob", "LS"]
+            )
 
             def _options_for_attempt() -> Any:
                 resume_session = (
@@ -376,17 +406,7 @@ class TemplateAgentManager:
                     },
                     cwd=str(import_dir),
                     add_dirs=[str(import_dir)],
-                    allowed_tools=[
-                        "Read",
-                        "Write",
-                        "Edit",
-                        "MultiEdit",
-                        "Grep",
-                        "Glob",
-                        "LS",
-                        "Bash",
-                        "TodoWrite",
-                    ],
+                    allowed_tools=allowed_tools,
                     permission_mode="bypassPermissions",
                     include_partial_messages=False,
                     max_buffer_size=_AGENT_MAX_BUFFER_SIZE,
@@ -414,7 +434,7 @@ class TemplateAgentManager:
                 attempt += 1
                 usage_snapshot = _usage_snapshot(job)
                 if attempt > 1:
-                    _write_agent_context(import_dir)
+                    _write_agent_context(import_dir, planning=job.planning)
                 attempt_prompt = (
                     prompt
                     if attempt == 1
@@ -423,6 +443,7 @@ class TemplateAgentManager:
                         import_dir,
                         job.feedback,
                         job.config.reply_language,
+                        planning=job.planning,
                     )
                 )
                 try:
@@ -450,7 +471,12 @@ class TemplateAgentManager:
                                         job.import_id,
                                         "assistant",
                                         text,
-                                        {"mode": "agent", "agent_job_id": job.id},
+                                        {
+                                            "mode": "agent",
+                                            "agent_job_id": job.id,
+                                            "planning": job.planning,
+                                            "read_only": not job.planning,
+                                        },
                                     )
                             await self._publish(job, event)
                         if message.__class__.__name__ == "ResultMessage":
@@ -483,6 +509,21 @@ class TemplateAgentManager:
             # and should not unlock confirm/templated preview by itself.
             if job.planning:
                 await self._mark_llm_satisfied(job.import_id)
+                await self._publish(
+                    job,
+                    {
+                        "type": "artifact_updated",
+                        "stage": "preview",
+                        "status": "complete",
+                        "message": "Template artifacts updated.",
+                        "data": {
+                            "preview_version": time.time(),
+                            "changed_page_types": ["cover", "toc", "chapter", "content", "ending"],
+                            "warnings": [],
+                        },
+                    },
+                )
+            if not job.silent:
                 await self._resolve_active_annotations(job.import_id)
             job.status = "complete"
             job.message = "Agent task complete."
@@ -526,7 +567,13 @@ class TemplateAgentManager:
                 job.import_id,
                 "assistant",
                 f"Agent 模式执行失败：{job.error}",
-                {"mode": "agent", "agent_job_id": job.id, "error": True},
+                {
+                    "mode": "agent",
+                    "agent_job_id": job.id,
+                    "planning": job.planning,
+                    "read_only": not job.planning,
+                    "error": True,
+                },
             )
             await self._publish(
                 job,
@@ -747,18 +794,42 @@ class TemplateAgentManager:
             return
         if not isinstance(review, dict):
             return
+        agent_template_dir = _import_dir(import_id) / "agent_template"
+        required_svgs = [
+            "01_cover.svg",
+            "02_toc.svg",
+            "02_chapter.svg",
+            "03_content.svg",
+            "04_ending.svg",
+        ]
+        templateized = (
+            (agent_template_dir / "design_spec.md").exists()
+            and all((agent_template_dir / name).exists() for name in required_svgs)
+        )
         llm_meta = review.get("llm") if isinstance(review.get("llm"), dict) else {}
-        llm_meta = {**llm_meta, "enabled": True, "status": "complete", "agent": True}
+        notes = list(llm_meta.get("notes") or []) if isinstance(llm_meta, dict) else []
+        if not templateized:
+            notes.append(
+                "Agent run finished, but the required five SVG files and design_spec.md were not all produced."
+            )
+        llm_meta = {
+            **llm_meta,
+            "enabled": True,
+            "status": "complete",
+            "agent": True,
+            "templateized": templateized,
+            "templateized_at": time.time() if templateized else llm_meta.get("templateized_at"),
+            "notes": notes[-10:],
+        }
         review["llm"] = llm_meta
         _atomic_write_json(path, review)
 
     async def _resolve_active_annotations(self, import_id: str) -> None:
-        """Mark current user annotations as handled after a successful Agent run.
+        """Mark current user annotations as handled after a successful user-sent run.
 
         The Agent sees unresolved annotations in ``agent_context.json`` and should
-        update ``review.json`` itself, but in practice it often summarizes them
-        as handled without flipping the ``resolved`` flags. The UI hides only
-        resolved annotations so the next round can start cleanly.
+        the user should not need to click a separate "handled" control after
+        sending feedback. Auto/silent inspections do not call this helper.
         """
         path = _import_dir(import_id) / "review.json"
         if not path.exists():
@@ -1011,7 +1082,7 @@ def _review_snapshot(import_dir: Path) -> str:
     return "\n".join(lines)
 
 
-def _write_agent_context(import_dir: Path) -> None:
+def _write_agent_context(import_dir: Path, *, planning: bool = True) -> None:
     """Write a lightweight context file so Agent never has to read huge blobs."""
     review_path = import_dir / "review.json"
     if not review_path.exists():
@@ -1074,7 +1145,7 @@ def _write_agent_context(import_dir: Path) -> None:
         )
 
     visual_brief = _build_agent_visual_brief(import_dir, review)
-    agent_task = _build_agent_task(import_dir, review, visual_brief)
+    agent_task = _build_agent_task(import_dir, review, visual_brief, planning=planning)
     _write_agent_design_spec_reference(import_dir)
 
     context = {
@@ -1099,7 +1170,7 @@ def _write_agent_context(import_dir: Path) -> None:
         "files": {
             "editable_review": "review.json",
             "design_spec_reference": "agent_design_spec_reference.md",
-            "source_svgs": "work/svg/slide_XX.svg",
+            "source_svgs": "pptist/agent_source_svg/slide-XXX.svg when available; otherwise work/svg/slide_XX.svg",
             "agent_output_dir": "agent_template/",
         },
     }
@@ -1136,6 +1207,8 @@ def _build_agent_task(
     import_dir: Path,
     review: dict[str, Any],
     visual_brief: dict[str, Any],
+    *,
+    planning: bool = True,
 ) -> dict[str, Any]:
     pages = []
     for page in list(visual_brief.get("selected_pages") or []):
@@ -1147,7 +1220,9 @@ def _build_agent_task(
                 "page_type": page.get("page_type"),
                 "slide_index": page.get("slide_index"),
                 "source_svg": page.get("source_svg"),
+                "source_svg_exists": page.get("source_svg_exists"),
                 "agent_template_svg": page.get("agent_template_svg"),
+                "agent_template_svg_exists": page.get("agent_template_svg_exists"),
                 "source_svg_bytes": page.get("source_svg_bytes"),
                 "agent_template_svg_bytes": page.get("agent_template_svg_bytes"),
                 "orientation": {
@@ -1159,6 +1234,32 @@ def _build_agent_task(
                 },
             }
         )
+    if not planning:
+        return {
+            "schema_version": 1,
+            "workflow": "read_only_template_inspection",
+            "template_contract": _agent_template_contract(import_dir),
+            "rules": [
+                "Read-only run: do not create, edit, delete, or overwrite any file.",
+                "Inspect page_selections, slide summaries, unresolved annotations, and source SVG availability.",
+                "page_selections are representative layout picks, not labels for every matching source slide.",
+                "Check whether the five selected representative slides fit cover, toc, chapter, content, and ending roles.",
+                "Identify obvious dirty original content that the clean template builder should remove.",
+                "Give concise guidance and end by asking whether to start templateization.",
+            ],
+            "pages": pages,
+            "required_reads": [
+                {
+                    "page_type": page.get("page_type"),
+                    "slide_index": page.get("slide_index"),
+                    "source_svg": page.get("source_svg"),
+                    "source_svg_exists": page.get("source_svg_exists"),
+                }
+                for page in pages
+            ],
+            "review_updates": [],
+        }
+
     return {
         "schema_version": 1,
         "workflow": "source_derived_minimal_edit",
@@ -1166,10 +1267,14 @@ def _build_agent_task(
         "rules": [
             "Read every source_svg and agent_template_svg listed below before editing.",
             "Edit the seeded agent_template SVGs; do not create a blank/new layout.",
-            "Keep the agent-source metadata comment in each SVG.",
             "Preserve source chrome, logos, backgrounds, bands, and navigation unless the user explicitly asks to change them.",
-            "Replace only reusable content/text with placeholders by preserving original geometry.",
-            "Place placeholders where the original content lived: keep alignment, spacing, and reading order tidy; avoid drifting into logos, navigation, or decorative chrome.",
+            "Preserve repeated logos and brand marks that appear in the same nearby position across slides; do not remove them as body content.",
+            "Keep every SVG visually upright on a normal top-left-origin 16:9 canvas; do not rely on flipped raw-coordinate interpretations.",
+            "Replace reusable content/text with the standard placeholder contract, keeping alignment, spacing, and reading order tidy.",
+            "When replacing a source text node with a placeholder, keep that node's x/y, text-anchor, fill, font-family, font-size, font-weight, and surrounding bbox unless the user explicitly asks for a redesign.",
+            "Place placeholders in the reusable visual zones; avoid drifting into logos, navigation, or decorative chrome.",
+            "Use only these new placeholder names: cover={{TITLE}}, {{SUBTITLE}}, {{AUTHOR}}, {{DATE}}, {{GROUP}}; toc={{TOC_ITEM_1}}..{{TOC_ITEM_5}}; chapter={{CHAPTER_TITLE}}, {{CHAPTER_NUMBER}}; content={{PAGE_TITLE}}, {{CONTENT_AREA}}; ending={{ENDING_TITLE}}, {{ENDING_MESSAGE}}.",
+            "Write agent_template/manifest.patch.json with source_kind=pptist_import, clean_generation_ready=true, page_selections, changed page types, and warnings.",
         ],
         "pages": pages,
         "required_reads": [
@@ -1272,6 +1377,419 @@ def _agent_template_contract(import_dir: Path) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def _ensure_pptist_agent_source_svgs(import_dir: Path) -> None:
+    """Materialize upright source SVGs from the saved PPTist deck."""
+
+    deck_path = import_dir / "pptist" / "deck.json"
+    try:
+        deck = json.loads(deck_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    if not isinstance(deck, dict):
+        return
+    slides = deck.get("slides")
+    if not isinstance(slides, list):
+        return
+
+    canvas_w = int(round(_floatish(deck.get("width"), 1280))) or 1280
+    canvas_h = int(round(_floatish(deck.get("height"), 720))) or 720
+    output_dir = import_dir / "pptist" / "agent_source_svg"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for idx, slide in enumerate(slides, start=1):
+        if not isinstance(slide, dict):
+            continue
+        svg_text = _pptist_slide_to_agent_source_svg(slide, idx, canvas_w, canvas_h)
+        (output_dir / f"slide-{idx:03d}.svg").write_text(svg_text, encoding="utf-8")
+
+
+def _floatish(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _pptist_box(el: dict[str, Any]) -> dict[str, float]:
+    return {
+        "x": _floatish(el.get("left")),
+        "y": _floatish(el.get("top")),
+        "width": max(1.0, _floatish(el.get("width"), 1.0)),
+        "height": max(1.0, _floatish(el.get("height"), 1.0)),
+    }
+
+
+def _pptist_svg_attr(value: Any) -> str:
+    return html.escape(str(value or ""), quote=True)
+
+
+def _pptist_plain_text(value: Any) -> str:
+    text = re.sub(r"<[^>]+>", " ", str(value or ""))
+    return html.unescape(" ".join(text.split()))
+
+
+def _pptist_parse_style(style: str | None) -> dict[str, str]:
+    parsed: dict[str, str] = {}
+    for chunk in str(style or "").split(";"):
+        if ":" not in chunk:
+            continue
+        key, value = chunk.split(":", 1)
+        key = key.strip().lower()
+        value = value.strip()
+        if key and value:
+            parsed[key] = value
+    return parsed
+
+
+def _pptist_anchor_from_align(value: Any) -> str | None:
+    align = str(value or "").strip().lower()
+    if align in {"center", "middle"}:
+        return "middle"
+    if align in {"right", "end"}:
+        return "end"
+    if align in {"left", "start"}:
+        return "start"
+    return None
+
+
+def _pptist_font_size(value: Any, fallback: float) -> float:
+    if value is None:
+        return fallback
+    match = re.search(r"-?\d+(?:\.\d+)?", str(value))
+    if not match:
+        return fallback
+    return max(6.0, min(120.0, float(match.group(0))))
+
+
+def _pptist_font_weight(value: Any, fallback: str = "400") -> str:
+    raw = str(value or "").strip().lower()
+    if raw in {"bold", "bolder"}:
+        return "700"
+    if raw in {"normal", "regular"}:
+        return "400"
+    return str(value).strip() if raw else fallback
+
+
+def _pptist_font_family(value: Any, fallback: str = "Arial") -> str:
+    raw = str(value or "").strip().strip("\"'")
+    return raw or fallback
+
+
+class _PptistRichTextParser(HTMLParser):
+    def __init__(
+        self,
+        *,
+        default_color: str,
+        default_font: str,
+        default_weight: str,
+        align_hint: str | None,
+    ) -> None:
+        super().__init__(convert_charrefs=True)
+        self.default_style = {
+            "color": default_color,
+            "font-family": default_font or "Arial",
+            "font-weight": default_weight,
+        }
+        self.align_hint = _pptist_anchor_from_align(align_hint)
+        self.style_stack: list[dict[str, str]] = []
+        self.current_align: str | None = self.align_hint
+        self.current_segments: list[tuple[str, dict[str, str]]] = []
+        self.lines: list[dict[str, Any]] = []
+
+    def _merged_style(self) -> dict[str, str]:
+        merged = dict(self.default_style)
+        for style in self.style_stack:
+            merged.update(style)
+        return merged
+
+    def _finish_line(self) -> None:
+        text = "".join(segment for segment, _style in self.current_segments)
+        if text.strip():
+            first_style = next(
+                (style for segment, style in self.current_segments if segment.strip()),
+                self._merged_style(),
+            )
+            self.lines.append(
+                {
+                    "text": html.unescape(" ".join(text.split())),
+                    "anchor": self.current_align or self.align_hint or "start",
+                    "color": first_style.get("color") or self.default_style["color"],
+                    "font": _pptist_font_family(first_style.get("font-family"), self.default_style["font-family"]),
+                    "font_size": _pptist_font_size(first_style.get("font-size"), 0.0),
+                    "weight": _pptist_font_weight(first_style.get("font-weight"), self.default_style["font-weight"]),
+                }
+            )
+        self.current_segments = []
+        self.current_align = self.align_hint
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attr_map = {key.lower(): value for key, value in attrs}
+        style = _pptist_parse_style(attr_map.get("style"))
+        tag = tag.lower()
+        if tag in {"p", "div"}:
+            self._finish_line()
+            self.current_align = _pptist_anchor_from_align(style.get("text-align")) or self.align_hint
+        self.style_stack.append(style)
+
+    def handle_endtag(self, tag: str) -> None:
+        tag = tag.lower()
+        if tag in {"p", "div"}:
+            self._finish_line()
+        if self.style_stack:
+            self.style_stack.pop()
+
+    def handle_data(self, data: str) -> None:
+        if data:
+            self.current_segments.append((data, self._merged_style()))
+
+    def close(self) -> None:
+        super().close()
+        self._finish_line()
+
+
+def _pptist_rich_text_lines(
+    content: Any,
+    *,
+    default_color: str,
+    default_font: str,
+    default_weight: str = "400",
+    align_hint: str | None = None,
+) -> list[dict[str, Any]]:
+    raw = str(content or "")
+    if "<" not in raw or ">" not in raw:
+        text = _pptist_plain_text(raw)
+        return [
+            {
+                "text": text,
+                "anchor": _pptist_anchor_from_align(align_hint) or "start",
+                "color": default_color,
+                "font": default_font or "Arial",
+                "font_size": 0.0,
+                "weight": default_weight,
+            }
+        ] if text else []
+    parser = _PptistRichTextParser(
+        default_color=default_color,
+        default_font=default_font or "Arial",
+        default_weight=default_weight,
+        align_hint=align_hint,
+    )
+    try:
+        parser.feed(raw)
+        parser.close()
+    except Exception:
+        text = _pptist_plain_text(raw)
+        return [
+            {
+                "text": text,
+                "anchor": _pptist_anchor_from_align(align_hint) or "start",
+                "color": default_color,
+                "font": default_font or "Arial",
+                "font_size": 0.0,
+                "weight": default_weight,
+            }
+        ] if text else []
+    return parser.lines
+
+
+def _pptist_outline_attrs(outline: Any) -> str:
+    if not isinstance(outline, dict) or outline.get("style") == "none":
+        return 'stroke="none"'
+    color = outline.get("color") or "#111827"
+    width = _floatish(outline.get("width"), 1.0)
+    return f'stroke="{_pptist_svg_attr(color)}" stroke-width="{width:.2f}"'
+
+
+def _pptist_rotation_attr(el: dict[str, Any], box: dict[str, float]) -> str:
+    rotate = _floatish(el.get("rotate"))
+    flip_h = bool(el.get("flipH"))
+    flip_v = bool(el.get("flipV"))
+    if not rotate and not flip_h and not flip_v:
+        return ""
+    cx = box["x"] + box["width"] / 2
+    cy = box["y"] + box["height"] / 2
+    transforms: list[str] = []
+    if rotate:
+        transforms.append(f"rotate({rotate:.2f} {cx:.2f} {cy:.2f})")
+    if flip_h or flip_v:
+        sx = -1 if flip_h else 1
+        sy = -1 if flip_v else 1
+        transforms.append(
+            f"translate({cx:.2f} {cy:.2f}) scale({sx} {sy}) translate({-cx:.2f} {-cy:.2f})"
+        )
+    return f' transform="{" ".join(transforms)}"'
+
+
+def _pptist_background_svg(slide: dict[str, Any], canvas_w: int, canvas_h: int) -> str:
+    background = slide.get("background")
+    if not isinstance(background, dict):
+        return f'<rect width="{canvas_w}" height="{canvas_h}" fill="#ffffff"/>'
+    if background.get("type") == "image" and isinstance(background.get("image"), dict):
+        src = background["image"].get("src")
+        if src:
+            return (
+                f'<rect width="{canvas_w}" height="{canvas_h}" fill="#ffffff"/>'
+                f'<image href="{_pptist_svg_attr(src)}" x="0" y="0" width="{canvas_w}" height="{canvas_h}" '
+                'preserveAspectRatio="xMidYMid slice"/>'
+            )
+    color = background.get("color") or "#ffffff"
+    return f'<rect width="{canvas_w}" height="{canvas_h}" fill="{_pptist_svg_attr(color)}"/>'
+
+
+def _pptist_text_svg(
+    content: Any,
+    box: dict[str, float],
+    *,
+    color: str = "#111827",
+    font: str = "Arial",
+    weight: str = "400",
+    anchor: str = "start",
+    align_hint: str | None = None,
+    rotate: str = "",
+) -> str:
+    if not content:
+        return ""
+    rich_lines = _pptist_rich_text_lines(
+        content,
+        default_color=color,
+        default_font=font,
+        default_weight=weight,
+        align_hint=align_hint or anchor,
+    )[:4]
+    if not rich_lines:
+        return ""
+    fallback_size = max(10.0, min(54.0, box["height"] / max(1, len(rich_lines)) * 0.56))
+    for line in rich_lines:
+        if not line.get("font_size"):
+            line["font_size"] = fallback_size
+    first = rich_lines[0]
+    anchor = str(first.get("anchor") or anchor or "start")
+    font_size = float(first.get("font_size") or fallback_size)
+    x = box["x"] + (box["width"] / 2 if anchor == "middle" else box["width"] if anchor == "end" else 0)
+    line_heights = [float(line.get("font_size") or font_size) * 1.18 for line in rich_lines]
+    total_line_height = sum(line_heights)
+    y = box["y"] + max(0.0, (box["height"] - total_line_height) / 2.0) + font_size * 0.86
+    tspans = []
+    for idx, line in enumerate(rich_lines):
+        current_size = float(line.get("font_size") or font_size)
+        dy = "0" if idx == 0 else f"{line_heights[idx - 1]:.2f}"
+        tspan_attrs = [
+            f'x="{x:.2f}"',
+            f'dy="{dy}"',
+            f'font-size="{current_size:.1f}"',
+        ]
+        line_color = str(line.get("color") or color)
+        if line_color:
+            tspan_attrs.append(f'fill="{_pptist_svg_attr(line_color)}"')
+        line_font = str(line.get("font") or font or "Arial")
+        if line_font:
+            tspan_attrs.append(f'font-family="{_pptist_svg_attr(line_font)}, sans-serif"')
+        line_weight = str(line.get("weight") or weight or "400")
+        if line_weight:
+            tspan_attrs.append(f'font-weight="{_pptist_svg_attr(line_weight)}"')
+        tspans.append(
+            f'<tspan {" ".join(tspan_attrs)}>{html.escape(str(line.get("text") or "")[:220])}</tspan>'
+        )
+    return (
+        f'<text x="{x:.2f}" y="{y:.2f}" text-anchor="{anchor}" '
+        f'data-pptist-box="{box["x"]:.2f} {box["y"]:.2f} {box["width"]:.2f} {box["height"]:.2f}" '
+        f'fill="{_pptist_svg_attr(str(first.get("color") or color))}" '
+        f'font-family="{_pptist_svg_attr(str(first.get("font") or font or "Arial"))}, sans-serif" '
+        f'font-size="{font_size:.1f}" font-weight="{_pptist_svg_attr(str(first.get("weight") or weight))}"{rotate}>'
+        f'{"".join(tspans)}</text>'
+    )
+
+
+def _pptist_element_to_agent_source_svg(el: dict[str, Any]) -> str:
+    box = _pptist_box(el)
+    rotate = _pptist_rotation_attr(el, box)
+    el_type = el.get("type")
+    data_id = _pptist_svg_attr(el.get("id"))
+    prefix = f'<g data-pptist-id="{data_id}" data-pptist-type="{_pptist_svg_attr(el_type)}">'
+    suffix = "</g>"
+
+    if el_type == "image" and el.get("src"):
+        return (
+            f'{prefix}<image href="{_pptist_svg_attr(el.get("src"))}" x="{box["x"]:.2f}" y="{box["y"]:.2f}" '
+            f'width="{box["width"]:.2f}" height="{box["height"]:.2f}" preserveAspectRatio="xMidYMid meet"{rotate}/>{suffix}'
+        )
+
+    if el_type == "shape" and el.get("path"):
+        view_box = el.get("viewBox") if isinstance(el.get("viewBox"), list) else [1000, 1000]
+        vb_w = max(1.0, _floatish(view_box[0] if len(view_box) > 0 else 1000, 1000))
+        vb_h = max(1.0, _floatish(view_box[1] if len(view_box) > 1 else 1000, 1000))
+        fill = el.get("fill") or "none"
+        opacity = _floatish(el.get("opacity"), 1.0)
+        shape = (
+            f'<g{rotate}><g transform="translate({box["x"]:.2f} {box["y"]:.2f}) '
+            f'scale({box["width"] / vb_w:.6f} {box["height"] / vb_h:.6f})">'
+            f'<path d="{_pptist_svg_attr(el.get("path"))}" fill="{_pptist_svg_attr(fill)}" '
+            f'{_pptist_outline_attrs(el.get("outline"))} opacity="{opacity:.3f}"/></g></g>'
+        )
+        text = ""
+        raw_text = el.get("text")
+        if isinstance(raw_text, dict):
+            anchor = "middle" if raw_text.get("align") in {"center", "middle"} else "start"
+            text = _pptist_text_svg(
+                raw_text.get("content"),
+                box,
+                color=str(raw_text.get("defaultColor") or "#111827"),
+                font=str(raw_text.get("defaultFontName") or "Arial"),
+                weight="600",
+                anchor=anchor,
+                align_hint=str(raw_text.get("align") or ""),
+                rotate=rotate,
+            )
+        return f"{prefix}{shape}{text}{suffix}"
+
+    if el_type == "line":
+        start = el.get("start") if isinstance(el.get("start"), list) else [box["x"], box["y"]]
+        end = el.get("end") if isinstance(el.get("end"), list) else [box["x"] + box["width"], box["y"]]
+        color = el.get("color") or "#111827"
+        width = max(1.0, _floatish(el.get("width"), 2.0))
+        return (
+            f'{prefix}<line x1="{_floatish(start[0]):.2f}" y1="{_floatish(start[1]):.2f}" '
+            f'x2="{_floatish(end[0]):.2f}" y2="{_floatish(end[1]):.2f}" '
+            f'stroke="{_pptist_svg_attr(color)}" stroke-width="{width:.2f}"{rotate}/>{suffix}'
+        )
+
+    if el_type == "text":
+        return (
+            prefix
+            + _pptist_text_svg(
+                el.get("content"),
+                box,
+                color=str(el.get("defaultColor") or "#111827"),
+                font=str(el.get("defaultFontName") or "Arial"),
+                align_hint=None,
+                rotate=rotate,
+            )
+            + suffix
+        )
+
+    return ""
+
+
+def _pptist_slide_to_agent_source_svg(
+    slide: dict[str, Any],
+    slide_index: int,
+    canvas_w: int,
+    canvas_h: int,
+) -> str:
+    parts = [_pptist_background_svg(slide, canvas_w, canvas_h)]
+    for raw in slide.get("elements") or []:
+        if isinstance(raw, dict):
+            markup = _pptist_element_to_agent_source_svg(raw)
+            if markup:
+                parts.append(markup)
+    body = "\n  ".join(parts)
+    return (
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {canvas_w} {canvas_h}" '
+        f'width="{canvas_w}" height="{canvas_h}" data-source="pptist-deck" data-slide-index="{slide_index}">\n'
+        f"  {body}\n"
+        "</svg>\n"
+    )
+
+
 def _seed_agent_template_sources(import_dir: Path) -> None:
     """Create source-derived Agent template baselines without overwriting edits.
 
@@ -1280,6 +1798,7 @@ def _seed_agent_template_sources(import_dir: Path) -> None:
     selected source pages, so the Agent's job is to edit/placehold the copied
     structure instead of inventing a new layout.
     """
+    _ensure_pptist_agent_source_svgs(import_dir)
     review_path = import_dir / "review.json"
     try:
         review = json.loads(review_path.read_text(encoding="utf-8"))
@@ -1325,18 +1844,24 @@ def _seed_agent_template_sources(import_dir: Path) -> None:
         source_text = source.read_text(encoding="utf-8")
         source_hash = hashlib.sha1(source_text.encode("utf-8")).hexdigest()
 
-        if not reference.exists():
-            reference.write_text(source_text, encoding="utf-8")
+        reference.write_text(source_text, encoding="utf-8")
 
         created = False
+        archived_previous = None
+        previous_entry = previous_entries.get(page_type)
+        if target.exists() and _agent_svg_source_matches(
+            target,
+            page_type,
+            index,
+            source_hash,
+            previous_entry=previous_entry,
+        ):
+            _strip_agent_source_markers_in_file(target)
+        elif target.exists():
+            archived_previous = _archive_agent_template_file(agent_dir, target, page_type)
         if not target.exists():
             target.write_text(
-                _add_agent_source_marker(
-                    _rebase_agent_template_svg(source_text),
-                    page_type=page_type,
-                    slide_index=index,
-                    source_sha1=source_hash,
-                ),
+                _strip_agent_source_markers(_rebase_agent_template_svg(source_text)),
                 encoding="utf-8",
             )
             created = True
@@ -1350,7 +1875,7 @@ def _seed_agent_template_sources(import_dir: Path) -> None:
                 "agent_template_svg": _relative_path(import_dir, target),
                 "source_sha1": source_hash,
                 "agent_template_existed": not created,
-                "archived_previous": None,
+                "archived_previous": archived_previous,
                 "baseline_policy": "edit_source_copy_minimally",
             }
         )
@@ -1374,18 +1899,21 @@ def _rebase_agent_template_svg(svg_text: str) -> str:
     return svg_text.replace("../assets/", "assets/").replace("..\\assets\\", "assets\\")
 
 
-def _agent_source_marker(page_type: str, slide_index: int, source_sha1: str) -> str:
-    return (
-        f'<!-- agent-source page_type="{page_type}" slide_index="{slide_index}" '
-        f'source_sha1="{source_sha1}" policy="source_copy_minimal_edit" -->'
-    )
+_AGENT_SOURCE_MARKER_RE = re.compile(r"<!--\s*agent-source\b[\s\S]*?-->\s*", re.IGNORECASE)
 
 
-def _add_agent_source_marker(svg_text: str, *, page_type: str, slide_index: int, source_sha1: str) -> str:
-    marker = _agent_source_marker(page_type, slide_index, source_sha1)
-    if "agent-source " in svg_text:
-        return svg_text
-    return re.sub(r"(<svg\b[^>]*>)", "\\1\n" + marker, svg_text, count=1)
+def _strip_agent_source_markers(svg_text: str) -> str:
+    return _AGENT_SOURCE_MARKER_RE.sub("", svg_text)
+
+
+def _strip_agent_source_markers_in_file(path: Path) -> None:
+    try:
+        svg_text = path.read_text(encoding="utf-8")
+    except OSError:
+        return
+    cleaned = _strip_agent_source_markers(svg_text)
+    if cleaned != svg_text:
+        path.write_text(cleaned, encoding="utf-8")
 
 
 def _read_agent_source_marker(svg_text: str) -> dict[str, str]:
@@ -1398,7 +1926,20 @@ def _read_agent_source_marker(svg_text: str) -> dict[str, str]:
     }
 
 
-def _agent_svg_source_matches(path: Path, page_type: str, slide_index: int, source_sha1: str) -> bool:
+def _agent_svg_source_matches(
+    path: Path,
+    page_type: str,
+    slide_index: int,
+    source_sha1: str,
+    *,
+    previous_entry: dict[str, Any] | None = None,
+) -> bool:
+    if previous_entry:
+        return (
+            previous_entry.get("page_type") == page_type
+            and previous_entry.get("slide_index") == slide_index
+            and previous_entry.get("source_sha1") == source_sha1
+        )
     try:
         marker = _read_agent_source_marker(path.read_text(encoding="utf-8"))
     except OSError:
@@ -1447,7 +1988,13 @@ def _agent_template_file_for_type(page_type: str) -> str:
 
 
 def _agent_source_svg_path(import_dir: Path, index: int) -> Path | None:
-    for base in (import_dir / "work" / "svg", import_dir / "svg", import_dir / "work" / "svg_raw", import_dir / "svg_raw"):
+    for base in (
+        import_dir / "pptist" / "agent_source_svg",
+        import_dir / "work" / "svg",
+        import_dir / "svg",
+        import_dir / "work" / "svg_raw",
+        import_dir / "svg_raw",
+    ):
         for name in (f"slide_{index:02d}.svg", f"slide_{index:03d}.svg", f"slide-{index:02d}.svg", f"slide-{index:03d}.svg"):
             path = base / name
             if path.exists():
@@ -1497,11 +2044,24 @@ def _analyze_svg_visual_geometry(path: Path, limit: int = 45) -> dict[str, Any]:
                     area = width * height
                     text = "".join(elem.itertext()).strip()
                     y_mid = (bbox[1] + bbox[3]) / 2
+                    fill = elem.attrib.get("fill")
+                    font_size = elem.attrib.get("font-size")
+                    text_anchor = elem.attrib.get("text-anchor")
+                    if tag == "text":
+                        for child in list(elem):
+                            child_tag = child.tag.rsplit("}", 1)[-1].lower()
+                            if child_tag != "tspan":
+                                continue
+                            fill = fill or child.attrib.get("fill")
+                            font_size = font_size or child.attrib.get("font-size")
+                            text_anchor = text_anchor or child.attrib.get("text-anchor")
                     records.append(
                         {
                             "tag": tag,
                             "text": text[:80] if text else None,
-                            "fill": elem.attrib.get("fill"),
+                            "fill": fill,
+                            "font_size": font_size,
+                            "text_anchor": text_anchor,
                             "opacity": elem.attrib.get("opacity") or elem.attrib.get("fill-opacity"),
                             "bbox_px": [round(bbox[0], 1), round(bbox[1], 1), round(width, 1), round(height, 1)],
                             "visual_zone": (
@@ -1567,16 +2127,43 @@ def _svg_element_bbox(elem: ET.Element) -> tuple[float, float, float, float] | N
         h = float(elem.attrib.get("height") or 0)
         return (x, y, x + w, y + h)
     if tag == "text":
+        source_box = _numbers(elem.attrib.get("data-pptist-box") or "")
+        if len(source_box) >= 4:
+            x, y, w, h = source_box[:4]
+            return (x, y, x + max(0.0, w), y + max(0.0, h))
         xs = _numbers(elem.attrib.get("x") or "")
         ys = _numbers(elem.attrib.get("y") or "")
+        font_values = _numbers(elem.attrib.get("font-size") or "")
+        anchor = (elem.attrib.get("text-anchor") or "").strip().lower()
+        for child in list(elem):
+            child_tag = child.tag.rsplit("}", 1)[-1].lower()
+            if child_tag != "tspan":
+                continue
+            if not xs:
+                xs = _numbers(child.attrib.get("x") or "")
+            if not ys:
+                ys = _numbers(child.attrib.get("y") or "")
+            if not font_values:
+                font_values = _numbers(child.attrib.get("font-size") or "")
+            if not anchor:
+                anchor = (child.attrib.get("text-anchor") or "").strip().lower()
         if not xs:
             xs = [0.0]
         if not ys:
             ys = [0.0]
-        font = float(elem.attrib.get("font-size") or 24)
+        font = float(font_values[0]) if font_values else 24.0
         text = "".join(elem.itertext()).strip()
-        width = max(font, len(text) * font * 0.8)
-        return (min(xs), min(ys) - font, min(xs) + width, min(ys) + font * 0.25)
+        cjk_count = sum(1 for ch in text if ord(ch) > 255)
+        latin_count = max(0, len(text) - cjk_count)
+        width = max(font, cjk_count * font + latin_count * font * 0.56)
+        origin_x = min(xs)
+        if anchor == "middle":
+            x0 = origin_x - width / 2
+        elif anchor == "end":
+            x0 = origin_x - width
+        else:
+            x0 = origin_x
+        return (x0, min(ys) - font * 0.86, x0 + width, min(ys) + font * 0.25)
     if tag in {"path", "polygon", "polyline", "line", "circle", "ellipse"}:
         if tag == "circle":
             cx = float(elem.attrib.get("cx") or 0)
@@ -1677,10 +2264,58 @@ def _language_directive(reply_language: str = "en") -> str:
     )
 
 
-def _build_prompt(import_id: str, import_dir: Path, feedback: str, reply_language: str = "en") -> str:
+def _build_prompt(
+    import_id: str,
+    import_dir: Path,
+    feedback: str,
+    reply_language: str = "en",
+    *,
+    planning: bool = True,
+) -> str:
     language_directive = _language_directive(reply_language)
 
     snapshot = _review_snapshot(import_dir)
+
+    if not planning:
+        return f"""You are Paper PPT Agent's template-import reviewer.
+
+Output language:
+{language_directive}
+
+User request:
+{feedback}
+
+Workspace:
+{import_dir}
+
+Live snapshot:
+{snapshot}
+
+Read-only inspection contract:
+- This run is guidance only. Do not create, edit, delete, move, overwrite, or register any file.
+- Do not write ``review.json``, ``agent_template/``, SVG, manifest, design spec, or summary files.
+- Do not run Bash. Use only file-reading tools.
+- The user may still be deciding page roles, so do not mark the template as complete and do not apply changes.
+
+Read order:
+1. Read ``agent_context.json``.
+2. Read ``agent_task.json``.
+3. Read ``pptist/deck.json`` if it exists and you need element-level context.
+4. Read source SVGs only if ``agent_task.json`` lists them and they exist.
+
+Inspection goals:
+- Check whether the five selected representative page roles are reasonable for cover, toc, chapter, content, and ending.
+- Important: page role assignments choose one representative reusable layout per role; they are not tags for every chapter/content slide in the uploaded deck.
+- Point out missing or suspicious assignments, duplicate role usage, and pages that still contain obvious original body content or screenshots.
+- Notice repeated logos, brand marks, headers, footers, and corner decorations that should be preserved during templateization.
+- Use unresolved annotations as user intent and mention any annotation that changes your recommendation.
+- Tell the user whether anything needs adjustment, then ask whether to start templateization.
+
+Output discipline:
+- Keep chat concise and actionable: no file-reading narration, no long tables, and no more than three bullets unless the user asks for detail.
+- Do not paste full JSON, SVG, or deck contents.
+- End with a clear next step: adjust a representative page role, add an annotation, or start templateization.
+"""
 
     return f"""You are Paper PPT Agent's template-import editor.
 
@@ -1697,8 +2332,8 @@ Live snapshot:
 {snapshot}
 
 Execution gate:
-- If this is the automatic first inspection, only read files and ask whether to start.
-- If the user asks to start/revise/apply changes, edit files autonomously.
+- The user explicitly started templateization. You may edit the import workspace to create a clean template preview.
+- Do not confirm/register the template or edit global template directories.
 
 Read order:
 1. Read ``agent_context.json``.
@@ -1710,15 +2345,26 @@ Read order:
 
 Editing contract:
 - The backend has seeded ``agent_template/*.svg`` from the selected source slides.
-- Edit those seeded SVG files in place. Keep the ``agent-source`` metadata comment.
+- Edit those seeded SVG files in place; source metadata lives in ``agent_template/source_map.json``.
 - Do not create a new/blank layout and do not rearrange the page from scratch.
 - Preserve source chrome: logos, backgrounds, bands, corner shapes, headers, footers,
   navigation bars, and decorative paths unless the user explicitly asked to change them.
-- Replace reusable content with continuous placeholder tokens such as ``{{{{TITLE}}}}``,
-  ``{{{{SUBTITLE}}}}``, ``{{{{PAGE_TITLE}}}}``, ``{{{{CONTENT}}}}``,
-  ``{{{{CONTENT_AREA}}}}``, ``{{{{AUTHOR}}}}``, ``{{{{DATE}}}}``.
+- Preserve any logo/brand image or mark that repeats in roughly the same nearby position
+  across multiple source slides, even if it looks like a small content image.
+- Keep the visual direction upright and consistent. If a raw SVG uses flipped transforms,
+  preserve how it looks in PowerPoint/PPTist, not the misleading raw coordinate direction.
+- Replace reusable content only with this standard placeholder contract:
+  cover: ``{{{{TITLE}}}}``, ``{{{{SUBTITLE}}}}``, ``{{{{AUTHOR}}}}``, ``{{{{DATE}}}}``, ``{{{{GROUP}}}}``;
+  toc: ``{{{{TOC_ITEM_1}}}}`` through ``{{{{TOC_ITEM_5}}}}``;
+  chapter: ``{{{{CHAPTER_TITLE}}}}`` and ``{{{{CHAPTER_NUMBER}}}}``;
+  content: ``{{{{PAGE_TITLE}}}}`` and ``{{{{CONTENT_AREA}}}}``;
+  ending: ``{{{{ENDING_TITLE}}}}`` and ``{{{{ENDING_MESSAGE}}}}``.
 - Place placeholders in the same visual zones as the original content: keep alignment,
   spacing, and reading order tidy; avoid piling tokens together or drifting into chrome.
+- For text placeholders, do not invent left-to-right positions. Replace the original
+  matching text node in place and preserve its x/y, ``text-anchor``, fill color,
+  font family, font size, font weight, and bbox unless the user explicitly asks
+  for a redesign.
 - Use ``source_orientation`` from ``agent_task.json`` for top/bottom direction; raw SVG
   y coordinates may be flipped by transforms.
 - Update ``review.json`` only for high-level decisions: design_spec, asset roles,
@@ -1727,6 +2373,9 @@ Editing contract:
   ``review.json`` at ``draft.design_spec`` and in ``agent_template/design_spec.md``.
   It must follow ``agent_design_spec_reference.md`` sections I through XI, adapted
   to this imported reusable template pack.
+- Also write ``agent_template/summary.md`` with a brief change summary and any remaining warnings.
+- Also write ``agent_template/manifest.patch.json`` with ``source_kind: "pptist_import"``,
+  ``clean_generation_ready: true``, current page selections, changed page types, and warnings.
 - Do not confirm/register the template or edit global template directories.
 
 Output discipline:
@@ -1741,9 +2390,36 @@ def _build_recovery_prompt(
     import_dir: Path,
     feedback: str,
     reply_language: str = "en",
+    *,
+    planning: bool = True,
 ) -> str:
     language_directive = _language_directive(reply_language)
     snapshot = _review_snapshot(import_dir)
+    if not planning:
+        return f"""Resume the same read-only Paper PPT Agent template inspection after an SDK stream interruption.
+
+Output language:
+{language_directive}
+
+Original user feedback:
+{feedback}
+
+Import id:
+{import_id}
+
+Workspace:
+{import_dir}
+
+Current review snapshot:
+{snapshot}
+
+Continue as a read-only reviewer. Do not create, edit, delete, move, overwrite,
+or register any file. Read ``agent_context.json`` first and ``agent_task.json``
+second, then give concise guidance about the five representative page roles,
+dirty content risks, repeated logos/brand marks to preserve, annotations, and
+whether the user should start templateization. Do not produce long tables or
+file-reading narration.
+"""
     return f"""Resume the same Paper PPT Agent template import task after an SDK stream interruption.
 
 Output language:

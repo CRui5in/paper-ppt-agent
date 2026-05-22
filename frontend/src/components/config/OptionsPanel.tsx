@@ -87,7 +87,7 @@ export function OptionsPanel(props: OptionsPanelProps) {
             <SelectTrigger className="template-select-trigger">
               <SelectValue />
             </SelectTrigger>
-            <SelectContent>
+            <SelectContent className="template-select-content" viewportClassName="template-select-viewport">
               <SelectItem value="__none__">{t("options.templateNone")}</SelectItem>
               {props.templates.map((tmpl) => (
                 <SelectItem key={tmpl.template_id} value={tmpl.template_id}>
@@ -266,6 +266,9 @@ export function OptionsPanel(props: OptionsPanelProps) {
             </span>
             <span className="visual-qa-copy">
               <span className="visual-qa-name">{t("options.parallelGeneration")}</span>
+              <span className="visual-qa-mode">
+                {t(`options.generationMode.${props.generationMode}`)}
+              </span>
               <span className="visual-qa-experimental parallel-experimental-badge">{t("common.experimental")}</span>
             </span>
             <ConfigHelp text={t("options.parallelGenerationTooltip")} />

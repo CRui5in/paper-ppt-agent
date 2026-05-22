@@ -6,24 +6,24 @@ import {
   useState,
   type DragEvent,
   type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
 } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import {
+  Bookmark,
   Bot,
-  Check,
   FileCheck2,
   Inbox,
   Layers,
   Library,
   Loader2,
-  MessageSquareText,
+  MessageSquarePlus,
   Pencil,
   Sparkles,
   Trash2,
   UploadCloud,
   Wand2,
-  X as XIcon,
 } from "lucide-react";
 
 import { Layout } from "../components/layout/Layout";
@@ -47,22 +47,20 @@ import type {
   TemplateInfo,
   TemplatePageType,
   TemplatePreview,
-  PreviewSlide,
-  SlideDocument,
   UserAnnotation,
 } from "../lib/types";
 import { ProgressView } from "../components/template/ProgressView";
 import { AgentImportingView } from "../components/template/AgentImportingView";
-import { SlideStage, SlideStageToolbar, type StageMode } from "../components/template/SlideStage";
-import { KonvaSlideEditor, type EditorCommand, type EditorCommandType, type EditorState } from "../components/preview/KonvaSlideEditor";
 import { CollabPanel } from "../components/template/CollabPanel";
 import { buildAgentActivityEvents } from "../components/template/agentActivity";
 import {
   BigPreview,
   MiddleEmptyState,
+  TemplateImportingState,
 } from "../components/template/MiddlePagePreview";
 import { detectUserLanguage } from "../components/template/detectUserLanguage";
 import { HoverTooltip } from "../components/common/HoverTooltip";
+import { PptistStudioHost } from "../components/pptist/PptistStudioHost";
 
 const ROUTING_PROFILE_STORAGE_KEY = "paper-ppt-agent-routing-profiles-v1";
 const TEMPLATE_AGENT_CONFIG_STORAGE_KEY = "paper-ppt-agent-template-agent-config-v1";
@@ -88,7 +86,7 @@ type RoutingProfileMap = Record<string, RoutingProfile>;
 const PAGE_TYPES: TemplatePageType[] = ["cover", "toc", "chapter", "content", "ending"];
 
 type LibraryFilter = "all" | "builtin" | "user";
-type CollabMode = "classic" | "agent" | "direct";
+type CollabMode = "agent" | "direct";
 
 function readModelConfig(): TemplateImportModelConfig | undefined {
   try {
@@ -151,7 +149,7 @@ function readActiveTemplateImportId(): string | undefined {
 function readTemplateUploadMode(): CollabMode {
   try {
     const value = window.localStorage.getItem(TEMPLATE_UPLOAD_MODE_STORAGE_KEY);
-    return value === "agent" || value === "classic" || value === "direct" ? value : "direct";
+    return value === "agent" || value === "direct" ? value : "direct";
   } catch {
     return "direct";
   }
@@ -222,23 +220,23 @@ export function TemplatesPage() {
   const [checkingAgentRuntime, setCheckingAgentRuntime] = useState(false);
   const [confirmingFlag, setConfirmingFlag] = useState(false);
   const [autoSelectedFor, setAutoSelectedFor] = useState<string | null>(null);
-  const [stageMode, setStageMode] = useState<StageMode>("select");
-  const [stageShowTemplated, setStageShowTemplated] = useState<boolean>(false);
-  const [templateEditorCommand, setTemplateEditorCommand] = useState<EditorCommand | undefined>(undefined);
-  const [templateEditorState, setTemplateEditorState] = useState<EditorState>({
-    autoSave: true,
-    saveState: "idle",
-    canEdit: true,
-    canUndo: false,
-    canRedo: false,
-  });
   const [selectedSlideIndex, setSelectedSlideIndex] = useState<number | null>(null);
-  const [slideSvgByIndex, setSlideSvgByIndex] = useState<Record<number, string>>({});
   const [pendingAgentSelectionChanges, setPendingAgentSelectionChanges] = useState<PageSelectionChange[]>([]);
   const selectionBaselineRef = useRef<Partial<Record<TemplatePageType, number | null>>>({});
+  const autoInspectionRef = useRef<string | null>(null);
+  const [annotationMode, setAnnotationMode] = useState(false);
+  const [annotationDraft, setAnnotationDraft] = useState<{
+    startX: number;
+    startY: number;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null>(null);
   const [uploadMode, setUploadMode] = useState<CollabMode>(readTemplateUploadMode);
   const [collabMode, setCollabMode] = useState<CollabMode>(readTemplateUploadMode);
   const [directConversation, setDirectConversation] = useState<Array<{ role: string; content: string; created_at?: number; meta?: Record<string, unknown> }>>([]);
+  const [directDesignSpec, setDirectDesignSpec] = useState<string>("");
   const [agentConfig, setAgentConfig] = useState<TemplateAgentConfig>(readTemplateAgentConfig);
 
   const handleMissingImport = useCallback(
@@ -267,8 +265,9 @@ export function TemplatesPage() {
     agentStatus,
     agentCancelPending,
     confirm,
+    generateDirectDesignSpec,
+    refreshReview,
     retryStep,
-    saveAgentTemplateSvg,
   } = useTemplateImport(importId, { modelConfig, onMissingImport: handleMissingImport, t });
 
   const modelConfigured = Boolean(modelConfig?.api_key && modelConfig?.model);
@@ -284,6 +283,7 @@ export function TemplatesPage() {
 
   useEffect(() => {
     writeActiveTemplateImportId(importId);
+    setDirectDesignSpec("");
   }, [importId]);
 
   useEffect(() => {
@@ -302,8 +302,10 @@ export function TemplatesPage() {
   }, [importId, uploadMode]);
 
   useEffect(() => {
-    if (status?.collaboration_mode === "classic" || status?.collaboration_mode === "agent" || status?.collaboration_mode === "direct") {
+    if (status?.collaboration_mode === "agent" || status?.collaboration_mode === "direct") {
       setCollabMode(status.collaboration_mode);
+    } else if (status?.collaboration_mode === "classic") {
+      setCollabMode("direct");
     }
   }, [status?.collaboration_mode]);
 
@@ -414,10 +416,6 @@ export function TemplatesPage() {
   const handleUpload = useCallback(
     async (file: File) => {
       setTemplateError(null);
-      if ((uploadMode === "classic" || uploadMode === "direct") && !modelConfigured) {
-        setTemplateError(t("template.modelRequired"));
-        return;
-      }
       try {
         if (uploadMode === "agent") {
           setCheckingAgentRuntime(true);
@@ -431,25 +429,62 @@ export function TemplatesPage() {
         const id = await upload(
           file,
           uploadMode,
-          uploadMode === "classic" || uploadMode === "direct"
-            ? modelConfig as TemplateImportModelConfig
-            : undefined,
+          undefined,
         );
         writeActiveTemplateImportId(id);
         setImportId(id);
         setCollabMode(uploadMode);
         setSelectedTemplateId(null);
         setSelectedSlideIndex(null);
+        setDirectDesignSpec("");
+        setDirectConversation([]);
+        autoInspectionRef.current = null;
+        setAnnotationMode(false);
+        setAnnotationDraft(null);
       } catch (err) {
         setTemplateError(err instanceof Error ? err.message : t("template.uploadFailed"));
       } finally {
         setCheckingAgentRuntime(false);
       }
     },
-    [modelConfigured, modelConfig, setTemplateError, upload, uploadMode, t],
+    [setTemplateError, upload, uploadMode, t],
   );
 
   const handleConfirm = useCallback(async () => {
+    setConfirmingFlag(true);
+    try {
+      if (collabMode === "direct") {
+        if (!modelConfig) {
+          setTemplateError(t("template.error.modelConfigRequired"));
+          return;
+        }
+        const currentSlideCount = review?.slide_count ?? review?.slides?.length ?? 0;
+        if (currentSlideCount !== 5) {
+          setTemplateError(t("template.directFiveSlidesRequired"));
+          return;
+        }
+        const next = await generateDirectDesignSpec();
+        const spec = next?.draft?.design_spec?.trim() || "";
+        setDirectDesignSpec(spec);
+        if (spec) {
+          setDirectConversation([
+            {
+              role: "assistant",
+              content: spec,
+              created_at: Date.now() / 1000,
+              meta: { mode: "direct", design_spec_preview: true },
+            },
+          ]);
+        }
+        return;
+      }
+      await confirm();
+    } finally {
+      setConfirmingFlag(false);
+    }
+  }, [collabMode, confirm, generateDirectDesignSpec, modelConfig, review, setTemplateError, t]);
+
+  const handleConfirmDirectImport = useCallback(async () => {
     setConfirmingFlag(true);
     try {
       await confirm();
@@ -458,6 +493,11 @@ export function TemplatesPage() {
     }
   }, [confirm]);
 
+  const handleEditDirectImport = useCallback(() => {
+    setDirectDesignSpec("");
+    setDirectConversation([]);
+  }, []);
+
   const handleCancelImport = useCallback(() => {
     writeActiveTemplateImportId(undefined);
     setImportId(undefined);
@@ -465,6 +505,11 @@ export function TemplatesPage() {
     setAutoSelectedFor(null);
     setSelectedSlideIndex(null);
     setPendingAgentSelectionChanges([]);
+    setDirectDesignSpec("");
+    setDirectConversation([]);
+    autoInspectionRef.current = null;
+    setAnnotationMode(false);
+    setAnnotationDraft(null);
   }, [uploadMode]);
 
   const handleAssignPageTypeToSlide = useCallback(
@@ -487,8 +532,6 @@ export function TemplatesPage() {
         },
       });
       setSelectedSlideIndex(slideIndex);
-      setStageShowTemplated(true);
-      setStageMode("select");
       if (collabMode === "agent") {
         setPendingAgentSelectionChanges((prev) => {
           const withoutType = prev.filter((item) => item.pageType !== pageType);
@@ -507,8 +550,6 @@ export function TemplatesPage() {
       const assignedSlide = draft.page_selections?.[pageType];
       if (typeof assignedSlide === "number") {
         setSelectedSlideIndex(assignedSlide);
-        setStageShowTemplated(true);
-        setStageMode("select");
       }
     },
     [draft.page_selections],
@@ -569,97 +610,14 @@ export function TemplatesPage() {
   const isImporting =
     Boolean(importId) && importStatus !== "review_required" && importStatus !== "complete";
   const isReviewing = Boolean(importId) && importStatus === "review_required" && Boolean(review);
+  const agentTemplateized =
+    review?.llm?.agent === true &&
+    review?.llm?.status === "complete" &&
+    review?.llm?.templateized === true;
+  const templateEditorRevision = agentTemplateized
+    ? `clean:${review?.llm?.templateized_at ?? importPreview?.template_id ?? "ready"}`
+    : `source:${review?.pptist_version ?? "draft"}`;
 
-  // Agent mode starts with a real read-only inspection: the Agent checks the
-  // review workspace and asks the user whether to begin template planning.
-  // It must not edit review.json or generate placeholders until the user
-  // sends an explicit instruction in the chat.
-  const autoAgentInspectionRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (collabMode !== "agent") return;
-    if (!importId) return;
-    if (autoAgentInspectionRef.current === importId) return;
-    if (importStatus !== "review_required") return;
-    if (!review) return;
-    if (!agentConfigured) return;
-    const existing = (review.conversation ?? []).filter((m) => {
-      const meta = (m.meta ?? {}) as Record<string, unknown>;
-      return meta.mode === "agent" || Boolean(meta.agent_job_id);
-    });
-    if (existing.length > 0) return;
-    autoAgentInspectionRef.current = importId;
-    const seed = t("template.agentReadOnlyInspectionPrompt");
-    void runAgent(seed, { ...agentConfig, reply_language: locale }, {
-      silent: true,
-      preview: false,
-      planning: false,
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [collabMode, importId, importStatus, Boolean(review)]);
-
-  const slide = review?.slides.find((s) => s.index === selectedSlideIndex) ?? review?.slides[0] ?? null;
-  const slidePreviewKey = useMemo(
-    () =>
-      (review?.slides ?? [])
-        .map((s) => `${s.index}:${s.preview_svg_url ?? ""}:${s.preview_svg ? "inline" : ""}`)
-        .join("|"),
-    [review?.slides],
-  );
-
-  useEffect(() => {
-    if (!review || !importId) {
-      setSlideSvgByIndex({});
-      return;
-    }
-    let cancelled = false;
-    const inlineMap: Record<number, string> = {};
-    review.slides.forEach((s) => {
-      if (s.preview_svg) inlineMap[s.index] = s.preview_svg;
-    });
-    setSlideSvgByIndex(inlineMap);
-    const toFetch = review.slides.filter((s) => s.preview_svg_url && !s.preview_svg);
-    if (toFetch.length === 0) return () => {
-      cancelled = true;
-    };
-    void Promise.all(
-      toFetch.map(async (s): Promise<[number, string] | null> => {
-        try {
-          const res = await fetch(s.preview_svg_url as string, { cache: "no-store" });
-          if (!res.ok) {
-            console.warn(`Slide preview fetch failed: ${s.preview_svg_url} (${res.status})`);
-            return null;
-          }
-          return [s.index, await res.text()];
-        } catch (error) {
-          console.warn(`Slide preview fetch failed: ${s.preview_svg_url}`, error);
-          return null;
-        }
-      }),
-    ).then((items) => {
-      if (cancelled) return;
-      setSlideSvgByIndex((prev) => {
-        const next = { ...prev };
-        items.forEach((item) => {
-          if (item) next[item[0]] = item[1];
-        });
-        return next;
-      });
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [importId, review, slidePreviewKey]);
-
-  const slideForStage = useMemo<TemplateImportSlide | null>(
-    () =>
-      slide
-        ? {
-            ...slide,
-            preview_svg: slideSvgByIndex[slide.index] ?? slide.preview_svg ?? "",
-          }
-        : null,
-    [slide, slideSvgByIndex],
-  );
   const annotations: UserAnnotation[] = draft.annotations ?? review?.annotations ?? [];
   const activeAnnotations = useMemo(
     () => annotations.filter((annotation) => !annotation.resolved),
@@ -672,68 +630,28 @@ export function TemplatesPage() {
     return detectUserLanguage(last?.feedback ?? "");
   }, [review?.feedback_history]);
 
-  const templatedSvg = useMemo<string | null>(() => {
-    if (!slideForStage || !importPreview) return null;
-    const selections = draft.page_selections ?? {};
-    let mappedPt: TemplatePageType | null = null;
-    for (const pt of PAGE_TYPES) {
-      if (selections[pt] === slideForStage.index) {
-        mappedPt = pt;
-        break;
-      }
-    }
-    const pt = mappedPt ?? slideForStage.page_type;
-    return pickPreviewSvg(importPreview, pt) ?? null;
-  }, [draft.page_selections, importPreview, slideForStage]);
-
-  const templatedPageType = useMemo<TemplatePageType | null>(() => {
-    if (!slideForStage) return null;
-    const selections = draft.page_selections ?? {};
-    for (const pt of PAGE_TYPES) {
-      if (selections[pt] === slideForStage.index) return pt;
-    }
-    return slideForStage.page_type ?? null;
-  }, [draft.page_selections, slideForStage]);
-
-  const templateEditorSlide = useMemo<PreviewSlide | undefined>(() => {
-    if (!slideForStage || !templatedSvg || !templatedPageType) return undefined;
-    return {
-      index: slideForStage.index,
-      name: t(`template.page.${templatedPageType}`),
-      source: "template-import",
-      content: templatedSvg,
-      document: null,
-    };
-  }, [slideForStage, t, templatedPageType, templatedSvg]);
-
-  useEffect(() => {
-    if (stageMode === "edit") {
-      setStageShowTemplated(true);
-    }
-  }, [stageMode]);
-
-  const runTemplateEditorCommand = useCallback((type: EditorCommandType) => {
-    setTemplateEditorCommand({ type, id: Date.now() });
-  }, []);
-
-  const handleSaveTemplateSlide = useCallback(
-    async (_slide: PreviewSlide, content: string, _document: SlideDocument) => {
-      if (!templatedPageType) return;
-      await saveAgentTemplateSvg(templatedPageType, content);
-    },
-    [saveAgentTemplateSvg, templatedPageType],
-  );
-
-  // Confirm import gating — require cover + content per design.
+  // Confirm import gating follows the selected import contract.
+  const directSlideCount = review?.slide_count ?? review?.slides?.length ?? 0;
+  const directImportReady = collabMode !== "direct" || directSlideCount === 5;
+  const representativePagesReady =
+    collabMode === "direct" ||
+    (Boolean(draft.page_selections?.cover) && Boolean(draft.page_selections?.content));
   const canConfirm =
     isReviewing &&
     Boolean(review) &&
-    Boolean(draft.page_selections?.cover) &&
-    Boolean(draft.page_selections?.content) &&
-    (collabMode !== "agent" || (review?.llm?.agent === true && review?.llm?.status === "complete")) &&
+    directImportReady &&
+    representativePagesReady &&
+    (collabMode !== "agent" || agentTemplateized) &&
+    !(collabMode === "direct" && Boolean(directDesignSpec)) &&
     !confirmingFlag;
-
-  const confirmDisabledHint = "";
+  const confirmDisabledHint =
+    isReviewing && collabMode === "direct" && !directImportReady
+      ? t("template.directFiveSlidesRequired")
+      : isReviewing && collabMode === "direct" && directDesignSpec
+        ? t("template.directReviewPending")
+      : isReviewing && collabMode === "agent" && !agentTemplateized
+        ? t("template.agentTemplateizationRequired")
+        : "";
 
   const collabConversation = useMemo(() => {
     if (collabMode === "direct") return directConversation;
@@ -755,6 +673,158 @@ export function TemplatesPage() {
         t,
       }),
     [status, review, draft, collabMode, agentEvents, llmEvents, t],
+  );
+
+  const hasReadOnlyInspection = useMemo(
+    () =>
+      collabConversation.some((message) => {
+        const meta = message.meta ?? {};
+        return Boolean(meta.read_only) || meta.planning === false;
+      }),
+    [collabConversation],
+  );
+
+  const runReadOnlyInspection = useCallback(
+    async (options: { silent?: boolean; reason?: string } = {}) => {
+      if (collabMode !== "agent") return;
+      const latestReview = await refreshReview();
+      if (!latestReview?.pptist_version) {
+        setTemplateError(t("template.agentSaveRequired"));
+        return;
+      }
+      const selectionNote = formatPageSelectionChanges(pendingAgentSelectionChanges, t);
+      await runAgent(
+        [options.reason || t("template.agentGuide.recheckPrompt"), selectionNote].filter(Boolean).join("\n\n"),
+        { ...agentConfig, reply_language: locale },
+        { silent: options.silent, planning: false, preview: false },
+      );
+      if (selectionNote) setPendingAgentSelectionChanges([]);
+    },
+    [
+      agentConfig,
+      collabMode,
+      locale,
+      pendingAgentSelectionChanges,
+      refreshReview,
+      runAgent,
+      setTemplateError,
+      t,
+    ],
+  );
+
+  const handleStartTemplateization = useCallback(async () => {
+    if (collabMode !== "agent") return;
+    const latestReview = await refreshReview();
+    if (!latestReview?.pptist_version) {
+      setTemplateError(t("template.agentSaveRequired"));
+      return;
+    }
+    const selectionNote = formatPageSelectionChanges(pendingAgentSelectionChanges, t);
+    await runAgent(
+      [t("template.agentGuide.startPrompt"), selectionNote].filter(Boolean).join("\n\n"),
+      { ...agentConfig, reply_language: locale },
+      { planning: true, preview: true },
+    );
+    if (selectionNote) setPendingAgentSelectionChanges([]);
+  }, [
+    agentConfig,
+    collabMode,
+    locale,
+    pendingAgentSelectionChanges,
+    refreshReview,
+    runAgent,
+    setTemplateError,
+    t,
+  ]);
+
+  useEffect(() => {
+    if (!isReviewing || collabMode !== "agent" || !importId || !review?.pptist_version) return;
+    if (importLoading || hasReadOnlyInspection) return;
+    const key = `${importId}:${review.pptist_version}`;
+    if (autoInspectionRef.current === key) return;
+    autoInspectionRef.current = key;
+    void runReadOnlyInspection({
+      silent: true,
+      reason: t("template.agentGuide.autoInspect"),
+    });
+  }, [
+    collabMode,
+    hasReadOnlyInspection,
+    importId,
+    importLoading,
+    isReviewing,
+    review?.pptist_version,
+    runReadOnlyInspection,
+    t,
+  ]);
+
+  const selectedAnnotationSlide = selectedSlideIndex ?? draft.page_selections?.[focusedPageType] ?? 1;
+  const clampUnit = (value: number) => Math.min(1, Math.max(0, value));
+  const handleAnnotationPointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (!annotationMode) return;
+      const rect = event.currentTarget.getBoundingClientRect();
+      const x = clampUnit((event.clientX - rect.left) / Math.max(1, rect.width));
+      const y = clampUnit((event.clientY - rect.top) / Math.max(1, rect.height));
+      event.currentTarget.setPointerCapture(event.pointerId);
+      event.preventDefault();
+      setAnnotationDraft({ startX: x, startY: y, x, y, width: 0, height: 0 });
+    },
+    [annotationMode],
+  );
+  const handleAnnotationPointerMove = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (!annotationMode || !annotationDraft) return;
+      const rect = event.currentTarget.getBoundingClientRect();
+      const currentX = clampUnit((event.clientX - rect.left) / Math.max(1, rect.width));
+      const currentY = clampUnit((event.clientY - rect.top) / Math.max(1, rect.height));
+      const x = Math.min(annotationDraft.startX, currentX);
+      const y = Math.min(annotationDraft.startY, currentY);
+      setAnnotationDraft({
+        ...annotationDraft,
+        x,
+        y,
+        width: Math.abs(currentX - annotationDraft.startX),
+        height: Math.abs(currentY - annotationDraft.startY),
+      });
+    },
+    [annotationDraft, annotationMode],
+  );
+  const handleAnnotationPointerUp = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (!annotationMode || !annotationDraft) return;
+      event.preventDefault();
+      const nextDraft = annotationDraft;
+      setAnnotationDraft(null);
+      if (nextDraft.width < 0.01 || nextDraft.height < 0.01) return;
+      const note = window.prompt(t("template.annotations.prompt"));
+      if (!note?.trim()) return;
+      const now = Date.now() / 1000;
+      const nextAnnotation: UserAnnotation = {
+        annotation_id: `pending-${Date.now()}`,
+        slide_index: selectedAnnotationSlide,
+        bbox_norm: {
+          x: clampUnit(nextDraft.x),
+          y: clampUnit(nextDraft.y),
+          width: clampUnit(nextDraft.width),
+          height: clampUnit(nextDraft.height),
+        },
+        note: note.trim(),
+        linked_element_id: null,
+        created_at: now,
+        resolved: false,
+      };
+      updateDraft({ annotations: [...annotations, nextAnnotation] });
+      setAnnotationMode(false);
+    },
+    [annotationDraft, annotationMode, annotations, selectedAnnotationSlide, t, updateDraft],
+  );
+
+  const removeAnnotationById = useCallback(
+    (annotationId: string) => {
+      updateDraft({ annotations: annotations.filter((item) => item.annotation_id !== annotationId) });
+    },
+    [annotations, updateDraft],
   );
 
   return (
@@ -834,57 +904,12 @@ export function TemplatesPage() {
           className="slide-workspace-panel templates-slide-panel"
           style={{ gridArea: "slides" }}
         >
+          {selectedTemplate && !isReviewing && !isImporting ? (
           <div className="slide-workspace-header">
             <p>
-              <span>
-                {isReviewing
-                  ? t("template.reviewTemplate")
-                  : isImporting
-                    ? t("templates.previewHeader")
-                    : selectedTemplate
-                      ? selectedTemplate.label || selectedTemplate.template_id
-                      : t("templates.previewHeader")}
-              </span>
+              <span>{selectedTemplate.label || selectedTemplate.template_id}</span>
             </p>
-            {isReviewing ? (
-              <div className="templates-export-menu">
-                {confirmDisabledHint ? (
-                  <span className="templates-confirm-hint" title={confirmDisabledHint}>
-                    {confirmDisabledHint}
-                  </span>
-                ) : null}
-                <button
-                  type="button"
-                  onClick={handleCancelImport}
-                  className="ti-focusable inline-flex items-center gap-1 rounded-[var(--ti-radius-sm,6px)] border px-2.5 py-1 text-xs font-semibold"
-                  style={{
-                    borderColor: "var(--ti-line)",
-                    background: "var(--ti-surface)",
-                    color: "var(--ti-muted)",
-                    minHeight: 34,
-                    padding: "0 14px",
-                    gap: 8,
-                  }}
-                >
-                  <XIcon size={12} />
-                  {t("common.cancel")}
-                </button>
-                <button
-                  type="button"
-                  className="result-export-main"
-                  disabled={!canConfirm}
-                  onClick={() => void handleConfirm()}
-                  title={confirmDisabledHint || undefined}
-                >
-                  {confirmingFlag ? (
-                    <Loader2 size={16} className="animate-spin" />
-                  ) : (
-                    <Check size={16} />
-                  )}
-                  <span>{t("template.confirmImport")}</span>
-                </button>
-              </div>
-            ) : selectedTemplate && selectedTemplate.editable ? (
+            {selectedTemplate.editable ? (
               <div className="flex items-center gap-1">
                 <button
                   type="button"
@@ -922,7 +947,7 @@ export function TemplatesPage() {
                   {t("templates.actions.useForGeneration")}
                 </button>
               </div>
-            ) : selectedTemplate ? (
+            ) : (
               <div className="flex items-center gap-1">
                 <button
                   type="button"
@@ -934,188 +959,162 @@ export function TemplatesPage() {
                   {t("templates.actions.useForGeneration")}
                 </button>
               </div>
-            ) : null}
+            )}
           </div>
+          ) : null}
 
-          <div className="slide-stage templates-slide-stage-grid">
-            {isReviewing && review && slideForStage ? (
-              <SlideStageToolbar
-                className="templates-slide-toolbar"
-                mode={stageMode}
-                onModeChange={setStageMode}
-                showTemplated={stageShowTemplated}
-                onShowTemplatedChange={setStageShowTemplated}
-                templatedAvailable={Boolean(templatedSvg)}
-                editorState={templateEditorState}
-                onEditorCommand={runTemplateEditorCommand}
-              />
-            ) : null}
-            <aside
-              className="thumbnail-rail templates-vertical-rail"
-              aria-label={t("templates.thumbnailRail.empty")}
-            >
-              {isReviewing && review && review.slides.length > 0 ? (
-                review.slides.map((s) => (
-                  <SlideThumb
-                    key={s.index}
-                    index={s.index}
-                    svg={slideSvgByIndex[s.index] ?? s.preview_svg}
-                    active={selectedSlideIndex === s.index}
-                    onClick={() => {
-                      setStageMode("select");
-                      setSelectedSlideIndex(s.index);
-                    }}
-                  />
-                ))
-              ) : !isImporting && selectedTemplate && preview ? (
-                PAGE_TYPES.map((pt) => (
-                  <PageTypeThumb
-                    key={pt}
-                    pageType={pt}
-                    svg={pickPreviewSvg(preview, pt)}
-                    active={focusedPageType === pt}
-                    onClick={() => setFocusedPageType(pt)}
-                  />
-                ))
-              ) : (
-                <EmptySlideThumb />
-              )}
-            </aside>
-
-            <div className="templates-right-column">
-              <div className="slide-canvas-area templates-canvas-area">
-                {isReviewing && review && slideForStage && stageMode === "edit" && templateEditorSlide ? (
-                  <KonvaSlideEditor
-                    slide={templateEditorSlide}
-                    editable
-                    command={templateEditorCommand}
-                    onStateChange={setTemplateEditorState}
-                    onSave={handleSaveTemplateSlide}
-                  />
-                ) : isReviewing && review && slideForStage ? (
-                  <SlideStage
-                    slide={slideForStage}
-                    templatedSvg={templatedSvg}
-                    annotations={activeAnnotations}
-                    mode={stageMode}
-                    onModeChange={setStageMode}
-                    toolbarHidden
-                    showTemplated={stageShowTemplated}
-                    onShowTemplatedChange={setStageShowTemplated}
-                    editorState={templateEditorState}
-                    onEditorCommand={runTemplateEditorCommand}
-                    onCreateAnnotation={(bbox_norm, note, linkedElementId) => {
-                      updateDraft({
-                        annotations: [
-                          ...annotations,
-                          {
-                            annotation_id: `pending-${Date.now()}`,
-                            slide_index: slideForStage.index,
-                            bbox_norm,
-                            note,
-                            linked_element_id: linkedElementId ?? null,
-                            created_at: Date.now() / 1000,
-                            resolved: false,
-                          },
-                        ],
-                      });
-                    }}
-                    onUpdateAnnotation={(id, patch) => {
-                      updateDraft({
-                        annotations: annotations.map((a) =>
-                          a.annotation_id === id ? { ...a, ...patch } : a,
-                        ),
-                      });
-                    }}
-                    onDeleteAnnotation={(id) => {
-                      updateDraft({
-                        annotations: annotations.filter((a) => a.annotation_id !== id),
-                      });
-                    }}
-                    slideCount={review.slide_count ?? review.slides.length}
-                    className="templates-slide-stage flex-1"
-                  />
-                ) : isImporting ? (
-                  <div className="templates-stage-importing">
-                    <div>
-                      {collabMode === "agent" ? (
-                        <AgentImportingView
-                          message={status?.message || t("template.uploading")}
-                          onCancel={handleCancelImport}
-                        />
-                      ) : (
-                        <>
-                          <ProgressView
-                            status={
-                              status ?? {
-                                import_id: importId ?? "",
-                                status: "processing",
-                                progress: 0,
-                                message: t("template.uploading"),
-                              }
-                            }
-                            onRetry={(stepId) => void retryStep(stepId)}
-                          />
-                          <div className="mt-3 flex justify-end">
-                            <button
-                              type="button"
-                              onClick={handleCancelImport}
-                              className="ti-focusable inline-flex items-center gap-1 rounded-[var(--ti-radius-sm,6px)] border px-3 py-1.5 text-sm"
-                              style={{
-                                borderColor: "var(--ti-line)",
-                                background: "var(--ti-surface)",
-                                color: "var(--ti-text)",
-                              }}
-                            >
-                              <XIcon size={13} />
-                              {t("common.cancel")}
-                            </button>
-                          </div>
-                        </>
-                      )}
-                    </div>
+          {isReviewing && importId ? (
+            <div className="pptist-template-review-stack">
+              <div className="ti-template-editor-wrap">
+                <PptistStudioHost
+                  source={{ kind: "templateImport", importId, revision: templateEditorRevision }}
+                  className="pptist-template-host"
+                  onSaved={() => {
+                    setDirectDesignSpec("");
+                    setDirectConversation([]);
+                    if (collabMode !== "direct") void refreshReview();
+                  }}
+                  onConfirmImport={() => void handleConfirm()}
+                  saveBeforeConfirmImport={collabMode === "direct"}
+                  confirmImportDisabled={!canConfirm}
+                  confirmImportHint={confirmDisabledHint}
+                  onCancelImport={handleCancelImport}
+                />
+                {annotationMode ? (
+                  <div
+                    className="ti-annotation-overlay"
+                    onPointerDown={handleAnnotationPointerDown}
+                    onPointerMove={handleAnnotationPointerMove}
+                    onPointerUp={handleAnnotationPointerUp}
+                    title={t("template.annotations.dragHint")}
+                  >
+                    {annotationDraft ? (
+                      <div
+                        className="ti-annotation-draft-box"
+                        style={{
+                          left: `${annotationDraft.x * 100}%`,
+                          top: `${annotationDraft.y * 100}%`,
+                          width: `${annotationDraft.width * 100}%`,
+                          height: `${annotationDraft.height * 100}%`,
+                        }}
+                      />
+                    ) : (
+                      <span>{t("template.annotations.dragHint")}</span>
+                    )}
                   </div>
-                ) : selectedTemplate && preview ? (
-                  previewLoading ? (
-                    <div className="templates-big-preview">
-                      <div className="templates-big-preview-frame">
-                        <div className="templates-big-preview-empty">
-                          <Loader2 size={20} className="animate-spin" />
+                ) : null}
+              </div>
+              {review ? (
+                <div className="ti-review-bottom-tools">
+                  <TemplateAnnotationTools
+                    annotations={activeAnnotations}
+                    annotationMode={annotationMode}
+                    onToggleAnnotationMode={() => {
+                      setAnnotationDraft(null);
+                      setAnnotationMode((enabled) => !enabled);
+                    }}
+                    onDelete={removeAnnotationById}
+                  />
+                  {collabMode === "direct" ? (
+                    <DirectImportContract slideCount={directSlideCount} />
+                  ) : (
+                    <ReviewPageAssignments
+                      review={review}
+                      selections={draft.page_selections ?? {}}
+                      focusedPageType={focusedPageType}
+                      layout="horizontal"
+                      onFocus={handleReviewPageTypeClick}
+                      onAssign={handleAssignPageTypeToSlide}
+                    />
+                  )}
+                </div>
+              ) : null}
+            </div>
+          ) : isImporting ? (
+            <TemplateImportingState>
+              <div className="templates-stage-importing">
+                <div>
+                  {collabMode === "agent" ? (
+                    <AgentImportingView
+                      message={status?.message || t("template.uploading")}
+                      onCancel={handleCancelImport}
+                    />
+                  ) : (
+                    <>
+                      <ProgressView
+                        status={
+                          status ?? {
+                            import_id: importId ?? "",
+                            status: "processing",
+                            progress: 0,
+                            message: t("template.uploading"),
+                          }
+                        }
+                        mode={collabMode === "direct" ? "direct" : "llm"}
+                        onRetry={(stepId) => void retryStep(stepId)}
+                      />
+                    </>
+                  )}
+                </div>
+              </div>
+            </TemplateImportingState>
+          ) : !(selectedTemplate && preview) ? (
+            <MiddleEmptyState />
+          ) : (
+            <div className="slide-stage templates-slide-stage-grid">
+              <aside
+                className="thumbnail-rail templates-vertical-rail"
+                aria-label={t("templates.thumbnailRail.empty")}
+              >
+                {!isImporting && selectedTemplate && preview ? (
+                  PAGE_TYPES.map((pt) => (
+                    <PageTypeThumb
+                      key={pt}
+                      pageType={pt}
+                      svg={pickPreviewSvg(preview, pt)}
+                      active={focusedPageType === pt}
+                      onClick={() => setFocusedPageType(pt)}
+                    />
+                  ))
+                ) : (
+                  <EmptySlideThumb />
+                )}
+              </aside>
+
+              <div className="templates-right-column">
+                <div className="slide-canvas-area templates-canvas-area">
+                  {selectedTemplate && preview ? (
+                    previewLoading ? (
+                      <div className="templates-big-preview">
+                        <div className="templates-big-preview-frame">
+                          <div className="templates-big-preview-empty">
+                            <Loader2 size={20} className="animate-spin" />
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ) : (
-                    <BigPreview
-                      svg={pickPreviewSvg(preview, focusedPageType)}
-                      pageType={focusedPageType}
-                    />
-                  )
-                ) : (
-                  <MiddleEmptyState />
-                )}
+                    ) : (
+                      <BigPreview
+                        svg={pickPreviewSvg(preview, focusedPageType)}
+                        pageType={focusedPageType}
+                      />
+                    )
+                  ) : null}
+                </div>
+                <BottomRail
+                  mode={isReviewing ? "review" : isImporting ? "importing" : selectedTemplate && preview ? "browsing" : "empty"}
+                  preview={preview}
+                  importPreview={importPreview ?? null}
+                  draftPageSelections={draft.page_selections}
+                  focusedPageType={focusedPageType}
+                  selectedSlideIndex={selectedSlideIndex}
+                  onSelectPageType={setFocusedPageType}
+                  onAssignPageType={handleAssignPageTypeToSlide}
+                  onReviewPageTypeClick={handleReviewPageTypeClick}
+                  slides={review?.slides ?? []}
+                />
               </div>
-              <BottomRail
-                mode={
-                  isReviewing
-                    ? "review"
-                    : isImporting
-                      ? "importing"
-                      : selectedTemplate && preview
-                        ? "browsing"
-                        : "empty"
-                }
-                preview={preview}
-                importPreview={importPreview ?? null}
-                draftPageSelections={draft.page_selections}
-                focusedPageType={focusedPageType}
-                selectedSlideIndex={selectedSlideIndex}
-                onSelectPageType={setFocusedPageType}
-                onAssignPageType={handleAssignPageTypeToSlide}
-                onReviewPageTypeClick={handleReviewPageTypeClick}
-                slides={review?.slides ?? []}
-              />
             </div>
-          </div>
+          )}
         </main>
 
         {/* ───────── RIGHT COLUMN: Collab ───────── */}
@@ -1151,12 +1150,17 @@ export function TemplatesPage() {
                 agentStatus={agentStatus}
                 onSendFeedback={async (text) => {
                   if (collabMode === "agent") {
-                    const selectionNote = formatPageSelectionChanges(pendingAgentSelectionChanges, t);
-                    await runAgent(
-                      selectionNote ? `${text}\n\n${selectionNote}` : text,
-                      { ...agentConfig, reply_language: locale },
-                    );
-                    if (selectionNote) setPendingAgentSelectionChanges([]);
+                    if (agentTemplateized) {
+                      const selectionNote = formatPageSelectionChanges(pendingAgentSelectionChanges, t);
+                      await runAgent(
+                        [text || t("template.agentGuide.startPrompt"), selectionNote].filter(Boolean).join("\n\n"),
+                        { ...agentConfig, reply_language: locale },
+                        { planning: true, preview: true },
+                      );
+                      if (selectionNote) setPendingAgentSelectionChanges([]);
+                    } else {
+                      await runReadOnlyInspection({ reason: text || t("template.agentGuide.recheckPrompt") });
+                    }
                   } else if (collabMode === "direct") {
                     if (!selectedTemplateId || !modelConfig) return;
                     const now = Date.now() / 1000;
@@ -1175,6 +1179,7 @@ export function TemplatesPage() {
                   }
                 }}
                 onStopAgent={cancelAgent}
+                onStartTemplateization={handleStartTemplateization}
                 importId={importId}
                 contextAttachments={pendingAgentSelectionChanges.map((change) => {
                   const label = t(`templates.preview.tilelabel.${change.pageType}`);
@@ -1196,12 +1201,170 @@ export function TemplatesPage() {
                 review={review}
                 draftState={draft}
                 agentCancelPending={agentCancelPending}
+                directDesignSpec={directDesignSpec}
+                directImportBusy={confirmingFlag}
+                onConfirmDirectImport={handleConfirmDirectImport}
+                onEditDirectImport={handleEditDirectImport}
               />
             </div>
           </div>
         </aside>
       </section>
     </Layout>
+  );
+}
+
+function DirectImportContract({ slideCount }: { slideCount: number }) {
+  const { t } = useLocale();
+  const ready = slideCount === 5;
+  return (
+    <section className="ti-review-assignments" data-layout="horizontal">
+      <div className="ti-review-assignments-title">
+        <FileCheck2 size={14} />
+        <span>{t("template.directContract.title")}</span>
+      </div>
+      <div className="ti-review-assignments-list">
+        {PAGE_TYPES.map((pageType, index) => (
+          <div
+            key={pageType}
+            className="ti-review-assignment-row"
+            data-active={ready && index + 1 <= slideCount}
+          >
+            <span className="ti-review-assignment-label">
+              {String(index + 1).padStart(2, "0")} · {t(`templates.preview.tilelabel.${pageType}`)}
+            </span>
+            <span
+              className="ti-review-assignment-select"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                pointerEvents: "none",
+              }}
+            >
+              {t("template.directContract.fixed")}
+            </span>
+          </div>
+        ))}
+      </div>
+      {!ready ? (
+        <p className="mt-2 text-xs" style={{ color: "var(--ti-danger)" }}>
+          {t("template.directFiveSlidesRequired")}
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+function TemplateAnnotationTools({
+  annotations,
+  annotationMode,
+  onToggleAnnotationMode,
+  onDelete,
+}: {
+  annotations: UserAnnotation[];
+  annotationMode: boolean;
+  onToggleAnnotationMode: () => void;
+  onDelete: (annotationId: string) => void;
+}) {
+  const { t } = useLocale();
+  return (
+    <section className="ti-review-annotations">
+      <div className="ti-review-annotations-head">
+        <div className="ti-review-annotations-title">
+          <Bookmark size={14} />
+          <span>{t("template.annotations.title")}</span>
+          <strong>{annotations.length}</strong>
+        </div>
+        <button
+          type="button"
+          className="ti-focusable ti-review-annotation-button"
+          data-active={annotationMode}
+          onClick={onToggleAnnotationMode}
+        >
+          <MessageSquarePlus size={13} />
+          <span>{annotationMode ? t("template.annotations.cancel") : t("template.annotations.add")}</span>
+        </button>
+      </div>
+      <div className="ti-review-annotation-list">
+        {annotations.length === 0 ? (
+          <span className="ti-review-annotation-empty">{t("template.annotations.empty")}</span>
+        ) : (
+          annotations.slice(-3).map((annotation) => (
+            <div className="ti-review-annotation-chip" key={annotation.annotation_id}>
+              <span>
+                {String(annotation.slide_index).padStart(2, "0")} · {annotation.note}
+              </span>
+              <button type="button" onClick={() => onDelete(annotation.annotation_id)}>
+                {t("template.annotations.delete")}
+              </button>
+            </div>
+          ))
+        )}
+      </div>
+    </section>
+  );
+}
+
+function ReviewPageAssignments({
+  review,
+  selections,
+  focusedPageType,
+  layout = "side",
+  onFocus,
+  onAssign,
+}: {
+  review: { slides: TemplateImportSlide[] };
+  selections: Partial<Record<TemplatePageType, number | null>>;
+  focusedPageType: TemplatePageType;
+  layout?: "side" | "horizontal";
+  onFocus?: (pageType: TemplatePageType) => void;
+  onAssign: (pageType: TemplatePageType, slideIndex: number) => void;
+}) {
+  const { t } = useLocale();
+  const slides = review.slides ?? [];
+  return (
+    <section className="ti-review-assignments" data-layout={layout}>
+      <div className="ti-review-assignments-title">
+        <FileCheck2 size={14} />
+        <span>{t("template.assignments.title")}</span>
+      </div>
+      <div className="ti-review-assignments-list">
+        {PAGE_TYPES.map((pageType) => {
+          const selected = selections[pageType] ?? "";
+          return (
+            <div
+              key={pageType}
+              className="ti-review-assignment-row"
+              data-active={focusedPageType === pageType}
+            >
+              <button
+                type="button"
+                className="ti-review-assignment-label ti-focusable"
+                onClick={() => onFocus?.(pageType)}
+              >
+                {t(`templates.preview.tilelabel.${pageType}`)}
+              </button>
+              <select
+                value={selected || ""}
+                onChange={(event) => {
+                  const value = Number(event.currentTarget.value);
+                  if (value > 0) onAssign(pageType, value);
+                }}
+                className="ti-review-assignment-select ti-focusable"
+              >
+                <option value="">{t("templates.chip.notAssigned")}</option>
+                {slides.map((slide) => (
+                  <option key={slide.index} value={slide.index}>
+                    {String(slide.index).padStart(2, "0")}
+                  </option>
+                ))}
+              </select>
+            </div>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
@@ -1233,7 +1396,7 @@ function UploadCard({
   const { t } = useLocale();
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
-  const ready = mode === "agent" ? agentConfigured : modelConfigured;
+  const ready = mode === "agent" ? agentConfigured : true;
 
   const handleFile = async (file: File) => {
     const isPptx =
@@ -1263,14 +1426,12 @@ function UploadCard({
         role="radiogroup"
         aria-label={t("templates.upload.mode.label")}
       >
-        {(["direct", "classic", "agent"] as const).map((item) => {
+        {(["direct", "agent"] as const).map((item) => {
           const active = mode === item;
-          const label = item === "agent" ? "Agent" : item === "direct" ? t("templates.upload.mode.direct") : "LLM";
+          const label = item === "agent" ? "Agent" : t("templates.upload.mode.direct");
           const hint = item === "agent"
             ? t("templates.upload.mode.agentHint")
-            : item === "direct"
-              ? t("templates.upload.mode.directHint")
-              : t("templates.upload.mode.llmHint");
+            : t("templates.upload.mode.directHint");
           return (
             <HoverTooltip key={item} content={hint} className="ti-upload-mode-tooltip-trigger">
               <button
@@ -1283,7 +1444,7 @@ function UploadCard({
                 aria-label={label}
                 role="radio"
               >
-                {item === "agent" ? <Bot size={12} /> : item === "direct" ? <FileCheck2 size={12} /> : <MessageSquareText size={12} />}
+                {item === "agent" ? <Bot size={12} /> : <FileCheck2 size={12} />}
                 <span className="ti-upload-mode-label">{label}</span>
               </button>
             </HoverTooltip>
@@ -1338,9 +1499,7 @@ function UploadCard({
           <span>
             {mode === "agent"
               ? t("template.agentClaudeCodeRequired")
-              : mode === "direct"
-                ? ""
-              : t("template.modelRequired")}
+              : ""}
           </span>
         </div>
       ) : null}
@@ -1546,11 +1705,13 @@ function PageTypeThumb({
 function SlideThumb({
   index,
   svg,
+  imageUrl,
   active,
   onClick,
 }: {
   index: number;
   svg: string | undefined;
+  imageUrl?: string;
   active: boolean;
   onClick: () => void;
 }) {
@@ -1563,7 +1724,9 @@ function SlideThumb({
     >
       <span>{index}</span>
       <div>
-        {svg ? (
+        {imageUrl ? (
+          <img src={imageUrl} alt="" draggable={false} />
+        ) : svg ? (
           <div dangerouslySetInnerHTML={{ __html: sanitizeSvg(svg) }} />
         ) : null}
       </div>
@@ -1783,6 +1946,6 @@ function formatPageSelectionChanges(
   return [
     "Page selection changes since the previous Agent message:",
     ...lines,
-    "Please refresh agent_template/source_map.json and the related agent_template SVG baseline for any changed page type before applying this request.",
+    "Use these latest role assignments as the source of truth for inspection or templateization.",
   ].join("\n");
 }

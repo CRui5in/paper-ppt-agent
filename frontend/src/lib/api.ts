@@ -1,5 +1,8 @@
 import type {
   CancelJobResponse,
+  DeckCheckResult,
+  DeckImageAsset,
+  DeckScene,
   GenerateRequestPayload,
   GenerateResponse,
   ImageApplyRequest,
@@ -12,7 +15,11 @@ import type {
   JobStatus,
   PreviewResponse,
   PreviewSlide,
+  PptistDeckPayload,
+  PptistSaveResult,
   SlideDocument,
+  SlideScene,
+  SlideSceneOperation,
   ProvidersResponse,
   ReexportResponse,
   RefineRequestPayload,
@@ -155,7 +162,7 @@ export async function fetchTemplates(): Promise<TemplateInfo[]> {
 export async function uploadTemplatePptx(
   file: File,
   modelConfig: GenerateRequestPayload["model_config"] | undefined,
-  collaborationMode: "classic" | "agent" | "direct" = "classic",
+  collaborationMode: "classic" | "agent" | "direct" = "direct",
 ): Promise<ImportStartResponse> {
   const formData = new FormData();
   formData.append("file", file);
@@ -216,6 +223,17 @@ export async function optimizeTemplateImportWithFeedback(
   });
 }
 
+export async function generateTemplateImportDirectDesignSpec(
+  importId: string,
+  modelConfig: GenerateRequestPayload["model_config"],
+): Promise<TemplateReview> {
+  return request<TemplateReview>(`/api/templates/import/${importId}/direct-design-spec`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model_config: modelConfig }),
+  });
+}
+
 export async function startTemplateImportAgent(
   importId: string,
   payload: {
@@ -227,6 +245,7 @@ export async function startTemplateImportAgent(
     silent?: boolean;
     /** False for the automatic read-only inspection run. */
     planning?: boolean;
+    pptist_version?: string | null;
   },
 ): Promise<TemplateAgentStartResponse> {
   return request<TemplateAgentStartResponse>(`/api/templates/import/${importId}/agent`, {
@@ -277,6 +296,21 @@ export async function previewTemplateImportDraft(
 export async function confirmTemplateImport(importId: string): Promise<ImportStatus> {
   return request<ImportStatus>(`/api/templates/import/${importId}/confirm`, {
     method: "POST",
+  });
+}
+
+export async function fetchTemplateImportPptistDeck(importId: string): Promise<PptistDeckPayload> {
+  return request<PptistDeckPayload>(`/api/templates/import/${importId}/pptist/deck`);
+}
+
+export async function saveTemplateImportPptistDeck(
+  importId: string,
+  payload: PptistDeckPayload,
+): Promise<PptistSaveResult> {
+  return request<PptistSaveResult>(`/api/templates/import/${importId}/pptist/deck`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
   });
 }
 
@@ -390,6 +424,21 @@ export async function fetchPreview(jobId: string): Promise<PreviewResponse> {
   return request<PreviewResponse>(`/api/preview/${jobId}`);
 }
 
+export async function fetchPreviewPptistDeck(jobId: string): Promise<PptistDeckPayload> {
+  return request<PptistDeckPayload>(`/api/pptist/preview/${jobId}/deck`);
+}
+
+export async function savePreviewPptistDeck(
+  jobId: string,
+  payload: PptistDeckPayload,
+): Promise<PptistSaveResult> {
+  return request<PptistSaveResult>(`/api/pptist/preview/${jobId}/deck`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function fetchProjectPreview(
   projectDir: string,
   options: { lastSlideOnly?: boolean; signal?: AbortSignal } = {},
@@ -409,6 +458,152 @@ export async function updatePreviewSlide(jobId: string, slideIndex: number, cont
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ content, document, notes }),
+  });
+}
+
+export async function fetchPreviewSlideScene(jobId: string, slideIndex: number): Promise<SlideScene> {
+  return request<SlideScene>(`/api/preview/${jobId}/slides/${slideIndex}/scene`);
+}
+
+export async function fetchPreviewDeckScene(jobId: string): Promise<DeckScene> {
+  return request<DeckScene>(`/api/preview/${jobId}/deck/scene`);
+}
+
+export async function patchPreviewSlideScene(
+  jobId: string,
+  slideIndex: number,
+  operations: SlideSceneOperation[],
+  sceneVersion?: number | null,
+): Promise<SlideScene> {
+  return request<SlideScene>(`/api/preview/${jobId}/slides/${slideIndex}/scene`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ operations, scene_version: sceneVersion ?? undefined }),
+  });
+}
+
+export async function patchPreviewDeckScene(
+  jobId: string,
+  slideIndex: number,
+  operations: SlideSceneOperation[],
+  sceneVersion?: number | null,
+  mode: "commit" | "preview" = "commit",
+): Promise<SlideScene> {
+  return request<SlideScene>(`/api/preview/${jobId}/deck/operations`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ slide_index: slideIndex, operations, base_scene_version: sceneVersion ?? undefined, mode }),
+  });
+}
+
+export async function checkPreviewDeck(jobId: string): Promise<DeckCheckResult> {
+  return request<DeckCheckResult>(`/api/preview/${jobId}/deck/check`, { method: "POST" });
+}
+
+export async function uploadPreviewDeckImage(jobId: string, file: File): Promise<DeckImageAsset> {
+  const formData = new FormData();
+  formData.append("file", file);
+  return request<DeckImageAsset>(`/api/preview/${jobId}/assets/images`, {
+    method: "POST",
+    body: formData,
+  });
+}
+
+export async function stagePreviewDeckImageFromUrl(jobId: string, imageUrl: string, filename?: string): Promise<DeckImageAsset> {
+  return request<DeckImageAsset>(`/api/preview/${jobId}/assets/images/from-url`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ image_url: imageUrl, filename }),
+  });
+}
+
+export async function duplicatePreviewSlide(jobId: string, slideIndex: number): Promise<PreviewResponse> {
+  return request<PreviewResponse>(`/api/preview/${jobId}/slides/${slideIndex}/duplicate`, {
+    method: "POST",
+  });
+}
+
+export async function reorderPreviewSlides(jobId: string, slideIndexes: number[]): Promise<PreviewResponse> {
+  return request<PreviewResponse>(`/api/preview/${jobId}/slides/reorder`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ slide_indexes: slideIndexes }),
+  });
+}
+
+export async function fetchTemplateSlideScene(importId: string, slideIndex: number): Promise<SlideScene> {
+  return request<SlideScene>(`/api/templates/import/${importId}/slides/${slideIndex}/scene`);
+}
+
+export async function fetchTemplateDeckScene(importId: string): Promise<DeckScene> {
+  return request<DeckScene>(`/api/templates/import/${importId}/deck/scene`);
+}
+
+export async function patchTemplateSlideScene(
+  importId: string,
+  slideIndex: number,
+  operations: SlideSceneOperation[],
+  sceneVersion?: number | null,
+): Promise<SlideScene> {
+  return request<SlideScene>(`/api/templates/import/${importId}/slides/${slideIndex}/scene`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ operations, scene_version: sceneVersion ?? undefined }),
+  });
+}
+
+export async function patchTemplateDeckScene(
+  importId: string,
+  slideIndex: number,
+  operations: SlideSceneOperation[],
+  sceneVersion?: number | null,
+  mode: "commit" | "preview" = "commit",
+): Promise<SlideScene> {
+  return request<SlideScene>(`/api/templates/import/${importId}/deck/operations`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ slide_index: slideIndex, operations, base_scene_version: sceneVersion ?? undefined, mode }),
+  });
+}
+
+export async function checkTemplateDeck(importId: string): Promise<DeckCheckResult> {
+  return request<DeckCheckResult>(`/api/templates/import/${importId}/deck/check`, { method: "POST" });
+}
+
+export async function uploadTemplateDeckImage(importId: string, file: File): Promise<DeckImageAsset> {
+  const formData = new FormData();
+  formData.append("file", file);
+  return request<DeckImageAsset>(`/api/templates/import/${importId}/assets/images`, {
+    method: "POST",
+    body: formData,
+  });
+}
+
+export async function stageTemplateDeckImageFromUrl(importId: string, imageUrl: string, filename?: string): Promise<DeckImageAsset> {
+  return request<DeckImageAsset>(`/api/templates/import/${importId}/assets/images/from-url`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ image_url: imageUrl, filename }),
+  });
+}
+
+export async function duplicateTemplateImportSlide(importId: string, slideIndex: number): Promise<TemplateReview> {
+  return request<TemplateReview>(`/api/templates/import/${importId}/slides/${slideIndex}/duplicate`, {
+    method: "POST",
+  });
+}
+
+export async function deleteTemplateImportSlide(importId: string, slideIndex: number): Promise<TemplateReview> {
+  return request<TemplateReview>(`/api/templates/import/${importId}/slides/${slideIndex}`, {
+    method: "DELETE",
+  });
+}
+
+export async function reorderTemplateImportSlides(importId: string, slideIndexes: number[]): Promise<TemplateReview> {
+  return request<TemplateReview>(`/api/templates/import/${importId}/slides/reorder`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ slide_indexes: slideIndexes }),
   });
 }
 

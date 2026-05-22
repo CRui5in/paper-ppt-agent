@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .utils import get_style_attr, parse_svg_ratio
+from .utils import Matrix, get_style_attr, identity_matrix, multiply_matrices, parse_svg_ratio, transform_point
 
 
 @dataclass
@@ -21,6 +21,7 @@ class ConvertContext:
     translate_y: float = 0.0
     scale_x: float = 1.0
     scale_y: float = 1.0
+    matrix: Matrix = field(default_factory=identity_matrix)
 
     # Inherited styles from parent <g>
     inherited_styles: dict[str, str] = field(default_factory=dict)
@@ -54,6 +55,8 @@ class ConvertContext:
         dy: float = 0,
         sx: float = 1,
         sy: float = 1,
+        matrix: Matrix | None = None,
+        legacy: tuple[float, float, float, float] | None = None,
         style_overrides: dict[str, str] | None = None,
     ) -> ConvertContext:
         """Fork context for nested <g> element with accumulated transform."""
@@ -70,13 +73,18 @@ class ConvertContext:
                 }
             new_styles.update(style_overrides)
 
+        local_matrix = matrix or (sx, 0.0, 0.0, sy, dx, dy)
+        next_matrix = multiply_matrices(self.matrix, local_matrix)
+        legacy_dx, legacy_dy, legacy_sx, legacy_sy = legacy or (dx, dy, sx, sy)
+
         return ConvertContext(
             defs=self.defs,
             slide_num=self.slide_num,
-            translate_x=self.translate_x + dx * self.scale_x,
-            translate_y=self.translate_y + dy * self.scale_y,
-            scale_x=self.scale_x * sx,
-            scale_y=self.scale_y * sy,
+            translate_x=self.translate_x + legacy_dx * self.scale_x,
+            translate_y=self.translate_y + legacy_dy * self.scale_y,
+            scale_x=self.scale_x * legacy_sx,
+            scale_y=self.scale_y * legacy_sy,
+            matrix=next_matrix,
             inherited_styles=new_styles,
             media_files=self.media_files,  # shared reference
             rel_entries=self.rel_entries,  # shared reference
@@ -97,6 +105,10 @@ class ConvertContext:
     def ctx_y(self, val: float) -> float:
         """Transform y coordinate."""
         return val * self.scale_y + self.translate_y
+
+    def matrix_point(self, x: float, y: float) -> tuple[float, float]:
+        """Apply the full affine matrix to a point."""
+        return transform_point(self.matrix, x, y)
 
     def ctx_w(self, val: float) -> float:
         """Transform width (scale only)."""

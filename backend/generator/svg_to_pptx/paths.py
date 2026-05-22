@@ -10,7 +10,7 @@ import math
 import re
 from dataclasses import dataclass
 
-from .utils import px_to_emu
+from .utils import Matrix, identity_matrix, px_to_emu, transform_point
 
 
 @dataclass
@@ -166,12 +166,20 @@ def path_commands_to_drawingml(
     offset_y: float = 0,
     scale_x: float = 1,
     scale_y: float = 1,
+    matrix: Matrix | None = None,
 ) -> tuple[str, float, float, float, float]:
     """Convert normalized path commands to DrawingML custom geometry XML.
 
     Returns:
         (path_xml, min_x_emu, min_y_emu, width_emu, height_emu)
     """
+    if matrix is not None:
+        commands = transform_path_commands(commands, matrix)
+        offset_x = 0
+        offset_y = 0
+        scale_x = 1
+        scale_y = 1
+
     # Calculate bounding box
     all_x: list[float] = []
     all_y: list[float] = []
@@ -228,6 +236,24 @@ def path_commands_to_drawingml(
     bw = px_to_emu(width * scale_x)
     bh = px_to_emu(height * scale_y)
     return path_xml, bx, by, bw, bh
+
+
+def transform_path_commands(commands: list[PathCmd], matrix: Matrix | None) -> list[PathCmd]:
+    """Apply an affine transform to every point in normalized path commands."""
+    matrix = matrix or identity_matrix()
+    result: list[PathCmd] = []
+    for cmd in commands:
+        if cmd.cmd in {"M", "L"} and len(cmd.args) >= 2:
+            x, y = transform_point(matrix, cmd.args[0], cmd.args[1])
+            result.append(PathCmd(cmd.cmd, [x, y]))
+        elif cmd.cmd == "C" and len(cmd.args) >= 6:
+            x1, y1 = transform_point(matrix, cmd.args[0], cmd.args[1])
+            x2, y2 = transform_point(matrix, cmd.args[2], cmd.args[3])
+            x3, y3 = transform_point(matrix, cmd.args[4], cmd.args[5])
+            result.append(PathCmd(cmd.cmd, [x1, y1, x2, y2, x3, y3]))
+        else:
+            result.append(cmd)
+    return result
 
 
 def _arc_to_cubics(

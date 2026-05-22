@@ -72,6 +72,27 @@ _CHAR_WIDTH_RATIO_BY_FONT: dict[str, float] = {
     "fangsong": 0.95,
 }
 
+_CENTERED_PLACEHOLDERS = {
+    "TITLE",
+    "SUBTITLE",
+    "AUTHOR",
+    "DATE",
+    "GROUP",
+    "CHAPTER_NUM",
+    "CHAPTER_NUMBER",
+    "CHAPTER_TITLE",
+    "ENDING_TITLE",
+    "ENDING_MESSAGE",
+    "THANK_YOU",
+    "PAGE_TITLE",
+    "TOC_LIST",
+    "TOC_ITEM_1",
+    "TOC_ITEM_2",
+    "TOC_ITEM_3",
+    "TOC_ITEM_4",
+    "TOC_ITEM_5",
+}
+
 
 def _char_width_ratio(font_family: str | None) -> float:
     """Pick a per-char width ratio for ``font_family`` (case/quote tolerant)."""
@@ -557,9 +578,12 @@ def _replace_text_with_placeholder(
     # Drop attributes that would re-apply original positioning logic.
     for attr in ("style", "transform", "letter-spacing", "word-spacing", "font-stretch", "dx", "dy"):
         element.attrib.pop(attr, None)
-    # Anchor to the baseline using bbox.x/(y+0.8h). Keep the original
-    # text-anchor when present so visual alignment is preserved.
+    # Anchor to the solved bbox. Imported PPT SVGs often carry per-character
+    # x coordinates or inherited anchors; placeholders should be stable and
+    # visually centered for title-like slots.
     anchor = style.get("text-anchor", "")
+    if placeholder_name in _CENTERED_PLACEHOLDERS:
+        anchor = "middle"
     if anchor == "middle":
         x_attr = bbox.x + bbox.width / 2.0
     elif anchor == "end":
@@ -577,6 +601,8 @@ def _replace_text_with_placeholder(
         element.attrib["font-family"] = style["font-family"]
     if style.get("font-weight"):
         element.attrib["font-weight"] = style["font-weight"]
+    if style.get("opacity"):
+        element.attrib["opacity"] = style["opacity"]
     if anchor:
         element.attrib["text-anchor"] = anchor
     element.text = f"{{{{{placeholder_name}}}}}"
@@ -647,6 +673,130 @@ def _href_filename(element: ET.Element) -> str:
     return PurePosixPath(href.split("#", 1)[0]).name
 
 
+def _auto_text_font_size(element: ET.Element, bbox: BoundingBox) -> float:
+    return max(_to_float(_style_value(element, "font-size"), bbox.height or 14.0), bbox.height or 14.0)
+
+
+def _auto_text_entries(
+    walk: list[tuple[str, ET.Element, ET.Element, str, list[ET.Element]]],
+    metrics: SlideMetrics,
+    canvas_w: int,
+    canvas_h: int,
+) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    for element_id, _parent, element, kind, ancestors in walk:
+        if kind != "text":
+            continue
+        text = _normalize_text(_element_text_content(element))
+        if not text or "{{" in text or "}}" in text:
+            continue
+        try:
+            bbox = solved_bbox(element, ancestors, metrics)
+        except Exception:
+            continue
+        if bbox.width <= 1 or bbox.height <= 1:
+            continue
+        font_size = _auto_text_font_size(element, bbox)
+        y_mid = bbox.y + bbox.height / 2.0
+        x_mid = bbox.x + bbox.width / 2.0
+        if y_mid < -canvas_h * 0.04 or y_mid > canvas_h * 1.04:
+            continue
+        entries.append(
+            {
+                "id": element_id,
+                "element": element,
+                "text": text,
+                "bbox": bbox,
+                "font_size": font_size,
+                "area": max(1.0, bbox.width * bbox.height),
+                "x_mid": x_mid,
+                "y_mid": y_mid,
+            }
+        )
+    return entries
+
+
+def _pick_largest(entries: list[dict[str, Any]], *, exclude: set[str] | None = None, top: bool = False) -> dict[str, Any] | None:
+    exclude = exclude or set()
+    candidates = [entry for entry in entries if entry["id"] not in exclude]
+    if not candidates:
+        return None
+    if top:
+        candidates.sort(key=lambda entry: (entry["y_mid"], -entry["font_size"], -entry["area"]))
+    else:
+        candidates.sort(key=lambda entry: (-entry["font_size"], -entry["area"], entry["y_mid"]))
+    return candidates[0]
+
+
+def _build_auto_placeholder_plan(
+    page_type: PageType,
+    entries: list[dict[str, Any]],
+    canvas_w: int,
+    canvas_h: int,
+) -> tuple[dict[str, str], list[BoundingBox]]:
+    """Infer a small clean placeholder set for direct imports.
+
+    This intentionally strips most source content. The selected boxes keep
+    the imported deck's layout rhythm, while the generated template receives
+    stable reusable slots instead of the original paper text.
+    """
+    assigned: dict[str, str] = {}
+    used: set[str] = set()
+
+    def assign(entry: dict[str, Any] | None, name: str) -> None:
+        if not entry or entry["id"] in used:
+            return
+        assigned[entry["id"]] = name
+        used.add(entry["id"])
+
+    upper = [entry for entry in entries if entry["y_mid"] <= canvas_h * 0.42]
+    central = [entry for entry in entries if canvas_h * 0.12 <= entry["y_mid"] <= canvas_h * 0.82]
+    body_boxes: list[BoundingBox] = []
+
+    if page_type == "cover":
+        title = _pick_largest(central or entries)
+        assign(title, "TITLE")
+        subtitle_candidates = [entry for entry in central if entry["id"] not in used and entry["y_mid"] >= (title or {}).get("y_mid", 0)]
+        assign(_pick_largest(subtitle_candidates, top=True), "SUBTITLE")
+        bottom = [entry for entry in entries if entry["id"] not in used and entry["y_mid"] >= canvas_h * 0.55]
+        assign(_pick_largest(bottom, top=True), "AUTHOR")
+    elif page_type == "toc":
+        assign(_pick_largest(upper or entries), "PAGE_TITLE")
+        toc_boxes = [entry["bbox"] for entry in central if entry["id"] not in used]
+        if toc_boxes:
+            body_boxes = toc_boxes
+        list_entry = _pick_largest([entry for entry in central if entry["id"] not in used], top=True)
+        assign(list_entry, "TOC_LIST")
+    elif page_type == "chapter":
+        numeric = [
+            entry
+            for entry in entries
+            if len(entry["text"]) <= 8 and any(ch.isdigit() for ch in entry["text"])
+        ]
+        assign(_pick_largest(numeric), "CHAPTER_NUM")
+        assign(_pick_largest([entry for entry in central or entries if entry["id"] not in used]), "CHAPTER_TITLE")
+    elif page_type == "ending":
+        assign(_pick_largest(central or entries), "ENDING_MESSAGE")
+    else:
+        assign(_pick_largest(upper or entries, top=True), "PAGE_TITLE")
+        body_boxes = [
+            entry["bbox"]
+            for entry in entries
+            if entry["id"] not in used and canvas_h * 0.18 <= entry["y_mid"] <= canvas_h * 0.88
+        ]
+
+    if page_type == "content" and not body_boxes:
+        body_boxes = [
+            BoundingBox(
+                x=canvas_w * 0.08,
+                y=canvas_h * 0.24,
+                width=canvas_w * 0.84,
+                height=canvas_h * 0.58,
+            )
+        ]
+    return assigned, body_boxes
+
+
 def _wrap_content_area(
     svg_root: ET.Element,
     placeholder_box: BoundingBox | None,
@@ -672,17 +822,23 @@ def _wrap_content_area(
             if b.y >= canvas_h * 0.18 and (b.y + b.height) <= canvas_h * 0.86
         ]
         if not body_boxes:
-            return None
-        x0 = min(b.x for b in body_boxes)
-        y0 = min(b.y for b in body_boxes)
-        x1 = max(b.x + b.width for b in body_boxes)
-        y1 = max(b.y + b.height for b in body_boxes)
-        bbox = BoundingBox(
-            x=max(0.0, x0),
-            y=max(0.0, y0),
-            width=max(0.0, min(canvas_w, x1) - max(0.0, x0)),
-            height=max(0.0, min(canvas_h, y1) - max(0.0, y0)),
-        )
+            bbox = BoundingBox(
+                x=canvas_w * 0.08,
+                y=canvas_h * 0.24,
+                width=canvas_w * 0.84,
+                height=canvas_h * 0.58,
+            )
+        else:
+            x0 = min(b.x for b in body_boxes)
+            y0 = min(b.y for b in body_boxes)
+            x1 = max(b.x + b.width for b in body_boxes)
+            y1 = max(b.y + b.height for b in body_boxes)
+            bbox = BoundingBox(
+                x=max(0.0, x0),
+                y=max(0.0, y0),
+                width=max(0.0, min(canvas_w, x1) - max(0.0, x0)),
+                height=max(0.0, min(canvas_h, y1) - max(0.0, y0)),
+            )
 
     # Build the wrapper <g id="content-area"> with a single placeholder text.
     g_tag = f"{{{SVG_NS}}}g" if svg_root.tag.startswith("{") else "g"
@@ -749,6 +905,12 @@ def templateize(
     # iteration order. Each entry preserves the *original* DOM position.
     walk: list[tuple[str, ET.Element, ET.Element, str, list[ET.Element]]] = list(
         _iter_actionable_elements(root, metrics.slide_index)
+    )
+    auto_placeholder_by_id, auto_content_boxes = _build_auto_placeholder_plan(
+        page_type,
+        _auto_text_entries(walk, metrics, canvas_w, canvas_h),
+        canvas_w,
+        canvas_h,
     )
 
     rotation_warned = False
@@ -844,12 +1006,29 @@ def templateize(
         if kind == "image":
             file_name = _href_filename(element)
             role = asset_roles.get(file_name, "")
-            if role == "ignore":
+            if role in {"ignore", "content_image"}:
                 if _safe_remove(parent, element):
                     removed_ids.append(element_id)
                 continue
 
-        # ─ Step 4: default — keep ──────────────────────────────────────────
+        # ─ Step 4: clean direct-import defaults for source text ───────────
+        if kind == "text":
+            placeholder_name = auto_placeholder_by_id.get(element_id)
+            if placeholder_name:
+                style = _build_placeholder_style(element, kind)
+                _replace_text_with_placeholder(element, placeholder_name, bbox, style)
+                replaced_ids.append(element_id)
+                placeholders.append(
+                    PlaceholderInstance(name=placeholder_name, bbox=bbox, style=dict(style))
+                )
+                if placeholder_name == "CONTENT_AREA":
+                    content_area_box = bbox
+                continue
+            if _safe_remove(parent, element):
+                removed_ids.append(element_id)
+            continue
+
+        # ─ Step 5: default — keep decoration / shapes ─────────────────────
         kept_ids.append(element_id)
         if kind == "text":
             kept_text_boxes_for_content.append(bbox)
@@ -899,7 +1078,7 @@ def templateize(
         wrapped = _wrap_content_area(
             root,
             placeholder_box=content_area_box,
-            fallback_kept_text_boxes=kept_text_boxes_for_content,
+            fallback_kept_text_boxes=auto_content_boxes or kept_text_boxes_for_content,
             canvas_w=canvas_w,
             canvas_h=canvas_h,
         )

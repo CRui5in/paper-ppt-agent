@@ -107,9 +107,11 @@ def externalize_svg_file(
         mime_type = match.group("mime")
         data = html.unescape(match.group("data"))
 
+        payload_text = "".join(data.split())
+        payload_text += "=" * (-len(payload_text) % 4)
         try:
-            payload = base64.b64decode(data)
-        except ValueError:
+            payload = base64.b64decode(payload_text, validate=False)
+        except (ValueError, base64.binascii.Error):
             return match.group(0)
 
         digest = hashlib.sha1(payload).hexdigest()

@@ -8,6 +8,7 @@ import {
   confirmTemplateImport,
   fetchImportStatus,
   fetchTemplateReview,
+  generateTemplateImportDirectDesignSpec,
   optimizeTemplateImportWithFeedback,
   previewTemplateImportDraft,
   removeAnnotation as removeAnnotationApi,
@@ -75,7 +76,7 @@ export interface UseTemplateImportReturn {
   /** Force-refresh status from the backend. */
   refreshStatus(): Promise<void>;
   /** Force-refresh review (reinitialises draft to the server copy). */
-  refreshReview(): Promise<void>;
+  refreshReview(): Promise<TemplateReview | undefined>;
   /** Merge a patch into the local draft (debounced PUT + preview). */
   updateDraft(patch: Partial<TemplateReviewDraft>): void;
   /** Bypass the debounce timer and sync the current draft now. */
@@ -84,6 +85,8 @@ export interface UseTemplateImportReturn {
   assist(feedback?: string): Promise<void>;
   /** Confirm the draft and persist it as a user template. */
   confirm(): Promise<ImportResult>;
+  /** Direct mode: generate design_spec.md from the edited PPT before final confirmation. */
+  generateDirectDesignSpec(): Promise<TemplateReview | undefined>;
   /** Re-run a failed pipeline step. Resumes polling on success. */
   retryStep(stepId: string): Promise<void>;
   /** Persist a manually edited Agent template SVG and refresh the preview. */
@@ -202,6 +205,8 @@ export function useTemplateImport(
   idRef.current = importId;
   const draftRef = useRef<TemplateReviewDraft>(draft);
   draftRef.current = draft;
+  const reviewRef = useRef<TemplateReview | null>(review);
+  reviewRef.current = review;
   const modelConfigRef = useRef<ModelConfig | undefined>(modelConfig);
   modelConfigRef.current = modelConfig;
   const tRef = useRef<typeof t>(t);
@@ -295,24 +300,27 @@ export function useTemplateImport(
 
   const refreshReview = useCallback(async () => {
     const id = idRef.current;
-    if (!id) return;
+    if (!id) return undefined;
     try {
       const next = await fetchTemplateReview(id);
+      const nextDraft = deriveDraft(next);
       setReview(next);
-      setDraft(deriveDraft(next));
+      reviewRef.current = next;
+      setDraft(nextDraft);
+      draftRef.current = nextDraft;
       reviewLoadedForRef.current = id;
       const isAgentImport = statusRef.current?.collaboration_mode === "agent";
       const agentHasPlanned =
-        next.llm?.agent === true && next.llm?.status === "complete";
+        next.llm?.agent === true && next.llm?.status === "complete" && next.llm?.templateized === true;
       if (!isAgentImport || agentHasPlanned || agentPreviewEnabledRef.current) {
-        // Eagerly fetch the templated preview so the "Show templated"
-        // toggle in SlideStage is immediately usable. In Agent mode, keep
+        // Eagerly fetch the templated preview so the PPTist review surface
+        // can reuse the latest templated output. In Agent mode, keep
         // the starter draft hidden until the user starts an Agent run; then
         // refresh during the run so the preview follows review.json edits.
         try {
           const initialPreview = await previewTemplateImportDraft(
             id,
-            deriveDraft(next),
+            nextDraft,
           );
           setPreview(initialPreview);
         } catch {
@@ -321,12 +329,14 @@ export function useTemplateImport(
       } else {
         setPreview(null);
       }
+      return next;
     } catch (e) {
       if (e instanceof ApiError && e.status === 404) {
         markImportMissing(id, e);
-        return;
+        return undefined;
       }
       setError(describeError(e));
+      return undefined;
     }
   }, [markImportMissing]);
 
@@ -559,6 +569,42 @@ export function useTemplateImport(
     }
   }, [flushDraft, msg]);
 
+  const generateDirectDesignSpec = useCallback(async (): Promise<TemplateReview | undefined> => {
+    const id = idRef.current;
+    if (!id) throw new Error(msg("template.error.noImportToConfirm", "No template import is active."));
+    const mc = modelConfigRef.current;
+    if (!mc) {
+      setError(msg("template.error.modelConfigRequired", "LLM assist requires a model configuration."));
+      return undefined;
+    }
+    setLoading(true);
+    setError(null);
+    setLlmEvents([]);
+    try {
+      pushLlmEvent(msg("template.activity.callLlm", "Calling LLM to optimize template"), "running", "llm");
+      const next = await generateTemplateImportDirectDesignSpec(id, mc);
+      pushLlmEvent(msg("templates.designSpec.generated", "design_spec.md has been generated and saved."), "complete", "llm");
+      const nextDraft = deriveDraft(next);
+      setReview(next);
+      setDraft(nextDraft);
+      draftRef.current = nextDraft;
+      reviewLoadedForRef.current = id;
+      try {
+        const previewSnapshot = await previewTemplateImportDraft(id, nextDraft);
+        setPreview(previewSnapshot);
+      } catch {
+        /* preview is best-effort after design_spec generation */
+      }
+      return next;
+    } catch (e) {
+      pushLlmEvent(describeError(e), "error", "llm");
+      setError(describeError(e));
+      throw e;
+    } finally {
+      setLoading(false);
+    }
+  }, [msg, pushLlmEvent]);
+
   const retryStep = useCallback(
     async (stepId: string) => {
       const id = idRef.current;
@@ -621,6 +667,7 @@ export function useTemplateImport(
           draft: draftRef.current,
           silent: options?.silent,
           planning: options?.planning !== false,
+          pptist_version: reviewRef.current?.pptist_version ?? null,
         });
         setAgentStatus({
           agent_job_id: start.agent_job_id,
@@ -661,6 +708,9 @@ export function useTemplateImport(
               }
               if (event.type === "complete" || event.type === "error" || event.type === "cancelled") {
                 setAgentCancelPending(false);
+              }
+              if (event.type === "artifact_updated") {
+                refreshPreviewSoon(true);
               }
               if (event.type === "result" || event.type === "complete") {
                 refreshPreviewSoon(true);
@@ -734,6 +784,7 @@ export function useTemplateImport(
       flushDraft,
       assist,
       confirm,
+      generateDirectDesignSpec,
       retryStep,
       saveAgentTemplateSvg,
       runAgent,
@@ -757,6 +808,7 @@ export function useTemplateImport(
       flushDraft,
       assist,
       confirm,
+      generateDirectDesignSpec,
       retryStep,
       saveAgentTemplateSvg,
       runAgent,

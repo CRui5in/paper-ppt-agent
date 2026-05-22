@@ -68,12 +68,23 @@ ErrorKind = Literal["render", "extraction", "llm", "persistence", "unknown"]
 """Top-level error taxonomy (see ``design.md`` §"Error Classification")."""
 
 PlaceholderName = Literal[
+    "TITLE",
     "PAGE_TITLE",
     "SUBTITLE",
+    "AUTHOR",
+    "DATE",
+    "GROUP",
     "CHAPTER_NUM",
+    "CHAPTER_NUMBER",
     "CHAPTER_TITLE",
     "TOC_LIST",
+    "TOC_ITEM_1",
+    "TOC_ITEM_2",
+    "TOC_ITEM_3",
+    "TOC_ITEM_4",
+    "TOC_ITEM_5",
     "CONTENT_AREA",
+    "ENDING_TITLE",
     "ENDING_MESSAGE",
     "LOGO_HEADER",
     "LOGO_FOOTER",

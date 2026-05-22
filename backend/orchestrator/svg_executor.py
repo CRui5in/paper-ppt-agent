@@ -57,6 +57,11 @@ FIGURE_LABEL_RE = re.compile(
     r"\b(fig(?:ure)?|table)\s*\.?\s*(\d+)\b|([图表])\s*(\d+)",
     re.IGNORECASE,
 )
+TEMPLATE_PLACEHOLDER_RE = re.compile(r"\{\{[A-Z0-9_]+\}\}")
+TEXT_BLOCK_RE = re.compile(r"<text\b(?P<attrs>[^>]*)>(?P<body>.*?)</text>", re.IGNORECASE | re.DOTALL)
+TEXT_X_ATTR_RE = re.compile(r'\bx=(["\'])(?P<value>[^"\']+)\1', re.IGNORECASE)
+TEXT_ANCHOR_ATTR_RE = re.compile(r"\btext-anchor\s*=", re.IGNORECASE)
+NUMBER_RE = re.compile(r"-?\d+(?:\.\d+)?")
 
 PROMPT_PATH = Path(__file__).parent / "prompts" / "executor.md"
 
@@ -1231,12 +1236,8 @@ async def generate_svg_pages(
                     template_vars.get(page_num),
                 )
                 skeleton_block = (
-                    f"\n\n## Template Skeleton ({page_type} page)\n"
-                    f"Use this SVG as your already data-bound starting point. If any "
-                    f"placeholder token remains, replace it with the current slide plan value. "
-                    f"Preserve ALL decorative elements, gradients, and structural chrome. "
-                    f"Do NOT rewrite from scratch. Do NOT recompute chapter/section numbers "
-                    f"from the page number.\n\n"
+                    _template_skeleton_instruction(page_type)
+                    +
                     f"```svg\n{skeleton_svg}\n```"
                 )
 
@@ -1827,6 +1828,20 @@ def _template_vars_by_page(pages: list[str]) -> dict[int, dict[str, str]]:
     result: dict[int, dict[str, str]] = {}
     chapter_index = 0
     current_chapter = {"num": "", "title": "", "desc": ""}
+    toc_items: list[str] = []
+    fallback_items: list[str] = []
+
+    for page in pages:
+        page_type = extract_page_type(page)
+        title, _subtitle = _extract_page_title_parts(page)
+        if not title:
+            continue
+        if page_type == "chapter":
+            toc_items.append(title)
+        elif page_type not in {"cover", "toc", "ending"}:
+            fallback_items.append(title)
+    if not toc_items:
+        toc_items = fallback_items
 
     for page_num, page in enumerate(pages, 1):
         page_type = extract_page_type(page)
@@ -1850,6 +1865,7 @@ def _template_vars_by_page(pages: list[str]) -> dict[int, dict[str, str]]:
             "SECTION_NUM": current_chapter["num"],
             "SECTION_NAME": current_chapter["title"],
             "CHAPTER_NUM": current_chapter["num"],
+            "CHAPTER_NUMBER": current_chapter["num"],
             "CHAPTER_TITLE": current_chapter["title"],
             "CHAPTER_DESC": current_chapter["desc"],
             "CHAPTER_SUBTITLE": current_chapter["desc"],
@@ -1861,9 +1877,14 @@ def _template_vars_by_page(pages: list[str]) -> dict[int, dict[str, str]]:
             "VENUE": "",
             "CONFERENCE": "",
             "DATE": "",
+            "GROUP": "",
             "BRAND_LABEL": "",
             "COVER_QUOTE": "",
+            "ENDING_TITLE": title,
+            "ENDING_MESSAGE": subtitle,
         }
+        for idx in range(5):
+            variables[f"TOC_ITEM_{idx + 1}"] = toc_items[idx] if idx < len(toc_items) else ""
         if page_type == "cover":
             variables.update(_extract_cover_metadata(page, title, subtitle))
         result[page_num] = variables
@@ -1874,6 +1895,7 @@ def _resolve_template_skeleton_placeholders(
     skeleton_svg: str,
     variables: dict[str, str] | None,
 ) -> str:
+    skeleton_svg = _normalize_template_placeholder_text_slots(skeleton_svg)
     if not variables:
         return skeleton_svg
     resolved = skeleton_svg
@@ -1888,6 +1910,50 @@ def _resolve_template_skeleton_placeholders(
     for key, value in variables.items():
         resolved = resolved.replace(f"{{{{{key}}}}}", html_escape(value, quote=True))
     return resolved
+
+
+def _normalize_template_placeholder_text_slots(skeleton_svg: str) -> str:
+    """Collapse imported PPT per-character x lists on placeholder text nodes."""
+
+    def _replace(match: re.Match) -> str:
+        attrs = match.group("attrs")
+        body = match.group("body")
+        if not TEMPLATE_PLACEHOLDER_RE.search(body):
+            return match.group(0)
+        x_match = TEXT_X_ATTR_RE.search(attrs)
+        if not x_match:
+            return match.group(0)
+        values = [float(raw) for raw in NUMBER_RE.findall(x_match.group("value"))]
+        if len(values) < 2:
+            return match.group(0)
+        center_x = (values[0] + values[-1]) / 2
+        attrs = TEXT_X_ATTR_RE.sub(f'x="{center_x:.2f}"', attrs, count=1)
+        if not TEXT_ANCHOR_ATTR_RE.search(attrs):
+            attrs = f'{attrs} text-anchor="middle"'
+        return f"<text{attrs}>{body}</text>"
+
+    return TEXT_BLOCK_RE.sub(_replace, skeleton_svg)
+
+
+def _template_skeleton_instruction(page_type: str) -> str:
+    return (
+        f"\n\n## Template Skeleton ({page_type} page)\n"
+        "Use this SVG as your already data-bound starting point. If any "
+        "placeholder token remains, replace it with the current slide plan value. "
+        "Preserve ALL decorative elements, gradients, structural chrome, and local "
+        "`assets/...` image hrefs. Do NOT invent image paths or swap template "
+        "images for `../sources/images/...` files. Do NOT rewrite from scratch. "
+        "Every `<image>` element in the skeleton is structural brand chrome; keep "
+        "its href, x/y, width/height, transform, opacity, and preserveAspectRatio "
+        "unless the current slide plan explicitly says to replace that exact image. "
+        "Preserve path/polygon transforms and orientation exactly; do not mirror, "
+        "flip, rotate, or relocate corner decorations. "
+        "When replacing long text in imported PPT text slots, keep the text inside "
+        "the original slot by using a single x value, `text-anchor=\"middle\"`, "
+        "line breaks, or a smaller font size; do not keep per-character x lists "
+        "from the placeholder. Do NOT recompute chapter/section numbers from the "
+        "page number.\n\n"
+    )
 
 
 def _parallel_global_design_context(design_spec: str) -> str:
@@ -2214,12 +2280,8 @@ async def _generate_parallel_page(
                 template_vars,
             )
             skeleton_block = (
-                f"\n\n## Template Skeleton ({page_type} page)\n"
-                f"Use this SVG as your already data-bound starting point. If any "
-                f"placeholder token remains, replace it with the current slide plan value. "
-                f"Preserve ALL decorative elements, gradients, and structural chrome. "
-                f"Do NOT rewrite from scratch. Do NOT recompute chapter/section numbers "
-                f"from the page number.\n\n"
+                _template_skeleton_instruction(page_type)
+                +
                 f"```svg\n{skeleton_svg}\n```"
             )
 

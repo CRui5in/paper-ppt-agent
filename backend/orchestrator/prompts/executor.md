@@ -98,7 +98,8 @@ When a page message includes a `## Template Skeleton` block, follow these rules:
 4. **Do not derive chapter numbers from page numbers** — `PAGE_NUM` is for footer pagination only. `SECTION_NUM` / `CHAPTER_NUM` are planned chapter indices and may differ from the page number.
 5. **Preserve ALL decorative elements** — gradients, glow effects, grid lines, accent bars, decorative shapes, neural network lines, node circles, etc. must remain unchanged.
 6. **Preserve structural chrome** — headers, footers, sidebars, accent decorations, and brand identifiers from the skeleton must be kept.
-7. **Content area** — add your page-specific content (text, images, charts) inside the content area boundary only. Do not overflow beyond the content area.
-8. **Colors and fonts** — match the skeleton's color scheme and font-family exactly. Do not substitute different colors or fonts.
-9. **Content pages** — if no skeleton is provided for a content page, follow the color scheme and layout style from the content page skeleton reference provided in the initial context.
-10. **Layout contract** — follow the layout type declared for the page in Section IX. Do not switch a top-bottom page to left-right, or a fixed card grid to another structure, unless the page would otherwise be impossible to render without overflow.
+7. **Preserve template images and transforms** — every `<image>` in the skeleton is structural brand chrome unless the slide plan explicitly names it as replaceable content. Keep its `href`, x/y, width/height, opacity, `preserveAspectRatio`, and transform unchanged. Keep path/polygon transforms and orientation unchanged; do not mirror, flip, rotate, or relocate corner decorations.
+8. **Content area** — add your page-specific content (text, images, charts) inside the content area boundary only. Do not overflow beyond the content area.
+9. **Colors and fonts** — match the skeleton's color scheme and font-family exactly. Do not substitute different colors or fonts.
+10. **Content pages** — if no skeleton is provided for a content page, follow the color scheme and layout style from the content page skeleton reference provided in the initial context.
+11. **Layout contract** — follow the layout type declared for the page in Section IX. Do not switch a top-bottom page to left-right, or a fixed card grid to another structure, unless the page would otherwise be impossible to render without overflow.

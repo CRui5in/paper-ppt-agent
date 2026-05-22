@@ -139,6 +139,7 @@ class GenerationRequest:
     visual_qa_max_attempts: int = 1
     template_id: str | None = None  # Template ID from assets/templates/layouts/
     research_config: ResearchConfig | None = None  # Optional external research enrichment
+    job_id: str | None = None
 
 
 def _effective_deep_research(request: GenerationRequest) -> bool:
@@ -356,10 +357,12 @@ async def run_pipeline(
                 build_template_context_for_executor,
                 build_template_context_for_strategist,
                 build_template_skeletons,
+                copy_template_assets_for_project,
                 load_template,
             )
             tmpl = load_template(request.template_id)
             if tmpl:
+                copy_template_assets_for_project(tmpl, project_dir)
                 template_context_strat = build_template_context_for_strategist(tmpl)
                 template_context_exec = build_template_context_for_executor(tmpl)
                 template_skeletons = build_template_skeletons(tmpl)
@@ -887,10 +890,12 @@ async def run_refine_pipeline(
         from backend.generator.template_manager import (
             build_template_context_for_executor,
             build_template_skeletons,
+            copy_template_assets_for_project,
             load_template,
         )
         _tmpl = load_template(request.template_id)
         if _tmpl:
+            copy_template_assets_for_project(_tmpl, project_dir)
             refine_template_ctx = build_template_context_for_executor(_tmpl)
             refine_template_skeletons = build_template_skeletons(_tmpl)
 
