@@ -19,7 +19,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 
-from backend.config import settings as _global_settings
+from backend.config import settings as _settings
 from backend.llm.vision_probe import vision_probe
 from backend.generator.svg_critic import CriticReport, Violation
 from backend.llm.base import LLMProvider
@@ -42,6 +42,11 @@ class VisualCriticConfig:
     # JPEG quality for VLM payload. PNG kept by default (lossless).
     use_jpeg: bool = True
     jpeg_quality: int = 80
+
+    # When True, automatically switch to a vision-capable model during
+    # visual QA if the primary model lacks vision support.
+    # Only effective in agent mode (controlled by settings.vision_auto_switch).
+    vision_auto_switch: bool = False
 
 
 def render_svg_to_png(svg_content: str, width: int = 1280) -> bytes | None:
@@ -199,33 +204,32 @@ async def visual_check(
     cfg = config or VisualCriticConfig()
     outcome = VisualCheckOutcome()
 
-    # ── Auto-switch to a vision-capable model if needed ──
+    # ── Auto-switch to a vision-capable model if enabled ──
     effective_model = model
-    probe_result = vision_probe.get_result(model)
-    if probe_result is not None and not probe_result.supports_vision:
-        fallback = vision_probe.get_vision_model(exclude=model)
-        if not fallback:
-            # No vision-capable model found in probe cache — skip
+    if cfg.vision_auto_switch:
+        probe_result = vision_probe.get_result(model)
+        if probe_result is not None and not probe_result.supports_vision:
+            fallback = vision_probe.get_vision_model(exclude=model)
+            if not fallback:
+                logger.info(
+                    "Visual QA skipped: model '%s' lacks vision and no fallback available",
+                    model,
+                )
+                outcome.skipped_reason = "no_vision_model_available"
+                return outcome
             logger.info(
-                "Visual QA skipped: model '%s' lacks vision and no fallback available",
-                model,
+                "Visual QA auto-switch: %s -> %s (probe-detected vision support)",
+                model, fallback,
             )
-            outcome.skipped_reason = "no_vision_model_available"
-            return outcome
-        logger.info(
-            "Visual QA auto-switch: %s -> %s (probe-detected vision support)",
-            model, fallback,
-        )
-        effective_model = fallback
-    elif probe_result is None:
-        # Probe hasn't run yet — try the configured vision_model as fallback
-        configured = (_global_settings.vision_model or "").strip()
-        if configured and configured.lower() != model.strip().lower():
-            logger.info(
-                "Visual QA pre-probe fallback: %s -> %s (configured vision_model)",
-                model, configured,
-            )
-            effective_model = configured
+            effective_model = fallback
+        elif probe_result is None:
+            configured = (_settings.vision_model or "").strip()
+            if configured and configured.lower() != model.strip().lower():
+                logger.info(
+                    "Visual QA pre-probe fallback: %s -> %s (configured vision_model)",
+                    model, configured,
+                )
+                effective_model = configured
 
     png = render_svg_to_png(svg_content, width=cfg.render_width)
     if png is None:

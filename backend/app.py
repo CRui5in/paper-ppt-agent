@@ -198,6 +198,7 @@ def create_app() -> FastAPI:
 
     @app.get("/healthz/vision")
     async def vision_probe_status() -> dict:
+        """Return vision capability probe results for all configured models."""
         from backend.llm.vision_probe import vision_probe
         results = vision_probe.all_results()
         return {

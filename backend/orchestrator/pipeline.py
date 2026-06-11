@@ -488,6 +488,15 @@ async def run_pipeline(
         async def _on_svg_update(page_num: int, svg: str) -> None:
             svg_update_queue.append((page_num, svg))
 
+        from backend.config import settings as _settings
+        from backend.generator.visual_critic import VisualCriticConfig
+
+        _visual_cfg = VisualCriticConfig(
+            vision_auto_switch=(
+                request.generation_backend == "agent"
+                and _settings.vision_auto_switch
+            ),
+        )
         if request.generation_mode == "sequential":
             svg_iter = svg_executor.generate_svg_pages(
                 design_spec,
@@ -506,6 +515,7 @@ async def run_pipeline(
                 enable_visual_critic=request.enable_visual_critic,
                 max_critic_attempts=request.max_critic_attempts,
                 visual_qa_max_attempts=request.visual_qa_max_attempts,
+                visual_critic_config=_visual_cfg,
                 template_context=template_context_exec or None,
                 template_skeletons=template_skeletons,
             )
@@ -529,6 +539,7 @@ async def run_pipeline(
                 enable_visual_critic=request.enable_visual_critic,
                 max_critic_attempts=request.max_critic_attempts,
                 visual_qa_max_attempts=request.visual_qa_max_attempts,
+                visual_critic_config=_visual_cfg,
                 template_context=template_context_exec or None,
                 template_skeletons=template_skeletons,
             )

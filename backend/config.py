@@ -88,6 +88,7 @@ class Settings(BaseSettings):
     # and the fallback model to use when the primary model lacks vision.
     vision_models: str | None = None  # e.g. "gpt-5.4,gpt-5.5,claude-sonnet-4.6"
     vision_model: str | None = None   # preferred fallback, e.g. "gpt-5.4"
+    vision_auto_switch: bool = False  # auto-switch to vision model during visual QA (agent mode only)
 
     # Paths
     assets_dir: Path = PROJECT_ROOT / "assets"
