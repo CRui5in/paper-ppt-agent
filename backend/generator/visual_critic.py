@@ -19,6 +19,8 @@ import logging
 import re
 from dataclasses import dataclass, field
 
+from backend.config import settings as _global_settings
+from backend.llm.vision_probe import vision_probe
 from backend.generator.svg_critic import CriticReport, Violation
 from backend.llm.base import LLMProvider
 from backend.llm.types import LLMMessage
@@ -197,6 +199,34 @@ async def visual_check(
     cfg = config or VisualCriticConfig()
     outcome = VisualCheckOutcome()
 
+    # ── Auto-switch to a vision-capable model if needed ──
+    effective_model = model
+    probe_result = vision_probe.get_result(model)
+    if probe_result is not None and not probe_result.supports_vision:
+        fallback = vision_probe.get_vision_model(exclude=model)
+        if not fallback:
+            # No vision-capable model found in probe cache — skip
+            logger.info(
+                "Visual QA skipped: model '%s' lacks vision and no fallback available",
+                model,
+            )
+            outcome.skipped_reason = "no_vision_model_available"
+            return outcome
+        logger.info(
+            "Visual QA auto-switch: %s -> %s (probe-detected vision support)",
+            model, fallback,
+        )
+        effective_model = fallback
+    elif probe_result is None:
+        # Probe hasn't run yet — try the configured vision_model as fallback
+        configured = (_global_settings.vision_model or "").strip()
+        if configured and configured.lower() != model.strip().lower():
+            logger.info(
+                "Visual QA pre-probe fallback: %s -> %s (configured vision_model)",
+                model, configured,
+            )
+            effective_model = configured
+
     png = render_svg_to_png(svg_content, width=cfg.render_width)
     if png is None:
         outcome.skipped_reason = "render_failed_or_unavailable"
@@ -220,7 +250,7 @@ async def visual_check(
     ]
 
     try:
-        response = await llm.chat(messages, model, temperature=0.0, max_tokens=1024)
+        response = await llm.chat(messages, effective_model, temperature=0.0, max_tokens=1024)
     except Exception as exc:  # noqa: BLE001 — provider may not support vision
         logger.info("Visual critic LLM call failed (likely text-only model): %s", exc)
         outcome.skipped_reason = "llm_call_failed"

@@ -69,6 +69,7 @@ class Settings(BaseSettings):
     default_llm_provider: Literal["openai", "deepseek", "anthropic", "gemini"] = "openai"
     default_llm_model: str = "gpt-4o"
     openai_api_key: str | None = None
+    openai_base_url: str | None = None
     deepseek_api_key: str | None = None
     anthropic_api_key: str | None = None
     gemini_api_key: str | None = None
@@ -79,6 +80,14 @@ class Settings(BaseSettings):
 
     # Image generation
     image_backend: str | None = None
+
+    # Tavily (image search & deep research)
+    tavily_api_key: str | None = None
+
+    # Vision QA: comma-separated list of models to probe for vision support,
+    # and the fallback model to use when the primary model lacks vision.
+    vision_models: str | None = None  # e.g. "gpt-5.4,gpt-5.5,claude-sonnet-4.6"
+    vision_model: str | None = None   # preferred fallback, e.g. "gpt-5.4"
 
     # Paths
     assets_dir: Path = PROJECT_ROOT / "assets"
@@ -157,3 +166,27 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def get_tavily_api_key(per_request: str | None = None) -> str:
+    """Return the best available Tavily API key (per-request > global settings)."""
+    return (per_request or "").strip() or (settings.tavily_api_key or "").strip()
+
+
+
+def get_provider_credentials() -> tuple[str, str, str | None]:
+    """Return (provider_name, api_key, base_url) from current settings."""
+    from backend.llm.registry import DEEPSEEK_BASE_URL
+
+    name = settings.default_llm_provider or "openai"
+    _KEY_MAP = {
+        "openai": settings.openai_api_key,
+        "deepseek": settings.deepseek_api_key,
+        "anthropic": settings.anthropic_api_key,
+        "gemini": settings.gemini_api_key,
+    }
+    _URL_MAP = {
+        "openai": settings.openai_base_url or None,
+        "deepseek": DEEPSEEK_BASE_URL,
+    }
+    return name, (_KEY_MAP.get(name) or ""), _URL_MAP.get(name)

@@ -24,6 +24,7 @@ from html.parser import HTMLParser
 from typing import TYPE_CHECKING, Any
 
 from backend.api.schemas import ResearchConfig
+from backend.config import get_tavily_api_key
 from backend.runtime import aoffload
 
 if TYPE_CHECKING:
@@ -298,7 +299,7 @@ async def _enrich_web_search(
         stats.web_error = "no_title"
         return
 
-    tavily_key = (config.tavily_api_key or "").strip()
+    tavily_key = get_tavily_api_key(config.tavily_api_key)
     serpapi_key = (config.serpapi_key or "").strip()
     provider = getattr(config, "web_search_provider", "tavily") or "tavily"
 
