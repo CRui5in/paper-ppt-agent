@@ -396,7 +396,14 @@ class PersistentAgentSession:
                 await self._bridge.put(message)
 
             try:
-                asyncio.run_coroutine_threadsafe(_put(), loop).result()
+                current_loop = asyncio.get_running_loop()
+            except RuntimeError:
+                current_loop = None
+            try:
+                if current_loop is loop:
+                    loop.create_task(_put())
+                else:
+                    asyncio.run_coroutine_threadsafe(_put(), loop)
             except RuntimeError:
                 pass
 
@@ -727,7 +734,10 @@ class PersistentAgentSession:
             )
             codex_config = AppServerConfig(
                 cwd=str(self._project_dir),
-                env=_agent_runtime_env(self._project_dir, self._agent_config.get("_research_env")),
+                env=_agent_runtime_env(
+                    self._project_dir,
+                    self._agent_config.get("_research_env"),
+                ),
                 codex_bin=str(settings.codex_bin) if settings.codex_bin else None,
             )
             sandbox_policy = SandboxPolicy(
@@ -902,7 +912,11 @@ class PersistentAgentSession:
             ),
             model=agent_config.get("model") or None,
             skills=[_AGENT_SKILL_NAME, _RESEARCH_SKILL_NAME, _DEEP_RESEARCH_SKILL_NAME],
-            env=_agent_runtime_env(self._project_dir, agent_config.get("_research_env")),
+            env=_agent_runtime_env(
+                self._project_dir,
+                agent_config.get("_research_env"),
+                agent_config,
+            ),
             hooks=_agent_research_gate_hooks(self._project_dir),
             **session_opts,
         )
@@ -1966,6 +1980,7 @@ def _build_agent_task(project_dir: Path, source_target: Path, request: Any, agen
 def _agent_runtime_env(
     project_dir: Path,
     research_env: dict[str, str] | None = None,
+    agent_config: dict[str, Any] | None = None,
 ) -> dict[str, str]:
     python_path = _agent_python_path()
     python_dir = str(python_path.parent)
@@ -1996,6 +2011,20 @@ def _agent_runtime_env(
                 if isinstance(key, str) and isinstance(value, str) and value.strip()
             }
         )
+    if agent_config:
+        base_url = str(agent_config.get("base_url") or "").strip()
+        api_key = str(agent_config.get("api_key") or "").strip()
+        auth_token = str(agent_config.get("auth_token") or "").strip()
+        model = str(agent_config.get("model") or "").strip()
+        if base_url:
+            env["ANTHROPIC_BASE_URL"] = base_url
+        if api_key:
+            env["ANTHROPIC_API_KEY"] = api_key
+        if auth_token:
+            env["ANTHROPIC_AUTH_TOKEN"] = auth_token
+            env["CLAUDE_CODE_OAUTH_TOKEN"] = auth_token
+        if model:
+            env["ANTHROPIC_MODEL"] = model
     return env
 
 

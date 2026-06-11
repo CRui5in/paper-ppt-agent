@@ -272,6 +272,21 @@ async def generate_presentation(request: GenerateRequest) -> GenerateResponse:
         agent_defaults = agent_runtime_defaults(runtime)
     else:
         agent_defaults = {}
+    agent_config_payload = (
+        request.options.agent_config.model_dump(exclude_none=True)
+        if request.options.agent_config
+        else None
+    )
+    if agent_config_payload is not None:
+        for key in ("model", "api_key", "auth_token", "base_url"):
+            value = str(agent_config_payload.get(key) or "").strip()
+            if value:
+                agent_config_payload[key] = value
+            else:
+                agent_config_payload.pop(key, None)
+        if agent_config_payload.get("runtime") != "claude_code":
+            for key in ("api_key", "auth_token", "base_url"):
+                agent_config_payload.pop(key, None)
 
     job = session_manager.create_job(request.session_id)
     provider_label = (
@@ -283,8 +298,8 @@ async def generate_presentation(request: GenerateRequest) -> GenerateResponse:
         model_settings.model
         if model_settings is not None
         else (
-            request.options.agent_config.model
-            if request.options.agent_config and request.options.agent_config.model
+            agent_config_payload.get("model")
+            if agent_config_payload and agent_config_payload.get("model")
             else agent_defaults.get("model")
         )
         or "agent-default"
@@ -295,7 +310,11 @@ async def generate_presentation(request: GenerateRequest) -> GenerateResponse:
         message="Queued for generation",
         provider=provider_label,
         model_name=model_label,
-        base_url=model_settings.base_url if model_settings is not None else None,
+        base_url=(
+            model_settings.base_url
+            if model_settings is not None
+            else agent_config_payload.get("base_url") if agent_config_payload else None
+        ),
         canvas_format=request.options.canvas_format,
         style=request.options.style,
         language=request.options.language,
@@ -352,11 +371,7 @@ async def generate_presentation(request: GenerateRequest) -> GenerateResponse:
         research_config=request.options.research_config,
         job_id=job.id,
         generation_backend=generation_backend,
-        agent_config=(
-            request.options.agent_config.model_dump(exclude_none=True)
-            if request.options.agent_config
-            else None
-        ),
+        agent_config=agent_config_payload,
     )
 
     if generation_backend == "provider":

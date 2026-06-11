@@ -43,6 +43,9 @@ class AgentGenerationConfig(BaseModel):
 
     runtime: Literal["claude_code", "codex"] = "claude_code"
     model: str | None = None
+    api_key: str | None = None
+    auth_token: str | None = None
+    base_url: str | None = None
     reasoning_effort: Literal["low", "medium", "high", "xhigh"] | None = None
     max_turns: int | None = Field(default=None, ge=1)
     load_project_settings: bool = True

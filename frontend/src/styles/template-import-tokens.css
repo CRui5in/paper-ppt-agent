@@ -1754,6 +1754,76 @@
   text-overflow: ellipsis;
 }
 
+.ti-agent-runtime-fields {
+  display: grid;
+  gap: 6px;
+}
+
+.ti-agent-model-field {
+  display: grid;
+  gap: 5px;
+  padding: 8px;
+  border: 1px solid var(--ti-line);
+  border-radius: var(--ti-radius-sm, 6px);
+  background: var(--ti-surface-inset);
+  color: var(--ti-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.ti-agent-model-field input {
+  width: 100%;
+  min-height: 30px;
+  border: 1px solid var(--ti-line);
+  border-radius: var(--ti-radius-sm, 6px);
+  padding: 5px 8px;
+  background: var(--ti-surface);
+  color: var(--ti-text);
+  font: inherit;
+  font-weight: 500;
+}
+
+.ti-agent-model-field input:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.ti-agent-secret-input {
+  position: relative;
+  display: block;
+}
+
+.ti-agent-secret-input input {
+  padding-right: 32px;
+}
+
+.ti-agent-secret-input button {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: var(--ti-radius-sm, 6px);
+  background: transparent;
+  color: var(--ti-muted);
+  cursor: pointer;
+  transform: translateY(-50%);
+}
+
+.ti-agent-secret-input button:hover:not(:disabled) {
+  background: var(--ti-surface-inset);
+  color: var(--ti-text);
+}
+
+.ti-agent-secret-input button:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
 .ti-console-composer-send {
   display: inline-flex;
   align-items: center;

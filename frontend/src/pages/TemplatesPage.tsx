@@ -75,6 +75,15 @@ type PageSelectionChange = {
   to: number;
 };
 
+function uniqueStrings(values: string[]): string[] {
+  const out: string[] = [];
+  for (const value of values) {
+    const item = value.trim();
+    if (item && !out.includes(item)) out.push(item);
+  }
+  return out;
+}
+
 interface RoutingProfile {
   model: string;
   baseUrl: string;
@@ -132,7 +141,11 @@ function readTemplateAgentConfig(): TemplateAgentConfig {
       const parsed = JSON.parse(raw) as TemplateAgentConfig;
       if (parsed) {
         return {
-          mode: "claude_code",
+          mode: parsed.base_url ? "custom" : "claude_code",
+          api_key: typeof parsed.api_key === "string" ? parsed.api_key : undefined,
+          auth_token: typeof parsed.auth_token === "string" ? parsed.auth_token : undefined,
+          base_url: typeof parsed.base_url === "string" ? parsed.base_url : undefined,
+          model: typeof parsed.model === "string" ? parsed.model : undefined,
           load_project_settings: parsed.load_project_settings ?? true,
           max_turns:
             typeof parsed.max_turns === "number" && parsed.max_turns > 0 && parsed.max_turns !== 16
@@ -285,6 +298,7 @@ export function TemplatesPage() {
   const [showDirectDesignSpecConfirm, setShowDirectDesignSpecConfirm] = useState(false);
   const directDesignSpecSignatureRef = useRef<string | null>(null);
   const [agentConfig, setAgentConfig] = useState<TemplateAgentConfig>(readTemplateAgentConfig);
+  const [agentModelOptions, setAgentModelOptions] = useState<string[]>([]);
 
   const handleMissingImport = useCallback(
     (missingImportId: string) => {
@@ -381,6 +395,46 @@ export function TemplatesPage() {
       /* noop */
     }
   }, [agentConfig]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchTemplateAgentClaudeCodeStatus()
+      .then((runtime) => {
+        if (cancelled) return;
+        setAgentModelOptions(uniqueStrings([
+          ...(runtime.available_models ?? []),
+          ...Object.values(runtime.configured_models ?? {}),
+        ]));
+        const provider = runtime.provider_config;
+        setAgentConfig((current) => {
+          const next: TemplateAgentConfig = { ...current };
+          if (provider?.base_url) {
+            next.base_url = provider.base_url;
+            next.mode = "custom";
+            next.model = runtime.default_model || undefined;
+            next.api_key = provider.api_key || undefined;
+            next.auth_token = provider.api_key
+              ? undefined
+              : provider.auth_token || provider.oauth_token || undefined;
+          } else {
+            next.mode = "claude_code";
+            next.base_url = undefined;
+            next.api_key = undefined;
+            next.auth_token = undefined;
+          }
+          if (runtime.default_model && !next.model?.trim()) {
+            next.model = runtime.default_model;
+          }
+          return next;
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setAgentModelOptions([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // ── Load library ──────────────────────────────────────────────────────
   const loadTemplates = useCallback(async () => {
@@ -1268,6 +1322,7 @@ export function TemplatesPage() {
                 modeLocked={Boolean(importId)}
                 agentConfig={agentConfig}
                 onAgentConfigChange={setAgentConfig}
+                agentModelOptions={agentModelOptions}
                 agentStatus={agentStatus}
                 onSendFeedback={async (text) => {
                   if (collabMode === "agent") {
@@ -1304,7 +1359,7 @@ export function TemplatesPage() {
                 annotationCount={activeAnnotations.length}
                 modelLabel={
                   collabMode === "agent"
-                    ? "Claude Code"
+                    ? agentConfig.model?.trim() || t("template.collab.agentClaudeCodeDefault")
                     : modelConfig?.model
                 }
                 importStatus={status}

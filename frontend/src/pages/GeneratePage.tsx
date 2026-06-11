@@ -9,6 +9,7 @@ import {
   Database,
   Download,
   Eye,
+  EyeOff,
   Image as ImageIcon,
   LoaderCircle,
   Link as LinkIcon,
@@ -47,7 +48,7 @@ import { RecentTasksPanel } from "../components/history/RecentTasksPanel";
 import { PptistStudioHost } from "../components/pptist/PptistStudioHost";
 import { useGeneration } from "../hooks/useGeneration";
 import { useLocale } from "../i18n";
-import { fetchTemplates } from "../lib/api";
+import { fetchTemplateAgentClaudeCodeStatus, fetchTemplates } from "../lib/api";
 import type {
   DeepSeekSettings,
   GenerationHistoryItem,
@@ -95,6 +96,7 @@ type RoutingProfileMap = Record<string, RoutingProfile>;
 interface PresentationSettingsDraft {
   generationBackend?: "provider" | "agent";
   agentRuntime?: "claude_code" | "codex";
+  agentModel?: string;
   canvasFormat?: string;
   languageMode?: LanguageMode;
   customLanguage?: string;
@@ -116,6 +118,15 @@ interface PresentationSettingsDraft {
   enableVisualCritic?: boolean;
   researchConfig?: ResearchConfig;
   templateId?: string;
+}
+
+function uniqueStrings(values: string[]): string[] {
+  const out: string[] = [];
+  for (const value of values) {
+    const item = value.trim();
+    if (item && !out.includes(item)) out.push(item);
+  }
+  return out;
 }
 
 function readRoutingProfiles(): RoutingProfileMap {
@@ -214,6 +225,12 @@ export function GeneratePage() {
   const [agentRuntime, setAgentRuntime] = useState<"claude_code" | "codex">(
     initialSettings.agentRuntime ?? "claude_code",
   );
+  const [agentModel, setAgentModel] = useState(initialSettings.agentModel ?? "");
+  const [agentBaseUrl, setAgentBaseUrl] = useState("");
+  const [agentCredential, setAgentCredential] = useState("");
+  const [agentCredentialKind, setAgentCredentialKind] = useState<"api_key" | "auth_token">("api_key");
+  const [showAgentCredential, setShowAgentCredential] = useState(false);
+  const [agentModelOptions, setAgentModelOptions] = useState<string[]>([]);
   const [showAgentModeConfirm, setShowAgentModeConfirm] = useState(false);
   const [showCodexRuntimeConfirm, setShowCodexRuntimeConfirm] = useState(false);
   const [density, setDensity] = useState(initialSettings.density ?? "normal");
@@ -443,6 +460,49 @@ export function GeneratePage() {
   }, [locale]);
 
   useEffect(() => {
+    if (agentRuntime !== "claude_code") {
+      setAgentModelOptions([]);
+      return;
+    }
+    let cancelled = false;
+    void fetchTemplateAgentClaudeCodeStatus()
+      .then((status) => {
+        if (cancelled) return;
+        setAgentModelOptions(uniqueStrings([
+          ...(status.available_models ?? []),
+          ...Object.values(status.configured_models ?? {}),
+        ]));
+        const provider = status.provider_config;
+        if (provider?.base_url) {
+          setAgentBaseUrl(provider.base_url ?? "");
+        } else {
+          setAgentBaseUrl("");
+          setAgentCredential("");
+        }
+        const credential = provider?.api_key || provider?.auth_token || provider?.oauth_token || "";
+        if (provider?.api_key) {
+          setAgentCredentialKind("api_key");
+        } else if (provider?.auth_token || provider?.oauth_token) {
+          setAgentCredentialKind("auth_token");
+        }
+        if (credential) {
+          setAgentCredential(credential);
+        }
+        if (provider?.base_url) {
+          setAgentModel(status.default_model ?? "");
+        } else if (status.default_model) {
+          setAgentModel((current) => current.trim() ? current : status.default_model ?? "");
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setAgentModelOptions([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [agentRuntime]);
+
+  useEffect(() => {
     try {
       const existingRaw = window.localStorage.getItem(RESEARCH_KEYS_STORAGE);
       const existing = existingRaw ? (JSON.parse(existingRaw) as Record<string, string>) : {};
@@ -465,6 +525,7 @@ export function GeneratePage() {
       writePresentationSettingsDraft({
         generationBackend,
         agentRuntime,
+        agentModel,
         canvasFormat,
         languageMode,
         customLanguage,
@@ -500,6 +561,7 @@ export function GeneratePage() {
     detailLevel,
     generationBackend,
     agentRuntime,
+    agentModel,
     enableDeepResearch,
     enableVisualCritic,
     maxCriticAttempts,
@@ -528,6 +590,9 @@ export function GeneratePage() {
       return;
     }
     const normalizedModel = model.trim();
+    const normalizedAgentModel = agentRuntime === "claude_code" ? agentModel.trim() : "";
+    const normalizedAgentBaseUrl = agentRuntime === "claude_code" ? agentBaseUrl.trim() : "";
+    const normalizedAgentCredential = agentRuntime === "claude_code" ? agentCredential.trim() : "";
     if (generationBackend === "provider") {
       const profiles = readRoutingProfiles();
       profiles[provider] = {
@@ -567,6 +632,16 @@ export function GeneratePage() {
         agent_config: generationBackend === "agent"
           ? {
               runtime: agentRuntime,
+              model: agentRuntime === "claude_code" ? normalizedAgentModel || undefined : undefined,
+              base_url: agentRuntime === "claude_code" ? normalizedAgentBaseUrl || undefined : undefined,
+              api_key:
+                agentRuntime === "claude_code" && normalizedAgentBaseUrl && agentCredentialKind === "api_key"
+                  ? normalizedAgentCredential || undefined
+                  : undefined,
+              auth_token:
+                agentRuntime === "claude_code" && normalizedAgentBaseUrl && agentCredentialKind === "auth_token"
+                  ? normalizedAgentCredential || undefined
+                  : undefined,
               allow_external_research: Boolean(researchConfig.arxiv_search_enabled || researchConfig.semantic_scholar_enabled || researchConfig.web_search_enabled),
               allow_deep_research: enableDeepResearch,
               enable_visual_qa: enableVisualCritic,
@@ -744,6 +819,59 @@ export function GeneratePage() {
                     Codex
                   </button>
                 </div>
+                {agentRuntime === "claude_code" ? (
+                  <>
+                    {agentBaseUrl.trim() ? (
+                      <label className="agent-model-field">
+                        <span>{t("generation.agent.baseUrl")}</span>
+                        <input
+                          type="text"
+                          value={agentBaseUrl}
+                          onChange={(event) => setAgentBaseUrl(event.target.value)}
+                          placeholder={t("generation.agent.baseUrlPlaceholder")}
+                        />
+                      </label>
+                    ) : null}
+                    <label className="agent-model-field">
+                      <span>{t("generation.agent.model")}</span>
+                      <input
+                        type="text"
+                        list="generation-agent-model-options"
+                        value={agentModel}
+                        onChange={(event) => setAgentModel(event.target.value)}
+                        placeholder={t("generation.agent.modelPlaceholderClaude")}
+                      />
+                      {agentModelOptions.length > 0 ? (
+                        <datalist id="generation-agent-model-options">
+                          {agentModelOptions.map((option) => (
+                            <option key={option} value={option} />
+                          ))}
+                        </datalist>
+                      ) : null}
+                    </label>
+                    {agentBaseUrl.trim() ? (
+                      <label className="agent-model-field">
+                        <span>{t("generation.agent.apiKey")}</span>
+                        <span className="agent-secret-input">
+                          <input
+                            type={showAgentCredential ? "text" : "password"}
+                            value={agentCredential}
+                            onChange={(event) => setAgentCredential(event.target.value)}
+                            placeholder={t("generation.agent.apiKeyPlaceholder")}
+                          />
+                          <button
+                            type="button"
+                            className="api-key-toggle"
+                            onClick={() => setShowAgentCredential((value) => !value)}
+                            aria-label={showAgentCredential ? t("generation.agent.hideApiKey") : t("generation.agent.showApiKey")}
+                          >
+                            {showAgentCredential ? <EyeOff size={14} /> : <Eye size={14} />}
+                          </button>
+                        </span>
+                      </label>
+                    ) : null}
+                  </>
+                ) : null}
               </div>
             ) : null}
           </section>

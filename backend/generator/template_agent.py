@@ -36,11 +36,36 @@ _EVENT_RING_SIZE = 512
 _TEXT_LIMIT = 2000
 _AGENT_MAX_BUFFER_SIZE = 16 * 1024 * 1024
 _AGENT_RECOVERY_ATTEMPTS = 2
+_CLAUDE_ENV_KEYS = (
+    "ANTHROPIC_MODEL",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "ANTHROPIC_CUSTOM_MODEL_OPTION",
+    "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+)
+_CLAUDE_CODE_OFFICIAL_MODEL_OPTIONS = [
+    # Official Claude Code / Claude API model IDs documented 2026-06-11:
+    # https://code.claude.com/docs/en/model-config
+    # https://platform.claude.com/docs/en/about-claude/models/overview
+    # https://support.claude.com/en/articles/11940350-claude-code-model-configuration
+    "claude-fable-5",
+    "claude-opus-4-8",
+    "claude-sonnet-4-6",
+    "claude-haiku-4-5-20251001",
+    "claude-haiku-4-5",
+    "claude-opus-4-7",
+    "claude-opus-4-6",
+]
 
 
 def claude_code_environment_status() -> dict[str, Any]:
     """Return whether the backend can start the Claude Code-backed agent."""
     cli_path = shutil.which("claude")
+    runtime_config = claude_code_runtime_config()
     sdk_available = True
     sdk_error: str | None = None
     try:
@@ -65,7 +90,129 @@ def claude_code_environment_status() -> dict[str, Any]:
         "sdk_available": sdk_available,
         "sdk_error": sdk_error,
         "message": message,
+        **runtime_config,
     }
+
+
+def claude_code_runtime_config() -> dict[str, Any]:
+    """Best-effort read of Claude Code model settings without writing them."""
+    merged: dict[str, Any] = {}
+    for path in _claude_settings_paths():
+        data = _read_json_settings(path)
+        if data:
+            merged.update(data)
+
+    model = _clean_model_name(merged.get("model"))
+    env_model = ""
+    env_models: list[str] = []
+    env_model_fields: dict[str, str] = {}
+    provider_config: dict[str, Any] = {}
+    settings_env = merged.get("env")
+    env: dict[str, Any] = {
+        key: value for key in _CLAUDE_ENV_KEYS if (value := os.environ.get(key))
+    }
+    if isinstance(settings_env, dict):
+        env.update(settings_env)
+
+    base_url = _clean_url(env.get("ANTHROPIC_BASE_URL"))
+    api_key = str(env.get("ANTHROPIC_API_KEY") or "").strip()
+    auth_token = str(env.get("ANTHROPIC_AUTH_TOKEN") or "").strip()
+    oauth_token = str(env.get("CLAUDE_CODE_OAUTH_TOKEN") or "").strip()
+    provider_config = {
+        "base_url": base_url,
+        "api_key": api_key if base_url else "",
+        "auth_token": auth_token if base_url else "",
+        "oauth_token": oauth_token if base_url else "",
+        "has_api_key": bool(api_key),
+        "has_auth_token": bool(auth_token),
+        "has_oauth_token": bool(oauth_token),
+    }
+
+    if env:
+        env_model = _clean_model_name(env.get("ANTHROPIC_MODEL"))
+        if env_model:
+            env_model_fields["ANTHROPIC_MODEL"] = env_model
+        for key in (
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL",
+        ):
+            value = _clean_model_name(env.get(key))
+            if value:
+                env_model_fields[key] = value
+            if value and value not in env_models:
+                env_models.append(value)
+        custom_model_option = _clean_model_name(env.get("ANTHROPIC_CUSTOM_MODEL_OPTION"))
+        if custom_model_option:
+            env_model_fields["ANTHROPIC_CUSTOM_MODEL_OPTION"] = custom_model_option
+
+    available_models = _normalize_model_list(merged.get("availableModels"))
+    if not base_url:
+        available_models = _merge_model_options(
+            available_models,
+            _CLAUDE_CODE_OFFICIAL_MODEL_OPTIONS,
+        )
+    default_model = model or env_model or None
+    for candidate in [default_model, *env_models]:
+        if candidate and candidate not in available_models:
+            available_models = [candidate, *available_models]
+
+    return {
+        "default_model": default_model,
+        "available_models": available_models,
+        "configured_models": env_model_fields,
+        "provider_config": provider_config,
+    }
+
+
+def _claude_settings_paths() -> list[Path]:
+    return [
+        Path.home() / ".claude" / "settings.json",
+        Path.cwd() / ".claude" / "settings.json",
+        Path.cwd() / ".claude" / "settings.local.json",
+    ]
+
+
+def _read_json_settings(path: Path) -> dict[str, Any]:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _normalize_model_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    out: list[str] = []
+    for item in value:
+        model = _clean_model_name(item)
+        if model and model not in out:
+            out.append(model)
+    return out
+
+
+def _merge_model_options(*groups: list[str]) -> list[str]:
+    out: list[str] = []
+    for group in groups:
+        for item in group:
+            model = _clean_model_name(item)
+            if model and model not in out:
+                out.append(model)
+    return out
+
+
+def _clean_model_name(value: Any) -> str:
+    return re.sub(r"[\x00-\x1f\x7f]", "", str(value or "")).strip()
+
+
+def _clean_url(value: Any) -> str | None:
+    text = re.sub(r"[\x00-\x1f\x7f]", "", str(value or "")).strip()
+    return text or None
 
 
 @dataclass(slots=True)

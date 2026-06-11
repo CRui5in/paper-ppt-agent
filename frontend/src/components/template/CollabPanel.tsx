@@ -12,6 +12,8 @@ import {
   FileCheck2,
   File as FileIcon,
   Folder,
+  Eye,
+  EyeOff,
   Loader2,
   MessageSquareText,
   Send,
@@ -56,6 +58,7 @@ export interface CollabPanelProps {
   modeLocked?: boolean;
   agentConfig: TemplateAgentConfig;
   onAgentConfigChange: (config: TemplateAgentConfig) => void;
+  agentModelOptions?: string[];
   agentStatus?: TemplateAgentStatus | null;
   agentCancelPending?: boolean;
   onSendFeedback: (text: string) => Promise<void> | void;
@@ -93,6 +96,7 @@ export function CollabPanel({
   modeLocked = false,
   agentConfig,
   onAgentConfigChange,
+  agentModelOptions,
   agentStatus,
   agentCancelPending = false,
   onSendFeedback,
@@ -116,6 +120,7 @@ export function CollabPanel({
   const [mentions, setMentions] = useState<Array<{ label: string; path: string }>>([]);
   const [mentionOpen, setMentionOpen] = useState(false);
   const [pendingUser, setPendingUser] = useState<ChatMessage | null>(null);
+  const [showAgentCredential, setShowAgentCredential] = useState(false);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const directScrollerRef = useRef<HTMLDivElement | null>(null);
 
@@ -498,6 +503,9 @@ export function CollabPanel({
           modeLocked={modeLocked}
           agentConfig={agentConfig}
           onAgentConfigChange={onAgentConfigChange}
+          agentModelOptions={agentModelOptions}
+          showAgentCredential={showAgentCredential}
+          onToggleAgentCredential={() => setShowAgentCredential((value) => !value)}
           disabled={loading}
           agentStatus={agentStatus}
         />
@@ -809,6 +817,9 @@ function CollabModeControls({
   modeLocked,
   agentConfig,
   onAgentConfigChange,
+  agentModelOptions = [],
+  showAgentCredential,
+  onToggleAgentCredential,
   disabled,
   agentStatus,
 }: {
@@ -817,12 +828,25 @@ function CollabModeControls({
   modeLocked: boolean;
   agentConfig: TemplateAgentConfig;
   onAgentConfigChange: (config: TemplateAgentConfig) => void;
+  agentModelOptions?: string[];
+  showAgentCredential: boolean;
+  onToggleAgentCredential: () => void;
   disabled: boolean;
   agentStatus?: TemplateAgentStatus | null;
 }) {
   const { t } = useLocale();
   const setConfig = (patch: Partial<TemplateAgentConfig>) => {
     onAgentConfigChange({ ...agentConfig, ...patch });
+  };
+  const agentModel = agentConfig.model ?? "";
+  const isCustomAgent = Boolean(agentConfig.base_url?.trim());
+  const agentCredential = agentConfig.api_key ?? agentConfig.auth_token ?? "";
+  const setAgentCredential = (value: string) => {
+    if (agentConfig.auth_token && !agentConfig.api_key) {
+      setConfig({ auth_token: value });
+    } else {
+      setConfig({ api_key: value });
+    }
   };
   return (
     <div className="flex flex-col gap-2">
@@ -860,6 +884,62 @@ function CollabModeControls({
           );
         })}
       </div>
+      {mode === "agent" ? (
+        <div className="ti-agent-runtime-fields">
+          {isCustomAgent ? (
+            <label className="ti-agent-model-field">
+              <span>{t("template.collab.agentBaseUrl")}</span>
+              <input
+                type="text"
+                value={agentConfig.base_url ?? ""}
+                disabled={disabled}
+                onChange={(event) => setConfig({ mode: event.target.value.trim() ? "custom" : "claude_code", base_url: event.target.value })}
+                placeholder={t("template.collab.agentBaseUrlPlaceholder")}
+              />
+            </label>
+          ) : null}
+          <label className="ti-agent-model-field">
+            <span>{t("template.collab.agentRuntimeModel")}</span>
+            <input
+              type="text"
+              list="template-agent-model-options"
+              value={agentModel}
+              disabled={disabled}
+              onChange={(event) => setConfig({ model: event.target.value })}
+              placeholder={t("template.collab.agentRuntimeModelPlaceholder")}
+            />
+            {agentModelOptions.length > 0 ? (
+              <datalist id="template-agent-model-options">
+                {agentModelOptions.map((option) => (
+                  <option key={option} value={option} />
+                ))}
+              </datalist>
+            ) : null}
+          </label>
+          {isCustomAgent ? (
+            <label className="ti-agent-model-field">
+              <span>{t("template.collab.agentApiKey")}</span>
+              <span className="ti-agent-secret-input">
+                <input
+                  type={showAgentCredential ? "text" : "password"}
+                  value={agentCredential}
+                  disabled={disabled}
+                  onChange={(event) => setAgentCredential(event.target.value)}
+                  placeholder={t("template.collab.agentApiKeyPlaceholder")}
+                />
+                <button
+                  type="button"
+                  disabled={disabled}
+                  onClick={onToggleAgentCredential}
+                  aria-label={showAgentCredential ? t("template.collab.hideApiKey") : t("template.collab.showApiKey")}
+                >
+                  {showAgentCredential ? <EyeOff size={12} /> : <Eye size={12} />}
+                </button>
+              </span>
+            </label>
+          ) : null}
+        </div>
+      ) : null}
 
     </div>
   );

@@ -112,6 +112,9 @@ export interface GenerationOptions {
 export interface AgentGenerationConfig {
   runtime: "claude_code" | "codex";
   model?: string;
+  api_key?: string;
+  auth_token?: string;
+  base_url?: string;
   reasoning_effort?: "low" | "medium" | "high" | "xhigh";
   max_turns?: number;
   load_project_settings?: boolean;
@@ -444,6 +447,18 @@ export interface TemplateAgentClaudeCodeStatus {
   sdk_available: boolean;
   sdk_error?: string | null;
   message: string;
+  default_model?: string | null;
+  available_models?: string[];
+  configured_models?: Record<string, string>;
+  provider_config?: {
+    base_url?: string | null;
+    api_key?: string;
+    auth_token?: string;
+    oauth_token?: string;
+    has_api_key?: boolean;
+    has_auth_token?: boolean;
+    has_oauth_token?: boolean;
+  };
 }
 
 export interface TemplateImportFileItem {

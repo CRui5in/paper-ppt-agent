@@ -179,6 +179,10 @@ class ClaudeCodeStatusResponse(BaseModel):
     sdk_available: bool = False
     sdk_error: str | None = None
     message: str = ""
+    default_model: str | None = None
+    available_models: list[str] = Field(default_factory=list)
+    configured_models: dict[str, str] = Field(default_factory=dict)
+    provider_config: dict[str, Any] = Field(default_factory=dict)
 
 
 class ImportStatusResponse(BaseModel):
@@ -2135,10 +2139,10 @@ async def start_template_import_agent(
 
     cfg = TemplateAgentConfig(
         mode=payload.config.mode,
-        api_key=payload.config.api_key,
-        auth_token=payload.config.auth_token,
-        base_url=payload.config.base_url,
-        model=payload.config.model,
+        api_key=(payload.config.api_key or "").strip() or None,
+        auth_token=(payload.config.auth_token or "").strip() or None,
+        base_url=(payload.config.base_url or "").strip() or None,
+        model=(payload.config.model or "").strip() or None,
         custom_model_option=payload.config.custom_model_option,
         load_project_settings=payload.config.load_project_settings,
         max_turns=payload.config.max_turns,

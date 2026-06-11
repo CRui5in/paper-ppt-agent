@@ -663,7 +663,10 @@ export function useTemplateImport(
         await flushDraft();
         const start = await startTemplateImportAgent(id, {
           feedback: text,
-          config,
+          config: {
+            ...config,
+            model: config.model?.trim() || undefined,
+          },
           draft: draftRef.current,
           silent: options?.silent,
           planning: options?.planning !== false,

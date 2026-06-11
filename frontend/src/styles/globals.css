@@ -4220,6 +4220,42 @@ body::before {
   gap: 10px;
 }
 
+.agent-model-field {
+  display: grid;
+  gap: 6px;
+  color: var(--muted-color);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.agent-model-field input {
+  width: 100%;
+  min-height: 34px;
+  border: 1px solid var(--border-color);
+  border-radius: 7px;
+  padding: 7px 9px;
+  background: var(--surface);
+  color: var(--text-color);
+  font: inherit;
+  font-weight: 500;
+}
+
+.agent-secret-input {
+  position: relative;
+  display: block;
+}
+
+.agent-secret-input input {
+  padding-right: 36px;
+}
+
+.agent-secret-input .api-key-toggle {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  transform: translateY(-50%);
+}
+
 .workbench-agent-confirm-backdrop {
   position: fixed;
   inset: 0;
