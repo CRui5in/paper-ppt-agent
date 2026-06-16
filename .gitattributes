@@ -1,0 +1,6 @@
+# Ensure shell scripts keep LF line endings on every platform so they run
+# correctly on macOS/Linux regardless of the user's core.autocrlf setting.
+*.sh       text eol=lf
+*.ps1      text eol=crlf
+*.bat      text eol=crlf
+*.cmd      text eol=crlf
