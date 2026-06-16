@@ -68,9 +68,14 @@ import { Progress } from "../components/ui/progress";
 import { Tabs, TabsList, TabsTrigger } from "../components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../components/ui/tooltip";
 import { translateJobMessage, translateStageStatus } from "../lib/i18nStatus";
+import { isConfirmSuppressed, suppressConfirm } from "../lib/confirmSuppression";
+import {
+  useSettingsStore,
+  type PresentationSettingsDraft,
+  type RoutingProfile,
+  type RoutingProfileMap,
+} from "../hooks/useSettingsStore";
 
-const ROUTING_PROFILE_STORAGE_KEY = "paper-ppt-agent-routing-profiles-v1";
-const PRESENTATION_SETTINGS_STORAGE_KEY = "paper-ppt-agent-presentation-settings-v1";
 type LanguageMode = "zh" | "en" | "custom";
 type SecondaryPanel = "log" | "critic";
 const DEFAULT_DEEPSEEK_SETTINGS: DeepSeekSettings = {
@@ -82,44 +87,6 @@ const DEFAULT_OPENAI_SETTINGS: OpenAISettings = {
   verbosity: "high",
 };
 
-interface RoutingProfile {
-  model: string;
-  baseUrl: string;
-  apiKey: string;
-  artifactThinkingMode?: "disabled" | "default";
-  deepseekSettings?: DeepSeekSettings;
-  openaiSettings?: OpenAISettings;
-}
-
-type RoutingProfileMap = Record<string, RoutingProfile>;
-
-interface PresentationSettingsDraft {
-  generationBackend?: "provider" | "agent";
-  agentRuntime?: "claude_code" | "codex";
-  agentModel?: string;
-  canvasFormat?: string;
-  languageMode?: LanguageMode;
-  customLanguage?: string;
-  numPages?: string;
-  detailLevel?: string;
-  generationMode?: "sequential" | "chapter_parallel" | "page_parallel";
-  parallelConcurrency?: string;
-  timeoutSeconds?: string;
-  maxCriticAttempts?: string;
-  visualQaMaxAttempts?: string;
-  instruction?: string;
-  density?: string;
-  customFont?: string;
-  headingFont?: string;
-  bodyFont?: string;
-  cjkHeadingFont?: string;
-  cjkBodyFont?: string;
-  enableDeepResearch?: boolean;
-  enableVisualCritic?: boolean;
-  researchConfig?: ResearchConfig;
-  templateId?: string;
-}
-
 function uniqueStrings(values: string[]): string[] {
   const out: string[] = [];
   for (const value of values) {
@@ -129,38 +96,23 @@ function uniqueStrings(values: string[]): string[] {
   return out;
 }
 
+// Thin wrappers over the unified settings store. Keeping these module-level
+// helpers lets the many existing call sites stay unchanged while the data now
+// lives in one persisted payload (with automatic legacy-key migration).
 function readRoutingProfiles(): RoutingProfileMap {
-  try {
-    const raw = window.localStorage.getItem(ROUTING_PROFILE_STORAGE_KEY);
-    if (!raw) {
-      return {};
-    }
-    const parsed = JSON.parse(raw) as RoutingProfileMap;
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
+  return useSettingsStore.getState().routingProfiles;
 }
 
 function writeRoutingProfiles(profiles: RoutingProfileMap) {
-  window.localStorage.setItem(ROUTING_PROFILE_STORAGE_KEY, JSON.stringify(profiles));
+  useSettingsStore.getState().setRoutingProfiles(profiles);
 }
 
 function readPresentationSettingsDraft(): PresentationSettingsDraft {
-  try {
-    const raw = window.localStorage.getItem(PRESENTATION_SETTINGS_STORAGE_KEY);
-    if (!raw) {
-      return {};
-    }
-    const parsed = JSON.parse(raw) as PresentationSettingsDraft;
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
+  return useSettingsStore.getState().presentation;
 }
 
 function writePresentationSettingsDraft(settings: PresentationSettingsDraft) {
-  window.localStorage.setItem(PRESENTATION_SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+  useSettingsStore.getState().setPresentation(settings);
 }
 
 function getProviderDefaults(
@@ -254,25 +206,18 @@ export function GeneratePage() {
   const [maxCriticAttempts, setMaxCriticAttempts] = useState(initialSettings.maxCriticAttempts ?? "0");
   const [visualQaMaxAttempts, setVisualQaMaxAttempts] = useState(initialSettings.visualQaMaxAttempts ?? "1");
   const [instruction, setInstruction] = useState(initialSettings.instruction ?? "");
-  const RESEARCH_KEYS_STORAGE = "paper-ppt-agent-research-keys";
   const [enableDeepResearch, setEnableDeepResearch] = useState(initialSettings.enableDeepResearch ?? false);
   const [enableVisualCritic, setEnableVisualCritic] = useState(initialSettings.enableVisualCritic ?? false);
   const [researchConfig, setResearchConfig] = useState<ResearchConfig>(() => {
     const base = initialSettings.researchConfig ?? {};
-    try {
-      const saved = window.localStorage.getItem(RESEARCH_KEYS_STORAGE);
-      if (saved) {
-        const parsed = JSON.parse(saved) as Record<string, string>;
-        return {
-          ...base,
-          web_search_provider: base.web_search_provider || (parsed.web_search_provider as "tavily" | "serpapi" | undefined) || undefined,
-          semantic_scholar_api_key: base.semantic_scholar_api_key || parsed.semantic_scholar_api_key || undefined,
-          tavily_api_key: base.tavily_api_key || parsed.tavily_api_key || undefined,
-          serpapi_key: base.serpapi_key || parsed.serpapi_key || undefined,
-        };
-      }
-    } catch { /* noop */ }
-    return base;
+    const saved = useSettingsStore.getState().researchKeys;
+    return {
+      ...base,
+      web_search_provider: base.web_search_provider || saved.web_search_provider || undefined,
+      semantic_scholar_api_key: base.semantic_scholar_api_key || saved.semantic_scholar_api_key || undefined,
+      tavily_api_key: base.tavily_api_key || saved.tavily_api_key || undefined,
+      serpapi_key: base.serpapi_key || saved.serpapi_key || undefined,
+    };
   });
   const [templateId, setTemplateId] = useState(initialSettings.templateId ?? "");
   const [templates, setTemplates] = useState<TemplateInfo[]>([]);
@@ -503,18 +448,15 @@ export function GeneratePage() {
   }, [agentRuntime]);
 
   useEffect(() => {
-    try {
-      const existingRaw = window.localStorage.getItem(RESEARCH_KEYS_STORAGE);
-      const existing = existingRaw ? (JSON.parse(existingRaw) as Record<string, string>) : {};
-      const next = {
-        web_search_provider: researchConfig.web_search_provider || existing.web_search_provider || "tavily",
-        semantic_scholar_api_key:
-          researchConfig.semantic_scholar_api_key || existing.semantic_scholar_api_key || "",
-        tavily_api_key: researchConfig.tavily_api_key || existing.tavily_api_key || "",
-        serpapi_key: researchConfig.serpapi_key || existing.serpapi_key || "",
-      };
-      window.localStorage.setItem(RESEARCH_KEYS_STORAGE, JSON.stringify(next));
-    } catch { /* noop */ }
+    const existing = useSettingsStore.getState().researchKeys;
+    const next = {
+      web_search_provider: researchConfig.web_search_provider || existing.web_search_provider || "tavily",
+      semantic_scholar_api_key:
+        researchConfig.semantic_scholar_api_key || existing.semantic_scholar_api_key || "",
+      tavily_api_key: researchConfig.tavily_api_key || existing.tavily_api_key || "",
+      serpapi_key: researchConfig.serpapi_key || existing.serpapi_key || "",
+    };
+    useSettingsStore.getState().setResearchKeys(next);
   }, [researchConfig.web_search_provider, researchConfig.semantic_scholar_api_key, researchConfig.tavily_api_key, researchConfig.serpapi_key]);
 
   useEffect(() => {
@@ -701,7 +643,13 @@ export function GeneratePage() {
       return;
     }
     if (generationBackend !== "agent") {
-      setShowAgentModeConfirm(true);
+      // If the user already suppressed the Agent-mode entry notice this
+      // session, switch directly without prompting.
+      if (isConfirmSuppressed("agentModeEntry")) {
+        setGenerationBackend("agent");
+      } else {
+        setShowAgentModeConfirm(true);
+      }
     }
   };
   const requestAgentRuntime = (nextRuntime: "claude_code" | "codex") => {
@@ -711,7 +659,13 @@ export function GeneratePage() {
       return;
     }
     if (agentRuntime !== "codex") {
-      setShowCodexRuntimeConfirm(true);
+      // If the user already suppressed the Codex warning this session,
+      // switch directly without prompting.
+      if (isConfirmSuppressed("codexRuntime")) {
+        setAgentRuntime("codex");
+      } else {
+        setShowCodexRuntimeConfirm(true);
+      }
     }
   };
 
@@ -1004,6 +958,7 @@ export function GeneratePage() {
                 setShowAgentModeConfirm(false);
                 setGenerationBackend("agent");
               }}
+              onSuppress={() => suppressConfirm("agentModeEntry")}
             />,
             document.body,
           )
@@ -1016,6 +971,7 @@ export function GeneratePage() {
                 setShowCodexRuntimeConfirm(false);
                 setAgentRuntime("codex");
               }}
+              onSuppress={() => suppressConfirm("codexRuntime")}
             />,
             document.body,
           )
@@ -1043,11 +999,14 @@ export function GeneratePage() {
 function AgentModeEntryConfirm({
   onClose,
   onConfirm,
+  onSuppress,
 }: {
   onClose: () => void;
   onConfirm: () => void;
+  onSuppress?: () => void;
 }) {
   const { t } = useLocale();
+  const [suppress, setSuppress] = useState(false);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -1056,6 +1015,11 @@ function AgentModeEntryConfirm({
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [onClose]);
+
+  const handleConfirm = () => {
+    if (suppress) onSuppress?.();
+    onConfirm();
+  };
 
   return (
     <div className="workbench-agent-confirm-backdrop" role="presentation" onMouseDown={onClose}>
@@ -1081,11 +1045,21 @@ function AgentModeEntryConfirm({
           <p>{t("generation.agentModeConfirm.requirement")}</p>
         </div>
         <footer className="workbench-agent-confirm-actions">
-          <button type="button" className="secondary-button" onClick={onClose}>{t("generation.agentModeConfirm.cancel")}</button>
-          <button type="button" className="primary-button" onClick={onConfirm}>
-            <Bot size={15} />
-            {t("generation.agentModeConfirm.confirm")}
-          </button>
+          <label className="workbench-confirm-suppress">
+            <input
+              type="checkbox"
+              checked={suppress}
+              onChange={(event) => setSuppress(event.target.checked)}
+            />
+            <span>{t("common.suppressConfirm")}</span>
+          </label>
+          <div className="workbench-confirm-action-buttons">
+            <button type="button" className="secondary-button" onClick={onClose}>{t("generation.agentModeConfirm.cancel")}</button>
+            <button type="button" className="primary-button" onClick={handleConfirm}>
+              <Bot size={15} />
+              {t("generation.agentModeConfirm.confirm")}
+            </button>
+          </div>
         </footer>
       </section>
     </div>
@@ -1095,11 +1069,14 @@ function AgentModeEntryConfirm({
 function CodexRuntimeConfirm({
   onClose,
   onConfirm,
+  onSuppress,
 }: {
   onClose: () => void;
   onConfirm: () => void;
+  onSuppress?: () => void;
 }) {
   const { t } = useLocale();
+  const [suppress, setSuppress] = useState(false);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -1108,6 +1085,11 @@ function CodexRuntimeConfirm({
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [onClose]);
+
+  const handleConfirm = () => {
+    if (suppress) onSuppress?.();
+    onConfirm();
+  };
 
   return (
     <div className="workbench-agent-confirm-backdrop" role="presentation" onMouseDown={onClose}>
@@ -1133,8 +1115,18 @@ function CodexRuntimeConfirm({
           <p>{t("generation.codexConfirm.recommendation")}</p>
         </div>
         <footer className="workbench-agent-confirm-actions">
-          <button type="button" className="secondary-button" onClick={onClose}>{t("generation.codexConfirm.cancel")}</button>
-          <button type="button" className="primary-button" onClick={onConfirm}>{t("generation.codexConfirm.confirm")}</button>
+          <label className="workbench-confirm-suppress">
+            <input
+              type="checkbox"
+              checked={suppress}
+              onChange={(event) => setSuppress(event.target.checked)}
+            />
+            <span>{t("common.suppressConfirm")}</span>
+          </label>
+          <div className="workbench-confirm-action-buttons">
+            <button type="button" className="secondary-button" onClick={onClose}>{t("generation.codexConfirm.cancel")}</button>
+            <button type="button" className="primary-button" onClick={handleConfirm}>{t("generation.codexConfirm.confirm")}</button>
+          </div>
         </footer>
       </section>
     </div>

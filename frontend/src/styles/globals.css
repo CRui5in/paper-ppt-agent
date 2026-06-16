@@ -4354,8 +4354,9 @@ body::before {
 
 .workbench-agent-confirm-actions {
   display: flex;
-  justify-content: flex-end;
-  gap: 9px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   padding-top: 2px;
 }
 
@@ -4363,6 +4364,29 @@ body::before {
 .workbench-agent-confirm-actions .secondary-button {
   min-height: 38px;
   padding: 0 15px;
+}
+
+.workbench-confirm-action-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 9px;
+}
+
+.workbench-confirm-suppress {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 13px;
+  color: var(--muted-foreground, #6b7280);
+}
+
+.workbench-confirm-suppress input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+  accent-color: var(--primary, #2563eb);
 }
 
 @media (max-width: 560px) {
@@ -4387,6 +4411,11 @@ body::before {
   }
 
   .workbench-agent-confirm-actions {
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+
+  .workbench-confirm-action-buttons {
     flex-direction: column-reverse;
   }
 
