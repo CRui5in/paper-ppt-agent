@@ -172,13 +172,22 @@ install_uv() {
 install_node() {
   step "$(l installingNode)"
   echo ""
+  # Pin to Node.js 22 LTS (the "LTS" channel has moved to v24 on some
+  # package managers, which ships npm 11 with known module-load issues).
   if has_cmd brew; then
-    if brew install node; then refresh_path; echo ""; ok "$(l nodeBrewOk)"; return; fi
+    if brew install node@22; then
+      # node@22 is keg-only; link it so it lands on PATH.
+      brew link --force --overwrite node@22 2>/dev/null || true
+      refresh_path
+      echo ""
+      ok "$(l nodeBrewOk)"
+      return
+    fi
     warn "$(l nodeBrewFail)"
   fi
   if has_cmd apt-get; then
     warn "$(l nodeAptHint)"
-    echo "${CYAN}  curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash - && sudo apt-get install -y nodejs${RESET}"
+    echo "${CYAN}  curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt-get install -y nodejs${RESET}"
     echo "${CYAN}  or: https://nodejs.org/en/download/package-manager${RESET}"
     echo "$(l nodeRetry)"
     return
