@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from backend.api.schemas import ResearchConfig
+from backend.config import get_tavily_api_key
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +50,7 @@ async def search_images(
 
     Returns a list of ImageSearchResult with URLs and thumbnails.
     """
-    tavily_key = (config.tavily_api_key or "").strip()
+    tavily_key = get_tavily_api_key(config.tavily_api_key)
     serpapi_key = (config.serpapi_key or "").strip()
 
     if not tavily_key and not serpapi_key:

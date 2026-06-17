@@ -53,6 +53,34 @@ def _cleanup_all_job_processes() -> None:
 
 atexit.register(_cleanup_all_job_processes)
 
+async def _probe_vision_models() -> None:
+    """Probe configured models for vision support at startup."""
+    from backend.config import get_provider_credentials
+    from backend.llm import create_provider
+    from backend.llm.vision_probe import vision_probe
+
+    models_str = (settings.vision_models or "").strip()
+    if not models_str:
+        logger.info("Vision probe: no VISION_MODELS configured, skipping")
+        return
+
+    models = [m.strip() for m in models_str.split(",") if m.strip()]
+    if not models:
+        return
+
+    provider_name, api_key, base_url = get_provider_credentials()
+
+    if not api_key:
+        logger.warning("Vision probe: no API key for provider '%s', skipping", provider_name)
+        return
+
+    try:
+        llm = create_provider(provider_name, api_key, base_url=base_url)
+        logger.info("Vision probe: testing %d models via %s ...", len(models), provider_name)
+        await vision_probe.probe_all(models, llm)
+    except Exception as exc:
+        logger.warning("Vision probe failed: %s", exc)
+
 
 def _install_signal_handlers() -> None:
     """Install signal handlers that trigger process cleanup before exit.
@@ -87,6 +115,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """
     _install_signal_handlers()
     init_offload(settings.io_pool_workers)
+
+    # ── Vision capability probe (background, non-blocking) ──
+    _probe_task = asyncio.create_task(_probe_vision_models())
+    _probe_task.add_done_callback(
+        lambda t: t.exception() and logger.warning("Vision probe task error: %s", t.exception())
+    )
     try:
         # Scheduler / EventBus are wired in here once their modules land
         # (kept opt-in so the import graph stays clean during the rollout).
@@ -160,6 +194,25 @@ def create_app() -> FastAPI:
         return {
             "name": "Paper PPT Agent",
             "frontend": "Open the Vite frontend to upload a paper PDF or TeX source package and generate a PPT draft.",
+        }
+
+    @app.get("/healthz/vision")
+    async def vision_probe_status() -> dict:
+        """Return vision capability probe results for all configured models."""
+        from backend.llm.vision_probe import vision_probe
+        results = vision_probe.all_results()
+        return {
+            "probed": vision_probe.is_probed(),
+            "models": {
+                k: {
+                    "model": v.model,
+                    "supports_vision": v.supports_vision,
+                    "response": v.response_excerpt[:60] if v.response_excerpt else None,
+                    "error": v.error[:80] if v.error else None,
+                }
+                for k, v in results.items()
+            },
+            "vision_model_fallback": vision_probe.get_vision_model(),
         }
 
     app.include_router(api_router)

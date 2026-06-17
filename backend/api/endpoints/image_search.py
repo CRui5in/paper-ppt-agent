@@ -44,9 +44,11 @@ async def search_images_endpoint(
 
     # Use client-provided key first, fall back to job config
     from backend.api.schemas import ResearchConfig
+    from backend.config import get_tavily_api_key
 
     tavily_key = request.tavily_api_key or _get_job_config(job, "tavily_api_key")
     serpapi_key = request.serpapi_key or _get_job_config(job, "serpapi_key")
+    tavily_key = get_tavily_api_key(tavily_key)
     config = ResearchConfig(
         tavily_api_key=tavily_key,
         serpapi_key=serpapi_key,
