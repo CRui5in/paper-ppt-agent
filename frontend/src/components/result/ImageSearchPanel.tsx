@@ -3,19 +3,13 @@ import { useCallback, useRef, useState } from "react";
 import { useLocale } from "../../i18n";
 import { applySearchImage, searchImages, undoSearchImage } from "../../lib/api";
 import type { ImageSearchResultItem } from "../../lib/types";
+import { useSettingsStore } from "../../hooks/useSettingsStore";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 
 const TAVILY_KEY_STORAGE = "paper-ppt-agent-image-search-tavily-key";
 const SERPAPI_KEY_STORAGE = "paper-ppt-agent-image-search-serpapi-key";
-const ROUTING_PROFILE_STORAGE_KEY = "paper-ppt-agent-routing-profiles-v1";
-
-interface RoutingProfile {
-  model: string;
-  baseUrl?: string;
-  apiKey: string;
-}
 
 interface ImageSearchPanelProps {
   jobId: string;
@@ -43,17 +37,11 @@ function saveKey(storageKey: string, value: string) {
 }
 
 function readLlmProfile(): { provider: string; model: string; apiKey: string; baseUrl?: string } | null {
-  try {
-    const raw = window.localStorage.getItem(ROUTING_PROFILE_STORAGE_KEY);
-    if (!raw) return null;
-    const profiles = JSON.parse(raw) as Record<string, RoutingProfile>;
-    for (const [provider, profile] of Object.entries(profiles)) {
-      if (profile?.apiKey) {
-        return { provider, model: profile.model, apiKey: profile.apiKey, baseUrl: profile.baseUrl };
-      }
+  const profiles = useSettingsStore.getState().routingProfiles;
+  for (const [provider, profile] of Object.entries(profiles)) {
+    if (profile?.apiKey) {
+      return { provider, model: profile.model, apiKey: profile.apiKey, baseUrl: profile.baseUrl };
     }
-  } catch {
-    // Ignore malformed local storage.
   }
   return null;
 }

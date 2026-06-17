@@ -30,7 +30,6 @@ A multi-agent pipeline for automatically generating editable PowerPoint presenta
 - [⚙️ Requirements](#️-requirements)
 - [🚀 Quick Start](#-quick-start)
 - [📋 Changelog](#-changelog)
-- [🗺️ Roadmap](#️-roadmap)
 - [🙏 Acknowledgements](#-acknowledgements)
 - [📄 License](#-license)
 
@@ -107,6 +106,16 @@ cd frontend && npm run dev -- --host 127.0.0.1 --port 5173 --strictPort
 
 ## 📋 Changelog
 
+### June 2026
+
+- Enhanced paper parsing, section planning, and content filtering
+- Improved accuracy of body figures and page image matching
+- Refined table of contents and section division for better report structure
+- Improved Provider and Agent generation stability
+- Refined SVG repair, preview parsing, and generation status feedback
+- 🧩 **Template Import Codex Support**
+- 🚀 **Interactive Launcher**
+
 ### May 2026
 
 - 🧠 **DeepSeek Provider** — Dedicated DeepSeek provider support with thinking mode configuration
@@ -128,12 +137,6 @@ cd frontend && npm run dev -- --host 127.0.0.1 --port 5173 --strictPort
 - 🔎 **Token Log Filtering** — Filter LLM calls by model, stage, page, and job with click-to-expand detail view
 - ⏹️ **Generation Cancellation** — Cancel a running pipeline mid-execution
 - 🤖 **Multi-Agent Pipeline** — Strategist → Executor → Critic three-stage collaboration with automatic SVG repair and feedback iteration
-
----
-
-## 🗺️ Roadmap
-
-- [ ] 🧠 Local model support
 
 ---
 

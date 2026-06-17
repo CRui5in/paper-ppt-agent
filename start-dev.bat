@@ -1,48 +1,37 @@
 @echo off
+REM Paper PPT Agent — Windows entry point.
+REM
+REM Delegates to the interactive PowerShell launcher, which:
+REM   1. Checks required prerequisites (uv, Node.js) and offers to install
+REM      any that are missing via an arrow-key menu.
+REM   2. Shows optional Agent runtimes (Claude Code / Codex) status.
+REM   3. Syncs dependencies and starts the dev stack.
+
 setlocal
 
 set "ROOT=%~dp0"
 if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
-set "FRONTEND_DIR=%ROOT%\frontend"
-set "FRONTEND_URL=http://127.0.0.1:5173"
+set "LAUNCHER=%ROOT%\scripts\start-launcher.ps1"
 
-where uv >nul 2>nul
-if errorlevel 1 (
-  echo uv was not found in the current shell environment.
-  echo Install uv or open the shell where uv works, then run start-dev.bat again.
+if not exist "%LAUNCHER%" (
+  echo Launcher script not found: %LAUNCHER%
   exit /b 1
 )
 
-where npm >nul 2>nul
-if errorlevel 1 (
-  echo npm was not found in the current shell environment.
-  echo Open the shell where npm works, cd into this project, and run start-dev.bat again.
+REM Find powershell (powershell.exe on Windows; falls back to pwsh if present).
+set "PS_EXE="
+where pwsh >nul 2>nul && set "PS_EXE=pwsh"
+if not defined PS_EXE where powershell >nul 2>nul && set "PS_EXE=powershell"
+if not defined PS_EXE (
+  echo Neither PowerShell ^(pwsh^) nor Windows PowerShell ^(powershell^) was found.
+  echo Windows PowerShell is included with Windows 10/11. Please open
+  echo "Add optional features" or repair your Windows installation.
   exit /b 1
 )
 
-echo ==> Syncing backend dependencies with uv
-pushd "%ROOT%"
-call uv sync --locked
-if errorlevel 1 (
-  popd
-  exit /b 1
-)
-popd
+REM ExecutionPolicy is scoped to this process only (-Scope Process) so we never
+REM change the user's global policy.
+"%PS_EXE%" -NoProfile -ExecutionPolicy Bypass -File "%LAUNCHER%" %*
 
-if not exist "%FRONTEND_DIR%\node_modules" (
-  echo ==> Installing frontend dependencies
-  pushd "%FRONTEND_DIR%"
-  call npm install
-  if errorlevel 1 (
-    popd
-    exit /b 1
-  )
-  popd
-)
-
-echo ==> Starting Paper PPT Agent in this window
-cd /d "%ROOT%"
-set PYTHONUNBUFFERED=1
-call uv run python -m backend.dev_launcher
-
-endlocal
+set "EXIT_CODE=%ERRORLEVEL%"
+endlocal & exit /b %EXIT_CODE%
