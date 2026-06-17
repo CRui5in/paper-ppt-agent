@@ -277,8 +277,10 @@ function Install-Node {
   Write-Host ""
   if (Test-Cmd "winget") {
     try {
-      # No --silent: let winget print its download/install progress.
-      & winget install --id OpenJS.NodeJS.LTS -e --accept-source-agreements --accept-package-agreements
+      # Pin to Node.js 22 LTS (the "LTS" winget id currently points at v24,
+      # which ships npm 11 with known module-load regressions). v22 is the
+      # verified, stable long-term-support line.
+      & winget install --id OpenJS.NodeJS.22 -e --accept-source-agreements --accept-package-agreements
       if ($LASTEXITCODE -eq 0) {
         Update-EnvPath
         Write-Host ""
@@ -295,7 +297,7 @@ function Install-Node {
   Write-Host ""
   Write-Warn2 (L nodeManualGuide)
   Write-Host  "  - https://nodejs.org/" -ForegroundColor Cyan
-  Write-Host  "  - winget install OpenJS.NodeJS.LTS" -ForegroundColor Cyan
+  Write-Host  "  - winget install OpenJS.NodeJS.22" -ForegroundColor Cyan
   Write-Host  (L nodeManualHint)
   return $false
 }
