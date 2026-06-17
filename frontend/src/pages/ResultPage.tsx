@@ -12,51 +12,13 @@ import { createPreviewSlide, deletePreviewSlide, duplicatePreviewSlide, fetchCri
 import { FontCustomizer } from "../components/result/FontCustomizer";
 import { HoverTooltip } from "../components/common/HoverTooltip";
 import { translateJobMessage, translateStageStatus } from "../lib/i18nStatus";
-import type { CriticEvent, DeepSeekSettings, GenerateRequestPayload, GenerationHistoryItem, JobStatus, OpenAISettings, PreviewResponse, PreviewSlide, SlideDocument, SlideScene } from "../lib/types";
+import { readProviderProfile } from "../hooks/useSettingsStore";
+import type { CriticEvent, GenerateRequestPayload, GenerationHistoryItem, JobStatus, PreviewResponse, PreviewSlide, SlideDocument, SlideScene } from "../lib/types";
 import { Switch } from "../components/ui/switch";
 import { Progress } from "../components/ui/progress";
 import { RecentTasksPanel } from "../components/history/RecentTasksPanel";
 import { PptistStudioHost } from "../components/pptist/PptistStudioHost";
 import { GenerationAgentConsole } from "./GeneratePage";
-
-// Routing profile stored by GeneratePage so we can re-use model config here.
-const ROUTING_PROFILE_STORAGE_KEY = "paper-ppt-agent-routing-profiles-v1";
-
-interface RoutingProfile {
-  model: string;
-  baseUrl: string;
-  apiKey: string;
-  artifactThinkingMode?: "disabled" | "default";
-  deepseekSettings?: DeepSeekSettings;
-  openaiSettings?: OpenAISettings;
-}
-type RoutingProfileMap = Record<string, RoutingProfile>;
-
-function readProviderProfile(
-  provider: string,
-  defaults?: { model?: string; baseUrl?: string },
-): { provider: string; model: string; apiKey: string; baseUrl: string; artifactThinkingMode: "disabled" | "default"; deepseekSettings?: DeepSeekSettings; openaiSettings?: OpenAISettings } | null {
-  try {
-    const raw = window.localStorage.getItem(ROUTING_PROFILE_STORAGE_KEY);
-    if (!raw) return null;
-    const profiles = JSON.parse(raw) as RoutingProfileMap;
-    const profile = profiles[provider];
-    if (!profile?.apiKey) {
-      return null;
-    }
-    return {
-      provider,
-      model: defaults?.model || profile.model,
-      apiKey: profile.apiKey,
-      baseUrl: defaults?.baseUrl || profile.baseUrl,
-      artifactThinkingMode: profile.artifactThinkingMode ?? "disabled",
-      deepseekSettings: profile.deepseekSettings,
-      openaiSettings: profile.openaiSettings,
-    };
-  } catch {
-    return null;
-  }
-}
 
 export function ResultPage() {
   const [params] = useSearchParams();
@@ -252,11 +214,11 @@ export function ResultPage() {
         if (isNotFoundError(error)) {
           setLoadError(
             entry
-              ? "This run is no longer available on the server, but its history record was kept. Start a new run to regenerate."
-              : "This job was not found. It may have been removed or never existed on this server.",
+              ? t("result.error.jobUnavailable")
+              : t("result.error.jobNotFound"),
           );
         } else {
-          setLoadError(error instanceof Error ? error.message : "Failed to load result.");
+          setLoadError(error instanceof Error ? error.message : t("result.error.loadFailed"));
         }
       }
     }
@@ -266,7 +228,7 @@ export function ResultPage() {
       setJob(null);
       setSlides([]);
       setSelectedSlide(undefined);
-      setLoadError("Missing job id.");
+      setLoadError(t("result.error.missingJobId"));
       return () => {
         cancelled = true;
       };
@@ -366,7 +328,7 @@ export function ResultPage() {
       baseUrl: historyEntry?.baseUrl ?? undefined,
     });
     if (!profile || !profile.apiKey) {
-      setRefineError("No model configuration found. Please return to the generate page and configure a model first.");
+      setRefineError(t("result.error.noModelConfig"));
       return;
     }
 
@@ -403,7 +365,7 @@ export function ResultPage() {
       connect(newJobId);
       navigate(`/result?job=${newJobId}`);
     } catch (err) {
-      setRefineError(err instanceof Error ? err.message : "Refinement failed.");
+      setRefineError(err instanceof Error ? err.message : t("result.error.refineFailed"));
     } finally {
       setRefineLoading(false);
     }
@@ -450,7 +412,7 @@ export function ResultPage() {
           : current,
       );
     } catch (err) {
-      setReexportError(err instanceof Error ? err.message : "Re-export failed.");
+      setReexportError(err instanceof Error ? err.message : t("result.error.reexportFailed"));
     } finally {
       setReexportLoading(false);
     }
@@ -480,7 +442,7 @@ export function ResultPage() {
       setSelectedSlide(created);
       setResult((current) => current ? { ...current, slides: [...current.slides, created] } : current);
     } catch (err) {
-      setReexportError(err instanceof Error ? err.message : "Failed to create slide.");
+      setReexportError(err instanceof Error ? err.message : t("result.error.slideCreateFailed"));
     }
   };
 
@@ -493,7 +455,7 @@ export function ResultPage() {
       setSlides(preview.slides);
       setSelectedSlide(preview.slides[Math.min(slide.index - 1, preview.slides.length - 1)]);
     } catch (err) {
-      setReexportError(err instanceof Error ? err.message : "Failed to delete slide.");
+      setReexportError(err instanceof Error ? err.message : t("result.error.slideDeleteFailed"));
     }
   };
 
@@ -511,7 +473,7 @@ export function ResultPage() {
       setSlides(preview.slides);
       setSelectedSlide(preview.slides.find((item) => item.index === slide.index + 1) ?? preview.slides[preview.slides.length - 1]);
     } catch (err) {
-      setReexportError(err instanceof Error ? err.message : "Failed to duplicate slide.");
+      setReexportError(err instanceof Error ? err.message : t("result.error.slideDuplicateFailed"));
     }
   };
 

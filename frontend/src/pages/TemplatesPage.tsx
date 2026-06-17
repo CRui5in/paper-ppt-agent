@@ -32,6 +32,8 @@ import { useLocale } from "../i18n";
 import { useGeneration } from "../hooks/useGeneration";
 import { useTemplateImport } from "../hooks/useTemplateImport";
 import { translateTemplateImportMessage } from "../lib/i18nStatus";
+import { isConfirmSuppressed, suppressConfirm } from "../lib/confirmSuppression";
+import { useSettingsStore } from "../hooks/useSettingsStore";
 import {
   deleteTemplate,
   fetchTemplateAgentRuntimeStatus,
@@ -41,8 +43,6 @@ import {
   renameTemplate,
 } from "../lib/api";
 import type {
-  DeepSeekSettings,
-  OpenAISettings,
   TemplateAgentConfig,
   TemplateImportSlide,
   TemplateImportModelConfig,
@@ -64,7 +64,6 @@ import { detectUserLanguage } from "../components/template/detectUserLanguage";
 import { HoverTooltip } from "../components/common/HoverTooltip";
 import { PptistStudioHost } from "../components/pptist/PptistStudioHost";
 
-const ROUTING_PROFILE_STORAGE_KEY = "paper-ppt-agent-routing-profiles-v1";
 const TEMPLATE_AGENT_CONFIG_STORAGE_KEY = "paper-ppt-agent-template-agent-config-v1";
 const ACTIVE_TEMPLATE_IMPORT_STORAGE_KEY = "paper-ppt-agent-active-template-import-v1";
 const TEMPLATE_UPLOAD_MODE_STORAGE_KEY = "paper-ppt-agent-template-upload-mode-v1";
@@ -84,17 +83,6 @@ function uniqueStrings(values: string[]): string[] {
   return out;
 }
 
-interface RoutingProfile {
-  model: string;
-  baseUrl: string;
-  apiKey: string;
-  artifactThinkingMode?: "disabled" | "default";
-  deepseekSettings?: DeepSeekSettings;
-  openaiSettings?: OpenAISettings;
-}
-
-type RoutingProfileMap = Record<string, RoutingProfile>;
-
 const PAGE_TYPES: TemplatePageType[] = ["cover", "toc", "chapter", "content", "ending"];
 const DIRECT_PLACEHOLDER_RULES: Record<TemplatePageType, string[]> = {
   cover: ["{{TITLE}} / {{PAGE_TITLE}}", "{{SUBTITLE}}", "{{AUTHOR}} / {{DATE}}", "{{LOGO_HEADER}} / {{LOGO_FOOTER}}"],
@@ -110,26 +98,19 @@ type UploadGuideDismissals = Partial<Record<CollabMode, boolean>>;
 let uploadGuideDismissalsThisSession: UploadGuideDismissals = {};
 
 function readModelConfig(): TemplateImportModelConfig | undefined {
-  try {
-    const raw = window.localStorage.getItem(ROUTING_PROFILE_STORAGE_KEY);
-    if (!raw) return undefined;
-    const map = JSON.parse(raw) as RoutingProfileMap;
-    if (!map || typeof map !== "object") return undefined;
-    for (const [providerName, profile] of Object.entries(map)) {
-      if (profile?.apiKey && profile?.model) {
-        return {
-          provider: providerName,
-          model: profile.model,
-          api_key: profile.apiKey,
-          base_url: profile.baseUrl || undefined,
-          artifact_thinking_mode: profile.artifactThinkingMode ?? "disabled",
-          deepseek_settings: providerName === "deepseek" ? profile.deepseekSettings : undefined,
-          openai_settings: providerName === "openai" ? profile.openaiSettings : undefined,
-        };
-      }
+  const map = useSettingsStore.getState().routingProfiles;
+  for (const [providerName, profile] of Object.entries(map)) {
+    if (profile?.apiKey && profile?.model) {
+      return {
+        provider: providerName,
+        model: profile.model,
+        api_key: profile.apiKey,
+        base_url: profile.baseUrl || undefined,
+        artifact_thinking_mode: profile.artifactThinkingMode ?? "disabled",
+        deepseek_settings: providerName === "deepseek" ? profile.deepseekSettings : undefined,
+        openai_settings: providerName === "openai" ? profile.openaiSettings : undefined,
+      };
     }
-  } catch {
-    /* noop */
   }
   return undefined;
 }
@@ -641,6 +622,12 @@ export function TemplatesPage() {
         setTemplateError(t("template.directFiveSlidesRequired"));
         return;
       }
+      // If the user suppressed the design_spec confirmation this session,
+      // generate directly without showing the modal again.
+      if (isConfirmSuppressed("templateDesignSpec")) {
+        void handleGenerateDirectDesignSpec();
+        return;
+      }
       setShowDirectDesignSpecConfirm(true);
       return;
     }
@@ -650,7 +637,7 @@ export function TemplatesPage() {
     } finally {
       setConfirmingFlag(false);
     }
-  }, [collabMode, confirm, modelConfig, review, setTemplateError, t]);
+  }, [collabMode, confirm, handleGenerateDirectDesignSpec, modelConfig, review, setTemplateError, t]);
 
   const handleConfirmDirectImport = useCallback(async () => {
     if (
@@ -773,15 +760,7 @@ export function TemplatesPage() {
 
   const handleUseForGeneration = useCallback(() => {
     if (!selectedTemplateId) return;
-    try {
-      const PRESENTATION_KEY = "paper-ppt-agent-presentation-settings-v1";
-      const raw = window.localStorage.getItem(PRESENTATION_KEY);
-      const draftSettings = raw ? JSON.parse(raw) : {};
-      draftSettings.templateId = selectedTemplateId;
-      window.localStorage.setItem(PRESENTATION_KEY, JSON.stringify(draftSettings));
-    } catch {
-      /* noop */
-    }
+    useSettingsStore.getState().setPresentation((prev) => ({ ...prev, templateId: selectedTemplateId }));
     navigate("/generate");
   }, [navigate, selectedTemplateId]);
 
@@ -1425,6 +1404,7 @@ export function TemplatesPage() {
               busy={confirmingFlag}
               onClose={() => setShowDirectDesignSpecConfirm(false)}
               onConfirm={() => void handleGenerateDirectDesignSpec()}
+              onSuppress={() => suppressConfirm("templateDesignSpec")}
             />,
             document.body,
           )
@@ -2072,12 +2052,15 @@ function DirectDesignSpecGenerationConfirm({
   busy,
   onClose,
   onConfirm,
+  onSuppress,
 }: {
   busy: boolean;
   onClose: () => void;
   onConfirm: () => void;
+  onSuppress?: () => void;
 }) {
   const { t } = useLocale();
+  const [suppress, setSuppress] = useState(false);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -2086,6 +2069,11 @@ function DirectDesignSpecGenerationConfirm({
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [busy, onClose]);
+
+  const handleConfirm = () => {
+    if (suppress) onSuppress?.();
+    onConfirm();
+  };
 
   return (
     <div
@@ -2127,11 +2115,20 @@ function DirectDesignSpecGenerationConfirm({
         </div>
         <p className="ti-direct-spec-cost">{t("template.directSpecConfirm.cost")}</p>
         <footer className="ti-agent-upload-actions ti-direct-spec-actions">
+          <label className="ti-direct-spec-suppress">
+            <input
+              type="checkbox"
+              checked={suppress}
+              onChange={(event) => setSuppress(event.target.checked)}
+              disabled={busy}
+            />
+            <span>{t("common.suppressConfirm")}</span>
+          </label>
           <div className="ti-upload-guide-buttons">
             <button type="button" className="ti-focusable ti-direct-guide-secondary" onClick={onClose} disabled={busy}>
               {t("template.directSpecConfirm.cancel")}
             </button>
-            <button type="button" className="ti-focusable ti-direct-guide-primary" onClick={onConfirm} disabled={busy}>
+            <button type="button" className="ti-focusable ti-direct-guide-primary" onClick={handleConfirm} disabled={busy}>
               {busy ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
               {t("template.directSpecConfirm.confirm")}
             </button>

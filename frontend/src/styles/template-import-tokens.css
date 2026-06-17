@@ -2152,6 +2152,37 @@
   line-height: 1.45;
 }
 
+.ti-direct-spec-suppress {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  cursor: pointer;
+  user-select: none;
+  font-size: 12px;
+  color: var(--ti-muted);
+}
+
+.ti-direct-spec-suppress input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+  accent-color: var(--ti-accent, #2563eb);
+}
+
+.ti-direct-spec-actions {
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+@media (max-width: 560px) {
+  .ti-direct-spec-actions {
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+}
+
 .ti-direct-guide-grid {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
