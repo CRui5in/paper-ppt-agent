@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
-import { cancelJob, deleteJob, deleteSession, fetchBackendHealth, fetchJobEvents, fetchJobStatus, fetchPreview, fetchProjectPreview, fetchProviders, generatePresentation, interruptGenerationAgent, isNotFoundError, refinePresentation, sendGenerationAgentFeedback, uploadPaper } from "../lib/api";
+import { cancelJob, deleteJob, deleteSession, fetchBackendHealth, fetchJobEvents, fetchJobStatus, fetchPreview, fetchProjectPreview, fetchProviders, generatePresentation, interruptGenerationAgent, isNotFoundError, refinePresentation, sendGenerationAgentFeedback, uploadPaper, createSourcesGroup, addFileSources, addTextSource, addUrlSource, getSourcesGroup, removeSource } from "../lib/api";
 import type {
   CriticEvent,
   GenerateRequestPayload,
@@ -16,6 +16,8 @@ import type {
   ResearchEnrichmentStats,
   ResearchConfig,
   UploadResponse,
+  SourcesGroupResponse,
+  SourceItem,
 } from "../lib/types";
 import { openJobSocket } from "../lib/ws";
 
@@ -139,6 +141,9 @@ type StoredRunSnapshot = Partial<RunSnapshot> & { jobId: string };
 
 interface GenerationState {
   uploadSession?: UploadResponse;
+  /** Multi-source group (NotebookLM-style Sources panel). Takes precedence
+   *  over uploadSession at generation time when non-empty. */
+  sourcesGroup?: SourcesGroupResponse;
   providers: ProviderListItem[];
   jobId?: string;
   job?: JobStatus;
@@ -161,6 +166,13 @@ interface GenerationState {
   loadProviders: () => Promise<void>;
   uploadFile: (file: File) => Promise<void>;
   clearUploadSession: () => Promise<void>;
+  // Multi-source (Sources panel)
+  initSourcesGroup: () => Promise<string>;
+  addFiles: (files: File[]) => Promise<void>;
+  addText: (payload: { label: string; text: string; role?: "primary" | "supplementary" }) => Promise<void>;
+  addUrl: (payload: { url: string; label?: string; role?: "primary" | "supplementary" }) => Promise<{ title: string; charCount: number } | undefined>;
+  removeSourceById: (sourceId: string) => Promise<void>;
+  clearSourcesGroup: () => Promise<void>;
   startGeneration: (payload: GenerateRequestPayload) => Promise<string>;
   startRefine: (payload: RefineRequestPayload) => Promise<string>;
   cancelCurrentRun: () => Promise<void>;
@@ -728,6 +740,55 @@ export const useGeneration = create<GenerationState>()(
           await deleteSession(sessionId).catch(() => undefined);
         }
         set({ uploadSession: undefined, error: undefined });
+      },
+      // ── Multi-source actions ──────────────────────────────────────────────
+      // Each action keeps sourcesGroup in sync with the backend. The group is
+      // created lazily on first add so an empty panel doesn't allocate a
+      // session until the user actually adds something.
+      async initSourcesGroup() {
+        let group = get().sourcesGroup;
+        if (!group) {
+          group = await createSourcesGroup();
+          set({ sourcesGroup: group, error: undefined });
+        }
+        return group.session_id;
+      },
+      async addFiles(files) {
+        const sessionId = await get().initSourcesGroup();
+        const group = await addFileSources(sessionId, files);
+        set({ sourcesGroup: group, error: undefined });
+      },
+      async addText(payload) {
+        const sessionId = await get().initSourcesGroup();
+        const group = await addTextSource(sessionId, payload);
+        set({ sourcesGroup: group, error: undefined });
+      },
+      async addUrl(payload) {
+        const sessionId = await get().initSourcesGroup();
+        try {
+          const result = await addUrlSource(sessionId, payload);
+          // addUrlSource returns the full group via the response's source, but
+          // refresh the whole group so ordering/status is consistent.
+          const group = await getSourcesGroup(sessionId);
+          set({ sourcesGroup: group, error: undefined });
+          return { title: result.title, charCount: result.char_count };
+        } catch (err) {
+          // Re-throw so the panel can show the backend's reason (e.g. bad URL).
+          throw err;
+        }
+      },
+      async removeSourceById(sourceId) {
+        const group = get().sourcesGroup;
+        if (!group) return;
+        const updated = await removeSource(group.session_id, sourceId);
+        set({ sourcesGroup: updated, error: undefined });
+      },
+      async clearSourcesGroup() {
+        const sessionId = get().sourcesGroup?.session_id;
+        if (sessionId) {
+          await deleteSession(sessionId).catch(() => undefined);
+        }
+        set({ sourcesGroup: undefined, error: undefined });
       },
       async startGeneration(payload) {
         const response = await generatePresentation(payload);
@@ -1734,6 +1795,7 @@ export const useGeneration = create<GenerationState>()(
         }) satisfies GenerationState,
       partialize: (state) => ({
         uploadSession: state.uploadSession,
+        sourcesGroup: state.sourcesGroup,
         jobId: state.jobId,
         job: state.job,
         connectionStatus: "disconnected",

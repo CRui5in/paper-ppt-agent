@@ -3,13 +3,36 @@ import { UploadCloud } from "lucide-react";
 import { useLocale } from "../../i18n";
 
 interface UploadZoneProps {
-  onFileSelect: (file: File) => void;
+  /** Single-file callback (legacy). Still fired when provided. */
+  onFileSelect?: (file: File) => void;
+  /** Multi-file callback (Sources panel). Preferred when present. */
+  onFilesSelect?: (files: File[]) => void;
+  /** Allowed extensions in the file picker. */
+  accept?: string;
+  /** Override the body copy under the title. */
+  bodyKey?: string;
 }
 
-export function UploadZone({ onFileSelect }: UploadZoneProps) {
+export function UploadZone({
+  onFileSelect,
+  onFilesSelect,
+  accept = ".pdf,.tex,.zip,.tgz,.tar.gz,.md,.markdown,.txt",
+  bodyKey = "upload.body",
+}: UploadZoneProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const { t } = useLocale();
   const [isDragging, setIsDragging] = useState(false);
+
+  const dispatch = (files: File[] | FileList | null | undefined) => {
+    if (!files || files.length === 0) return;
+    const list = Array.from(files);
+    if (onFilesSelect) {
+      onFilesSelect(list);
+    } else if (onFileSelect) {
+      // Legacy single-file behavior: only the first file.
+      onFileSelect(list[0]);
+    }
+  };
 
   return (
     <section className="panel panel-emphasis">
@@ -24,8 +47,7 @@ export function UploadZone({ onFileSelect }: UploadZoneProps) {
         onDrop={(e) => {
           e.preventDefault();
           setIsDragging(false);
-          const file = e.dataTransfer.files[0];
-          if (file) onFileSelect(file);
+          dispatch(e.dataTransfer.files);
         }}
         role="button"
         tabIndex={0}
@@ -34,18 +56,18 @@ export function UploadZone({ onFileSelect }: UploadZoneProps) {
           <UploadCloud size={40} color="var(--accent)" strokeWidth={1.5} />
           <div className="upload-copy" style={{ textAlign: "center" }}>
             <p className="panel-title">{t("upload.title")}</p>
-            <p className="muted-copy">{t("upload.body")}</p>
+            <p className="muted-copy">{t(bodyKey)}</p>
           </div>
         </div>
       </div>
       <input
         ref={inputRef}
         type="file"
-        accept=".pdf,.tex,.zip,.tgz,.tar.gz"
+        accept={accept}
+        multiple={Boolean(onFilesSelect)}
         className="hidden-input"
         onChange={(e) => {
-          const file = e.target.files?.[0];
-          if (file) onFileSelect(file);
+          dispatch(e.target.files);
           e.currentTarget.value = "";
         }}
       />

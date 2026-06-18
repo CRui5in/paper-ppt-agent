@@ -12,7 +12,6 @@ import {
   EyeOff,
   Image as ImageIcon,
   LoaderCircle,
-  Link as LinkIcon,
   Maximize2,
   MessageSquareText,
   Minus,
@@ -61,6 +60,8 @@ import type {
   ResearchEnrichmentStats,
   TemplateInfo,
   UploadResponse,
+  SourcesGroupResponse,
+  SourceItem,
 } from "../lib/types";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
@@ -132,6 +133,7 @@ export function GeneratePage() {
   const {
     providers,
     uploadSession,
+    sourcesGroup,
     jobId,
     job,
     slides,
@@ -147,6 +149,11 @@ export function GeneratePage() {
     loadProviders,
     uploadFile,
     clearUploadSession,
+    addFiles,
+    addText,
+    addUrl,
+    removeSourceById,
+    clearSourcesGroup,
     startGeneration,
     cancelCurrentRun,
     interruptCurrentAgent,
@@ -528,7 +535,12 @@ export function GeneratePage() {
   }, [job?.status, jobId, navigate]);
 
   const launchGeneration = async () => {
-    if (!uploadSession) {
+    // Multi-source group takes precedence over the legacy single-file session.
+    const activeSessionId =
+      sourcesGroup && sourcesGroup.sources.length > 0
+        ? sourcesGroup.session_id
+        : uploadSession?.session_id;
+    if (!activeSessionId) {
       return;
     }
     const normalizedModel = model.trim();
@@ -556,7 +568,7 @@ export function GeneratePage() {
             : undefined
         : undefined;
     const nextJobId = await startGeneration({
-      session_id: uploadSession.session_id,
+      session_id: activeSessionId,
       instruction,
       model_config: generationBackend === "provider"
         ? {
@@ -696,6 +708,7 @@ export function GeneratePage() {
         </div>
         <SourcesPanel
           uploadSession={uploadSession}
+          sourcesGroup={sourcesGroup}
           job={job}
           jobId={jobId}
           connectionStatus={connectionStatus}
@@ -707,6 +720,10 @@ export function GeneratePage() {
           locale={locale}
           onFileSelect={(file) => void uploadFile(file)}
           onSourceRemove={() => void clearUploadSession()}
+          onAddFiles={(files) => addFiles(files)}
+          onAddText={(payload) => addText(payload)}
+          onAddUrl={(payload) => addUrl(payload)}
+          onRemoveSource={(sourceId) => removeSourceById(sourceId)}
         />
 
         <SlideWorkspace
@@ -1684,6 +1701,7 @@ function formatGenerationTokens(value: number): string {
 
 function SourcesPanel({
   uploadSession,
+  sourcesGroup,
   job,
   jobId,
   connectionStatus,
@@ -1695,8 +1713,13 @@ function SourcesPanel({
   locale,
   onFileSelect,
   onSourceRemove,
+  onAddFiles,
+  onAddText,
+  onAddUrl,
+  onRemoveSource,
 }: {
   uploadSession?: UploadResponse;
+  sourcesGroup?: SourcesGroupResponse;
   job?: JobStatus;
   jobId?: string;
   connectionStatus: string;
@@ -1708,18 +1731,81 @@ function SourcesPanel({
   locale: "en" | "zh";
   onFileSelect: (file: File) => void;
   onSourceRemove: () => void;
+  onAddFiles?: (files: File[]) => Promise<void>;
+  onAddText?: (payload: { label: string; text: string; role?: "primary" | "supplementary" }) => Promise<void>;
+  onAddUrl?: (payload: { url: string; label?: string; role?: "primary" | "supplementary" }) => Promise<{ title: string; charCount: number } | undefined>;
+  onRemoveSource?: (sourceId: string) => Promise<void>;
 }) {
   const { t } = useLocale();
-  const sourceItems = uploadSession
-    ? [
-        {
-          name: uploadSession.file_info.name,
-          meta: `${uploadSession.file_info.source_type.toUpperCase()} · ${(uploadSession.file_info.size / 1024).toFixed(1)} KB`,
-          type: uploadSession.file_info.source_type.toLowerCase(),
-        },
-      ]
-    : [];
+
+  // Multi-source is the primary contract when a group exists with sources.
+  // Fall back to the legacy single-file uploadSession for old sessions / when
+  // the multi-source feature is not in use.
+  const useMultiSource = Boolean(sourcesGroup && sourcesGroup.sources.length > 0);
+
+  const sourceItems = useMultiSource
+    ? (sourcesGroup!.sources.map((s) => ({
+        id: s.id,
+        name: s.label,
+        meta: sourceMetaLine(s),
+        type: s.kind,
+      })))
+    : uploadSession
+      ? [
+          {
+            id: undefined as string | undefined,
+            name: uploadSession.file_info.name,
+            meta: `${uploadSession.file_info.source_type.toUpperCase()} · ${(uploadSession.file_info.size / 1024).toFixed(1)} KB`,
+            type: uploadSession.file_info.source_type.toLowerCase(),
+          },
+        ]
+      : [];
+
   const hasStartedTask = Boolean(jobId && job && job.status !== "idle");
+
+  // Local UI state for the paste-text and add-url sub-forms. These only mount
+  // in the editing (pre-generation) view, so they live here rather than in the
+  // global store.
+  const [activeTab, setActiveTab] = useState<"papers" | "links">("papers");
+  const [pasteText, setPasteText] = useState("");
+  const [pasteLabel, setPasteLabel] = useState("");
+  const [pasteBusy, setPasteBusy] = useState(false);
+  const [urlInput, setUrlInput] = useState("");
+  const [urlBusy, setUrlBusy] = useState(false);
+  const [urlError, setUrlError] = useState<string | undefined>();
+
+  const paperCount = sourceItems.length;
+
+  const handleAddText = async () => {
+    const text = pasteText.trim();
+    if (!text || !onAddText) return;
+    setPasteBusy(true);
+    try {
+      await onAddText({ label: pasteLabel.trim(), text });
+      setPasteText("");
+      setPasteLabel("");
+    } finally {
+      setPasteBusy(false);
+    }
+  };
+
+  const handleAddUrl = async () => {
+    const url = urlInput.trim();
+    if (!url || !onAddUrl) return;
+    setUrlBusy(true);
+    setUrlError(undefined);
+    try {
+      await onAddUrl({ url });
+      setUrlInput("");
+    } catch (err) {
+      // The backend returns a reason on 400 (bad URL / unreadable page).
+      const message = err instanceof Error ? err.message : String(err);
+      setUrlError(message);
+    } finally {
+      setUrlBusy(false);
+    }
+  };
+
   return (
     <Card className="sources-panel">
       <CardHeader className="workspace-panel-header">
@@ -1731,19 +1817,90 @@ function SourcesPanel({
       <CardContent className="sources-content">
       {!hasStartedTask ? (
         <>
-          <UploadZone onFileSelect={onFileSelect} />
-          <p className="source-limit-note">{t("source.limit")}</p>
-          <Tabs value="papers" className="w-full">
-            <TabsList className="source-tabs grid w-full grid-cols-3">
-              <TabsTrigger value="papers">{t("source.papers")} <span>{sourceItems.length}</span></TabsTrigger>
-              <HoverTooltip content={t("common.pending")}><TabsTrigger value="links" disabled>{t("source.links")} <span>0</span></TabsTrigger></HoverTooltip>
-              <HoverTooltip content={t("common.pending")}><TabsTrigger value="datasets" disabled>{t("source.datasets")} <span>0</span></TabsTrigger></HoverTooltip>
+          {useMultiSource ? (
+            <UploadZone onFilesSelect={(files) => { void onAddFiles?.(files); }} bodyKey="upload.body_multi" />
+          ) : (
+            <UploadZone onFileSelect={onFileSelect} />
+          )}
+          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "papers" | "links")} className="w-full">
+            <TabsList className="source-tabs grid w-full grid-cols-2">
+              <TabsTrigger value="papers">{t("source.papers")} <span>{paperCount}</span></TabsTrigger>
+              <TabsTrigger value="links">{t("source.links")} <span>{useMultiSource ? sourcesGroup!.sources.filter((s) => s.kind === "url").length : 0}</span></TabsTrigger>
             </TabsList>
+
+            {activeTab === "papers" && (
+              <div className="source-tab-body">
+                {/* Paste-text entry — only available in multi-source mode. */}
+                {useMultiSource && onAddText && (
+                  <div className="source-paste">
+                    <input
+                      className="source-paste-label"
+                      type="text"
+                      placeholder={t("source.text_label")}
+                      value={pasteLabel}
+                      onChange={(e) => setPasteLabel(e.target.value)}
+                    />
+                    <textarea
+                      className="source-paste-textarea"
+                      placeholder={t("source.paste_placeholder")}
+                      value={pasteText}
+                      rows={3}
+                      onChange={(e) => setPasteText(e.target.value)}
+                    />
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      type="button"
+                      disabled={!pasteText.trim() || pasteBusy}
+                      onClick={() => { void handleAddText(); }}
+                    >
+                      {pasteBusy ? t("source.fetching") : t("source.add_text")}
+                    </Button>
+                  </div>
+                )}
+                <SourceList
+                  sourceItems={sourceItems}
+                  onRemove={
+                    useMultiSource && onRemoveSource
+                      ? (item) => { if (item.id) { void onRemoveSource(item.id); } }
+                      : onSourceRemove
+                        ? () => { void onSourceRemove(); }
+                        : undefined
+                  }
+                />
+              </div>
+            )}
+
+            {activeTab === "links" && (
+              <div className="source-tab-body">
+                <div className="source-url-add">
+                  <input
+                    className="source-url-input"
+                    type="url"
+                    placeholder={t("source.url_label")}
+                    value={urlInput}
+                    onChange={(e) => setUrlInput(e.target.value)}
+                  />
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    type="button"
+                    disabled={!urlInput.trim() || urlBusy || !onAddUrl}
+                    onClick={() => { void handleAddUrl(); }}
+                  >
+                    {urlBusy ? t("source.fetching") : t("source.add_url")}
+                  </Button>
+                </div>
+                {urlError && <p className="source-url-error">{urlError}</p>}
+                <SourceList sourceItems={sourceItems.filter((i) => i.type === "url")} />
+                {!useMultiSource && (
+                  <p className="source-limit-note">{t("source.url_hint")}</p>
+                )}
+              </div>
+            )}
           </Tabs>
-          <SourceList sourceItems={sourceItems} onRemove={onSourceRemove} />
           <div className="source-footer">
-            <span>{sourceItems.length} / 1 source</span>
-            <HoverTooltip content="Multiple links are planned for a later version"><Button variant="secondary" size="sm" type="button" disabled><LinkIcon size={13} /> Add Link</Button></HoverTooltip>
+            <span>{t("source.count").replace("{n}", String(paperCount))}</span>
           </div>
         </>
       ) : (
@@ -1764,48 +1921,82 @@ function SourcesPanel({
   );
 }
 
+/** Build the secondary meta line (size / char count / url) for a source row. */
+function sourceMetaLine(s: SourceItem): string {
+  const kind = s.kind.toUpperCase();
+  if (s.kind === "url" && s.url) {
+    try {
+      const host = new URL(s.url).host;
+      return `${kind} · ${host} · ${s.char_count.toLocaleString()} chars`;
+    } catch {
+      return `${kind} · ${s.char_count.toLocaleString()} chars`;
+    }
+  }
+  if (s.kind === "text" || s.kind === "markdown") {
+    return `${kind} · ${s.char_count.toLocaleString()} chars`;
+  }
+  return `${kind} · ${(s.file_size / 1024).toFixed(1)} KB`;
+}
+
 function SourceList({
   sourceItems,
   compact = false,
   onRemove,
 }: {
-  sourceItems: Array<{ name: string; meta: string; type: string }>;
+  sourceItems: Array<{ id?: string; name: string; meta: string; type: string }>;
   compact?: boolean;
-  onRemove?: () => Promise<void> | void;
+  onRemove?: (item: { id?: string; name: string; meta: string; type: string }) => Promise<void> | void;
 }) {
   const { t } = useLocale();
   return (
     <div className={`source-list ${compact ? "source-list-compact" : ""}`}>
-      {sourceItems.length > 0 ? sourceItems.map((item) => (
-        <div className={`source-row ${onRemove ? "source-row-removable" : ""}`} key={item.name}>
-          <span className="source-row-leading">
-            <span className={`source-file-type source-file-${item.type.includes("doc") ? "doc" : "pdf"}`}>
-              {item.type.includes("doc") ? "DOC" : item.type.toUpperCase().slice(0, 3)}
+      {sourceItems.length > 0 ? sourceItems.map((item, index) => {
+        // Badge: map the source type to a short label + CSS color class so
+        // PDF/Markdown/Text/URL rows are visually distinguishable in the list.
+        const badge = sourceBadge(item.type);
+        return (
+          <div className={`source-row ${onRemove ? "source-row-removable" : ""}`} key={item.id ?? `${item.name}-${index}`}>
+            <span className="source-row-leading">
+              <span className={`source-file-type source-file-${badge.cls}`}>
+                {badge.label}
+              </span>
+              {onRemove ? (
+                <button
+                  type="button"
+                  className="source-remove-button"
+                  aria-label={t("versions.delete")}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    void onRemove(item);
+                  }}
+                >
+                  <X size={13} />
+                </button>
+              ) : null}
             </span>
-            {onRemove ? (
-              <button
-                type="button"
-                className="source-remove-button"
-                aria-label={t("versions.delete")}
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  void onRemove();
-                }}
-              >
-                <X size={13} />
-              </button>
-            ) : null}
-          </span>
-          <span className="source-row-copy">
-            <strong>{item.name}</strong>
-            <em>{item.meta}</em>
-          </span>
-          <CircleCheck size={15} className="source-check" />
-        </div>
-      )) : null}
+            <span className="source-row-copy">
+              <strong>{item.name}</strong>
+              <em>{item.meta}</em>
+            </span>
+            <CircleCheck size={15} className="source-check" />
+          </div>
+        );
+      }) : null}
     </div>
   );
+}
+
+/** Map a backend source kind to a (label, cssClass) badge. */
+function sourceBadge(type: string): { label: string; cls: string } {
+  const lower = type.toLowerCase();
+  if (lower.includes("pdf")) return { label: "PDF", cls: "pdf" };
+  if (lower.includes("doc") || lower.includes("latex") || lower.includes("tex")) return { label: "TEX", cls: "doc" };
+  if (lower.includes("md") || lower.includes("markdown")) return { label: "MD", cls: "md" };
+  if (lower.includes("text") || lower.includes("txt")) return { label: "TXT", cls: "txt" };
+  if (lower.includes("url") || lower.includes("link") || lower.includes("web")) return { label: "URL", cls: "link" };
+  if (lower.includes("mixed")) return { label: "MIX", cls: "md" };
+  return { label: type.toUpperCase().slice(0, 3) || "SRC", cls: "pdf" };
 }
 
 function SlideWorkspace({

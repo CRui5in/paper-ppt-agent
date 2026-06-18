@@ -2212,6 +2212,18 @@ body::before {
   background: #2563eb;
 }
 
+.source-file-md {
+  background: #6366f1;
+}
+
+.source-file-txt {
+  background: #64748b;
+}
+
+.source-file-link {
+  background: #0891b2;
+}
+
 .source-row-copy {
   min-width: 0;
   display: flex;
@@ -2247,6 +2259,71 @@ body::before {
   align-items: center;
   color: var(--muted-text);
   font-size: 12px;
+}
+
+/* ── Multi-source paste / URL sub-forms ──────────────────────────────────── */
+
+.source-tab-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 4px;
+}
+
+.source-paste {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.source-paste-label {
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--body-color);
+  font-size: 12px;
+}
+
+.source-paste-textarea {
+  min-height: 64px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--body-color);
+  font-size: 12px;
+  resize: vertical;
+  font-family: inherit;
+}
+
+.source-url-add {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.source-url-input {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--body-color);
+  font-size: 12px;
+}
+
+.source-url-error {
+  margin: 0;
+  color: #ef2424;
+  font-size: 11px;
 }
 
 .source-footer button,
