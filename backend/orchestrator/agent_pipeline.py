@@ -2084,18 +2084,28 @@ async def _prepare_agent_workspace(project_dir: Path, request: Any, agent_config
     sources_dir = project_dir / "sources"
     await aoffload(sources_dir.mkdir, parents=True, exist_ok=True)
     await aoffload((project_dir / "agent_feedback").mkdir, parents=True, exist_ok=True)
-    source_target = sources_dir / ("paper.pdf" if request.source_type == "pdf" else "latex_source")
-    input_path = Path(request.file_path)
-    source_target = await aoffload(
-        _copy_agent_source_input,
-        input_path,
-        source_target,
-        sources_dir,
-        str(request.source_type),
-    )
+
+    # Multi-source path: stage each Source into sources/<source_id>/ and let
+    # the agent read them all. The legacy single-file path stays untouched so
+    # existing PDF / LaTeX agent runs are byte-identical.
+    multi_sources = getattr(request, "sources", None)
+    if multi_sources:
+        staged = await _stage_agent_sources(sources_dir, list(multi_sources))
+        primary_target = staged[0][1] if staged else sources_dir
+    else:
+        source_target = sources_dir / ("paper.pdf" if request.source_type == "pdf" else "latex_source")
+        input_path = Path(request.file_path)
+        primary_target = await aoffload(
+            _copy_agent_source_input,
+            input_path,
+            source_target,
+            sources_dir,
+            str(request.source_type),
+        )
+        staged = None
 
     await aoffload(_copy_agent_skill, project_dir)
-    task = _build_agent_task(project_dir, source_target, request, agent_config)
+    task = _build_agent_task(project_dir, primary_target, request, agent_config, staged=staged)
     await awrite_text(
         project_dir / "agent_task.json",
         json.dumps(task, ensure_ascii=False, indent=2),
@@ -2103,6 +2113,53 @@ async def _prepare_agent_workspace(project_dir: Path, request: Any, agent_config
     )
     await _prepare_agent_source_assets(project_dir)
     await awrite_text(project_dir / "AGENT_README.md", _agent_readme(), encoding="utf-8")
+
+
+async def _stage_agent_sources(
+    sources_dir: Path, sources: list
+) -> list[tuple[str, Path]]:
+    """Materialize each multi-source item into sources/<id>/.
+
+    Returns ``[(source_id, path_for_agent_to_read), ...]`` in source order.
+    For pdf/latex the file is copied; for text/markdown the payload is written
+    as ``source.md``; for url the cached page.md (written at add time) is
+    copied if present, else the url is recorded for the agent to fetch.
+    """
+    from backend.parser.source_model import Source  # noqa: F401 — type only
+
+    staged: list[tuple[str, Path]] = []
+    for src in sources:
+        src_dir = sources_dir / src.id
+        await aoffload(src_dir.mkdir, parents=True, exist_ok=True)
+        if src.kind in ("pdf", "latex") and src.file_path is not None:
+            target = src_dir / Path(src.file_path).name
+            await aoffload(shutil.copy2, str(src.file_path), target)
+            staged.append((src.id, target))
+        elif src.kind == "url":
+            # The /api/sources/{sid}/url endpoint cached page.md at add time;
+            # copy it through so the agent reads deterministic content.
+            cached = None
+            if src.file_path is not None:
+                cached_candidate = Path(src.file_path).parent / "page.md"
+                if cached_candidate.exists():
+                    cached = cached_candidate
+            target = src_dir / "page.md"
+            if cached is not None:
+                await aoffload(shutil.copy2, str(cached), target)
+            else:
+                await awrite_text(
+                    target,
+                    f"# {src.label}\n\nSource URL: {src.url or ''}\n\n"
+                    f"{src.raw_text or '(no cached content; the agent should fetch the URL)'}\n",
+                    encoding="utf-8",
+                )
+            staged.append((src.id, target))
+        else:  # text / markdown
+            ext = ".md" if src.kind == "markdown" else ".txt"
+            target = src_dir / f"source{ext}"
+            await awrite_text(target, src.raw_text or "", encoding="utf-8")
+            staged.append((src.id, target))
+    return staged
 
 
 def _copy_agent_source_input(
@@ -2247,112 +2304,143 @@ def _copy_template_reference_for_agent(template: Any, project_dir: Path) -> None
     )
 
 
-def _build_agent_task(project_dir: Path, source_target: Path, request: Any, agent_config: dict[str, Any]) -> dict[str, Any]:
+def _build_agent_task(project_dir: Path, source_target: Path, request: Any, agent_config: dict[str, Any], staged: list[tuple[str, Path]] | None = None) -> dict[str, Any]:
     fmt = CANVAS_FORMATS.get(request.canvas_format, CANVAS_FORMATS["ppt169"])
     research_cfg = getattr(request, "research_config", None)
     research_payload = research_cfg.model_dump(exclude_none=True) if hasattr(research_cfg, "model_dump") else None
     public_research_payload = _public_agent_research_config(research_payload)
     detail_profile = _agent_detail_profile(getattr(request, "detail_level", "normal"), getattr(request, "num_pages", None))
-    return {
+    task: dict[str, Any] = {
         "task": "Generate an academic presentation from the uploaded paper using Agent mode.",
         "source": {
             "type": request.source_type,
             "path": _rel(project_dir, source_target),
         },
-        "output_contract": {
-            "manuscript": "manuscript.md",
-            "design_spec": "design_spec.md",
-            "slides_dir": "svg_output",
-            "slide_filename": "slide_001.svg, slide_002.svg, ...",
-            "notes_dir": "notes",
-            "report": "agent_report.json",
-        },
-        "presentation": {
-            "canvas_format": request.canvas_format,
-            "viewbox": fmt["viewbox"],
-            "width": fmt["width"],
-            "height": fmt["height"],
-            "language": request.language,
-            "target_pages": request.num_pages,
-            "style": request.style,
-            "template_id": request.template_id,
-            "user_instruction": request.instruction,
-            "style_overrides": request.style_overrides,
-            "detail_profile": detail_profile,
-        },
-        "agent_policy": {
-            "user_instruction_policy": {
-                "priority": "highest_product_requirement",
-                "technical_wrapper": (
-                    "The backend exports through SVG/PPTX artifacts, but that technical wrapper "
-                    "is an implementation constraint rather than a reason to ignore the user's "
-                    "requested visual direction."
-                ),
-                "conflict_resolution": (
-                    "When user wording conflicts with the SVG output format, preserve the user's "
-                    "underlying goal and adapt it into valid SVG/PPTX-compatible artifacts. For "
-                    "example, requests such as no SVG, image-only, GPT image, or more beautiful "
-                    "should become an image-led, polished visual system inside SVG slide wrappers."
-                ),
-                "status_language": (
-                    "Do not tell the user that the output contract overrides their preference. "
-                    "Briefly state the adapted plan in user terms."
-                ),
-            },
-            "do_not_call_backend_provider_models": True,
-            "icons_optional": True,
-            "generate_slides_in_parallel_when_useful": True,
-            "allow_external_research": bool(agent_config.get("allow_external_research")),
-            "allow_deep_research": bool(agent_config.get("allow_deep_research")),
-            "enable_visual_qa": bool(agent_config.get("enable_visual_qa", True)),
-            "external_research_skill": _RESEARCH_SKILL_NAME,
-            "deep_research_skill": "paper-ppt-deep-research",
-            "icon_policy": _agent_icon_policy(),
-            "layout_policy": _agent_layout_policy(),
-            "slide_authoring_policy": _agent_slide_authoring_policy(),
-            "factual_rendering_policy": _agent_factual_rendering_policy(),
-            "source_asset_policy": _agent_source_asset_policy(),
-            "subagent_policy": _agent_subagent_policy(request, agent_config, detail_profile),
-            "research_policy": _agent_research_policy(research_payload),
-            "research_gate": {
-                "enforced": True,
-                "blocks_authoring_until_complete": True,
-                "external_required_outputs": [
-                    "research/raw_external_results.json",
-                    "research/sources.json",
-                    "research/brief.md",
-                ],
-                "deep_required_outputs": [
-                    "research/deep/notes_index.json",
-                    "research/deep/brief.md",
-                ],
-            },
-        },
-        "research_config": public_research_payload,
-        "paths": {
-            "workspace": str(project_dir),
-            "skill": str(project_dir / "skills" / _AGENT_SKILL_NAME / "SKILL.md"),
-            "external_research_skill": str(project_dir / "skills" / _RESEARCH_SKILL_NAME / "SKILL.md"),
-            "deep_research_skill": str(project_dir / "skills" / "paper-ppt-deep-research" / "SKILL.md"),
-            "python": str(_agent_python_path()),
-            "icons": _rel(project_dir, settings.icons_dir),
-            "templates": _rel(project_dir, project_dir / "templates"),
-            "selected_template": f"templates/{request.template_id}" if request.template_id else None,
-            "source_assets": "source_assets",
-            "source_asset_extractor": f"skills/{_AGENT_SKILL_NAME}/scripts/extract_paper_assets.py",
-            "source_paper_markdown": "source_assets/paper.md",
-            "source_figures_json": "source_assets/figures.json",
-            "source_figures_markdown": "source_assets/figures.md",
-            "source_images": "source_assets/images",
-            "feedback_dir": "agent_feedback",
-            "external_research_script": f"skills/{_RESEARCH_SKILL_NAME}/scripts/search_research.py",
-            "deep_research_notes_script": "skills/paper-ppt-deep-research/scripts/compile_deep_notes.py",
-            "research_brief": "research/brief.md",
-            "research_sources": "research/sources.json",
-            "external_research_summary": "research/external_search_summary.json",
-            "deep_research_brief": "research/deep/brief.md",
-        },
     }
+    if staged:
+        # Multi-source: surface the full ordered list to the agent so it can
+        # read, compare, and synthesize across sources. ``source`` (the primary
+        # entry) is kept for backward compatibility with the skill's existing
+        # readers; ``sources`` is the authoritative multi-input contract.
+        source_objs = {s.id: s for s in (getattr(request, "sources", None) or [])}
+        task["sources"] = []
+        for src_id, path in staged:
+            obj = source_objs.get(src_id)
+            task["sources"].append(
+                {
+                    "id": src_id,
+                    "path": _rel(project_dir, path),
+                    "label": getattr(obj, "label", src_id),
+                    "kind": getattr(obj, "kind", None),
+                    "role": getattr(obj, "role", "primary"),
+                }
+            )
+        task["multi_source_guidance"] = (
+            "This workspace contains multiple input sources (see 'sources'). "
+            "Read all of them before planning. Treat each source's content as "
+            "grounded material; synthesize across them and attribute facts to "
+            "their source. The first source in the list is primary unless a "
+            "source's role is 'supplementary'."
+        )
+
+    task.update(
+        {
+            "output_contract": {
+                "manuscript": "manuscript.md",
+                "design_spec": "design_spec.md",
+                "slides_dir": "svg_output",
+                "slide_filename": "slide_001.svg, slide_002.svg, ...",
+                "notes_dir": "notes",
+                "report": "agent_report.json",
+            },
+            "presentation": {
+                "canvas_format": request.canvas_format,
+                "viewbox": fmt["viewbox"],
+                "width": fmt["width"],
+                "height": fmt["height"],
+                "language": request.language,
+                "target_pages": request.num_pages,
+                "style": request.style,
+                "template_id": request.template_id,
+                "user_instruction": request.instruction,
+                "style_overrides": request.style_overrides,
+                "detail_profile": detail_profile,
+            },
+            "agent_policy": {
+                "user_instruction_policy": {
+                    "priority": "highest_product_requirement",
+                    "technical_wrapper": (
+                        "The backend exports through SVG/PPTX artifacts, but that technical wrapper "
+                        "is an implementation constraint rather than a reason to ignore the user's "
+                        "requested visual direction."
+                    ),
+                    "conflict_resolution": (
+                        "When user wording conflicts with the SVG output format, preserve the user's "
+                        "underlying goal and adapt it into valid SVG/PPTX-compatible artifacts. For "
+                        "example, requests such as no SVG, image-only, GPT image, or more beautiful "
+                        "should become an image-led, polished visual system inside SVG slide wrappers."
+                    ),
+                    "status_language": (
+                        "Do not tell the user that the output contract overrides their preference. "
+                        "Briefly state the adapted plan in user terms."
+                    ),
+                },
+                "do_not_call_backend_provider_models": True,
+                "icons_optional": True,
+                "generate_slides_in_parallel_when_useful": True,
+                "allow_external_research": bool(agent_config.get("allow_external_research")),
+                "allow_deep_research": bool(agent_config.get("allow_deep_research")),
+                "enable_visual_qa": bool(agent_config.get("enable_visual_qa", True)),
+                "external_research_skill": _RESEARCH_SKILL_NAME,
+                "deep_research_skill": "paper-ppt-deep-research",
+                "icon_policy": _agent_icon_policy(),
+                "layout_policy": _agent_layout_policy(),
+                "slide_authoring_policy": _agent_slide_authoring_policy(),
+                "factual_rendering_policy": _agent_factual_rendering_policy(),
+                "source_asset_policy": _agent_source_asset_policy(),
+                "subagent_policy": _agent_subagent_policy(request, agent_config, detail_profile),
+                "research_policy": _agent_research_policy(research_payload),
+                "research_gate": {
+                    "enforced": True,
+                    "blocks_authoring_until_complete": True,
+                    "external_required_outputs": [
+                        "research/raw_external_results.json",
+                        "research/sources.json",
+                        "research/brief.md",
+                    ],
+                    "deep_required_outputs": [
+                        "research/deep/notes_index.json",
+                        "research/deep/brief.md",
+                    ],
+                },
+            },
+            "research_config": public_research_payload,
+            "paths": {
+                "workspace": str(project_dir),
+                "skill": str(project_dir / "skills" / _AGENT_SKILL_NAME / "SKILL.md"),
+                "external_research_skill": str(project_dir / "skills" / _RESEARCH_SKILL_NAME / "SKILL.md"),
+                "deep_research_skill": str(project_dir / "skills" / "paper-ppt-deep-research" / "SKILL.md"),
+                "python": str(_agent_python_path()),
+                "icons": _rel(project_dir, settings.icons_dir),
+                "templates": _rel(project_dir, project_dir / "templates"),
+                "selected_template": f"templates/{request.template_id}" if request.template_id else None,
+                "source_assets": "source_assets",
+                "source_asset_extractor": f"skills/{_AGENT_SKILL_NAME}/scripts/extract_paper_assets.py",
+                "source_paper_markdown": "source_assets/paper.md",
+                "source_figures_json": "source_assets/figures.json",
+                "source_figures_markdown": "source_assets/figures.md",
+                "source_images": "source_assets/images",
+                "feedback_dir": "agent_feedback",
+                "external_research_script": f"skills/{_RESEARCH_SKILL_NAME}/scripts/search_research.py",
+                "deep_research_notes_script": "skills/paper-ppt-deep-research/scripts/compile_deep_notes.py",
+                "research_brief": "research/brief.md",
+                "research_sources": "research/sources.json",
+                "external_research_summary": "research/external_search_summary.json",
+                "deep_research_brief": "research/deep/brief.md",
+            },
+        }
+    )
+    return task
 
 
 def _agent_runtime_env(
