@@ -114,7 +114,7 @@ class GenerationRequest:
     """Request parameters for paper-to-PPT generation."""
 
     file_path: Path
-    source_type: Literal["pdf", "latex"]
+    source_type: Literal["pdf", "latex", "text", "markdown", "url", "mixed"]
     provider: str  # "openai", "anthropic", "gemini"
     model: str
     api_key: str
@@ -141,11 +141,37 @@ class GenerationRequest:
     job_id: str | None = None
     generation_backend: Literal["provider", "agent"] = "provider"
     agent_config: dict | None = None
+    # Session id used to write post-parse source status back to the Sources
+    # panel. Optional — direct programmatic invocations may omit it.
+    session_id: str | None = None
+    # Multi-source list. When non-empty, the provider path runs each Source
+    # through the dispatcher and merges them via backend.parser.merger; the
+    # agent path stages every source into the workspace. Legacy single-file
+    # requests leave this None and fall back to file_path/source_type.
+    sources: list | None = None
 
 
 def _effective_deep_research(request: GenerationRequest) -> bool:
     """Return whether the user explicitly requested multi-pass research."""
     return bool(request.enable_deep_research)
+
+
+def _persist_source_parse_status(request: GenerationRequest, updated_sources: list) -> None:
+    """Write the merged sources' post-parse status back to the session.
+
+    Best-effort: if the session manager / session id can't be resolved (e.g.
+    a pipeline invoked directly without an HTTP layer), this is a no-op.
+    """
+    try:
+        from backend.session.manager import session_manager
+
+        session_id = getattr(request, "session_id", None) or ""
+        if not session_id:
+            return
+        for src in updated_sources:
+            session_manager.update_source(session_id, src)
+    except Exception:  # noqa: BLE001 — never let telemetry fail the run
+        pass
 
 
 async def run_pipeline(
@@ -224,13 +250,61 @@ async def run_pipeline(
         )
 
         output_dir = project_dir / "sources"
-        if request.source_type == "pdf":
-            parser = PDFParser()
-        else:
-            parser = LaTeXParser()
 
-        async with heavy_stage_slot():
-            paper = await parser.parse(request.file_path, output_dir)
+        # Multi-source path: when ``request.sources`` is populated, parse each
+        # through the dispatcher and merge into one ParsedPaper (figures
+        # namespaced, attribution headings, fault-tolerant). Otherwise fall
+        # back to the legacy single-file parse so existing behavior is byte-
+        # identical for single-PDF / single-LaTeX requests.
+        from backend.parser.merger import merge_sources
+
+        parse_info: dict = {}
+
+        async def _emit_parse_progress(src, phase: str) -> None:
+            logger.debug("source %s parse phase: %s", getattr(src, "id", "?"), phase)
+
+        if request.sources:
+            yield ProgressEvent(
+                "parsing",
+                "started",
+                f"Parsing {len(request.sources)} sources...",
+                0.05,
+            )
+            async with heavy_stage_slot():
+                paper, updated_sources = await merge_sources(
+                    list(request.sources),
+                    project_dir,
+                    on_progress=_emit_parse_progress,
+                )
+            # Persist the resolved source statuses back onto the session so
+            # the Sources panel can show parse failures after the run.
+            _persist_source_parse_status(request, updated_sources)
+            failed = [s for s in updated_sources if s.parse_status == "error"]
+            if failed:
+                complete_msg = (
+                    f"Parsed {paper.title} "
+                    f"({len(failed)} source(s) failed and were skipped)"
+                )
+            else:
+                complete_msg = f"Parsed: {paper.title}"
+        else:
+            if request.source_type == "pdf":
+                parser = PDFParser()
+            else:
+                parser = LaTeXParser()
+
+            async with heavy_stage_slot():
+                paper = await parser.parse(request.file_path, output_dir)
+            if request.source_type == "pdf":
+                parse_info = dict(
+                    getattr(parser, "last_parse_info", None)
+                    or getattr(type(parser), "last_parse_info", None)
+                    or {}
+                )
+            complete_msg = f"Parsed: {paper.title}"
+            if parse_info.get("fallback"):
+                complete_msg += " (PDF parse fallback used)"
+
         provider_memory = build_provider_memory(paper)
         await aoffload(
             save_provider_memory,
@@ -238,17 +312,6 @@ async def run_pipeline(
             project_dir / "provider_memory",
         )
 
-        parse_info: dict = {}
-        if request.source_type == "pdf":
-            parse_info = dict(
-                getattr(parser, "last_parse_info", None)
-                or getattr(type(parser), "last_parse_info", None)
-                or {}
-            )
-
-        complete_msg = f"Parsed: {paper.title}"
-        if parse_info.get("fallback"):
-            complete_msg += " (PDF parse fallback used)"
         yield ProgressEvent(
             "parsing",
             "complete",

@@ -372,6 +372,11 @@ async def generate_presentation(request: GenerateRequest) -> GenerateResponse:
         job_id=job.id,
         generation_backend=generation_backend,
         agent_config=agent_config_payload,
+        session_id=session.id,
+        # Only pass the multi-source list when the session actually carries
+        # one; legacy single-file sessions have an empty list and should keep
+        # using file_path/source_type (byte-identical behavior).
+        sources=list(session.sources) if session.sources else None,
     )
 
     if generation_backend == "provider":

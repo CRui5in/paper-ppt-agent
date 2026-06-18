@@ -110,22 +110,34 @@ def _merge_failed_section(src: Source) -> list[PaperSection]:
 def _pick_title_abstract(sources: list[Source], papers: list[ParsedPaper | None]) -> tuple[str, list[str], str]:
     """Title/authors/abstract for the merged corpus.
 
-    Prefer the first primary *pdf* source (it has reliable metadata); fall
-    back to the first successfully-parsed source; otherwise synthesize from
-    the source list.
+    Prefer the first primary *pdf/latex* source — those carry reliable
+    metadata (real title, authors, abstract). For synthetic corpora (notes,
+    pasted text, markdown) the per-source ``paper.title`` is usually just the
+    first body line, so prefer the user-chosen source label as the corpus
+    title and keep the first parsed abstract.
     """
     for src, paper in zip(sources, papers):
         if paper is None or src.role != "primary":
             continue
         if src.kind in ("pdf", "latex"):
             return paper.title, list(paper.authors), paper.abstract
+
+    # Synthetic corpus: synthesize a readable title from the source list, but
+    # preserve the first parsed abstract (still useful for the research agent).
+    abstract = ""
     for src, paper in zip(sources, papers):
-        if paper is not None:
-            return paper.title, list(paper.authors), paper.abstract
-    # Nothing parsed at all.
-    if sources:
-        return sources[0].label, [], ""
-    return "Multi-source document", [], ""
+        if paper is not None and paper.abstract:
+            abstract = paper.abstract
+            break
+    primary = [s for s in sources if s.role == "primary"]
+    head = primary or sources
+    if head:
+        first = head[0]
+        if len(head) == 1:
+            return first.label, [], abstract
+        # Multiple synthetic sources → a generic but honest title.
+        return f"{first.label} (+{len(head) - 1} more)", [], abstract
+    return "Multi-source document", [], abstract
 
 
 def _merge_figure_manifests(
