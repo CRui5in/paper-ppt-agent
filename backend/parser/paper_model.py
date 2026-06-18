@@ -74,7 +74,11 @@ class ParsedPaper:
     abstract: str = ""
     sections: list[PaperSection] = field(default_factory=list)
     references: list[str] = field(default_factory=list)
-    source_type: Literal["pdf", "latex"] = "pdf"
+    # ``text``/``markdown``/``url`` come from the lightweight multi-source
+    # parsers; ``mixed`` marks a corpus produced by merging several sources
+    # (see backend.parser.merger). Downstream code only reads title/abstract/
+    # sections/to_markdown()/all_figures(), so new kinds are additive.
+    source_type: Literal["pdf", "latex", "text", "markdown", "url", "mixed"] = "pdf"
     figures_dir: Path | None = None
 
     def all_figures(self) -> list[PaperFigure]:

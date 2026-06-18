@@ -134,6 +134,16 @@ class Settings(BaseSettings):
     pandoc_timeout: int = 60
     pdflatex_timeout: int = 90
     cairosvg_timeout: int = 30
+    # ── Multi-source URL fetching ────────────────────────────────────────
+    # Per-request timeout for the url source's HTTP fetch. Matches the web
+    # research reader in research_enrichment (20s) so a slow site doesn't
+    # stall the whole pipeline.
+    url_fetch_timeout: float = 20.0
+    # Cap on downloaded HTML before trafilatura extraction. Protects against
+    # accidental multi-MB pages; the extracted body is typically far smaller.
+    url_fetch_max_bytes: int = 5_000_000
+    # Hard cap on sources per session (papers + pasted text + urls combined).
+    max_sources_per_session: int = 20
     # Number of parallel equation renders allowed in flight.
     equation_render_concurrency: int = 4
     agent_runtime_ready_timeout: int = 30
