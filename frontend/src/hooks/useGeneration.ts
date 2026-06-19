@@ -18,6 +18,7 @@ import type {
   UploadResponse,
   SourcesGroupResponse,
   SourceItem,
+  SourceType,
 } from "../lib/types";
 import { openJobSocket } from "../lib/ws";
 
@@ -116,6 +117,10 @@ interface RunConfigSnapshot {
 interface RunSnapshot {
   jobId: string;
   uploadSession?: UploadResponse;
+  /** Multi-source group snapshot at generation time, so a run can be
+   *  resumed / displayed in history with its source list intact even when
+   *  the user has since cleared the Sources panel. */
+  sourcesGroup?: SourcesGroupResponse;
   job?: JobStatus;
   slides: PreviewSlide[];
   logs: string[];
@@ -251,6 +256,25 @@ function upsertHistoryItem(history: GenerationHistoryItem[], item: GenerationHis
     .slice(0, HISTORY_STORAGE_LIMIT);
 }
 
+/** Summarize a multi-source group into a single display file name for the
+ *  history list (e.g. "paper.pdf + 2 more"). Returns undefined when there's
+ *  no group, so callers fall through to the legacy uploadSession/jobId. */
+function deriveRunFileNameFromSources(group?: SourcesGroupResponse): string | undefined {
+  if (!group || group.sources.length === 0) return undefined;
+  const first = group.sources[0].label;
+  if (group.sources.length === 1) return first;
+  return `${first} +${group.sources.length - 1} more`;
+}
+
+/** Pick a representative source_type for a multi-source run. "mixed" when
+ *  there's more than one distinct kind; otherwise the single kind. */
+function deriveRunSourceTypeFromSources(group?: SourcesGroupResponse): SourceType | undefined {
+  if (!group || group.sources.length === 0) return undefined;
+  const kinds = new Set(group.sources.map((s) => s.kind));
+  if (kinds.size === 1) return group.sources[0].kind;
+  return "mixed";
+}
+
 function buildHistoryItemFromRun(history: GenerationHistoryItem[], run?: RunSnapshot) {
   if (!run) {
     return undefined;
@@ -269,8 +293,15 @@ function buildHistoryItemFromRun(history: GenerationHistoryItem[], run?: RunSnap
 
   return {
     jobId: run.jobId,
-    fileName: run.uploadSession?.file_info.name ?? existing?.fileName ?? run.jobId,
-    sourceType: run.uploadSession?.file_info.source_type ?? existing?.sourceType,
+    fileName:
+      run.uploadSession?.file_info.name ??
+      deriveRunFileNameFromSources(run.sourcesGroup) ??
+      existing?.fileName ??
+      run.jobId,
+    sourceType:
+      run.uploadSession?.file_info.source_type ??
+      deriveRunSourceTypeFromSources(run.sourcesGroup) ??
+      existing?.sourceType,
     status,
     slideCount,
     createdAt: existing?.createdAt ?? existing?.updatedAt ?? now,
@@ -386,6 +417,7 @@ function createRunSnapshot(
   return {
     jobId,
     uploadSession: params?.uploadSession,
+    sourcesGroup: params?.sourcesGroup,
     job: params?.job,
     slides: params?.slides ?? [],
     criticEvents: params?.criticEvents ?? [],
@@ -526,6 +558,7 @@ function applyRunToCurrent(run?: RunSnapshot) {
   const criticEvents = Array.isArray(run.criticEvents) ? run.criticEvents : [];
   return {
     uploadSession: run.uploadSession,
+    sourcesGroup: run.sourcesGroup,
     jobId: run.jobId,
     job: run.job,
     slides,
@@ -568,6 +601,7 @@ function serializeRunsForStorage(
       {
         jobId,
         uploadSession: run.uploadSession,
+        sourcesGroup: run.sourcesGroup,
         job: run.job,
         logs: run.logs.slice(-PERSISTED_RUN_LOG_LIMIT),
         agentMessages: run.agentMessages.slice(-PERSISTED_RUN_LOG_LIMIT),
@@ -586,6 +620,7 @@ function serializeRunsForStorage(
 function normalizeStoredRun(jobId: string, run?: Partial<RunSnapshot>): RunSnapshot {
   return createRunSnapshot(jobId, {
     uploadSession: run?.uploadSession,
+    sourcesGroup: run?.sourcesGroup,
     job: run?.job,
     slides: [],
     logs: Array.isArray(run?.logs)
@@ -628,6 +663,7 @@ function normalizePersistedGenerationFields(persistedState: unknown): Partial<Ge
 
   return {
     uploadSession: state.uploadSession,
+    sourcesGroup: state.sourcesGroup,
     jobId: state.jobId,
     job: state.job,
     error: state.error,
@@ -795,6 +831,7 @@ export const useGeneration = create<GenerationState>()(
         const initialJob = await fetchJobStatus(response.job_id).catch(() => undefined);
         const run = createRunSnapshot(response.job_id, {
           uploadSession: get().uploadSession,
+          sourcesGroup: get().sourcesGroup,
           job: {
             status: initialJob?.status ?? "parsing",
             progress: initialJob?.progress ?? 0,
@@ -844,6 +881,10 @@ export const useGeneration = create<GenerationState>()(
       async startRefine(payload) {
         const response = await refinePresentation(payload);
         const existingParent = get().history.find((entry) => entry.jobId === payload.job_id);
+        // Carry the parent run's multi-source group forward so a refined run
+        // still shows its full source list. Falls back to reconstructing a
+        // legacy single-file uploadSession from history metadata.
+        const parentRun = get().runs[payload.job_id];
         const run = createRunSnapshot(response.job_id, {
           uploadSession: existingParent?.sourceType
             ? {
@@ -855,6 +896,7 @@ export const useGeneration = create<GenerationState>()(
                 },
               }
             : undefined,
+          sourcesGroup: parentRun?.sourcesGroup,
           job: {
             status: response.status,
             progress: 0,
