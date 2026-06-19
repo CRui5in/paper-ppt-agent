@@ -1738,12 +1738,18 @@ function SourcesPanel({
 }) {
   const { t } = useLocale();
 
-  // Multi-source is the primary contract when a group exists with sources.
-  // Fall back to the legacy single-file uploadSession for old sessions / when
-  // the multi-source feature is not in use.
-  const useMultiSource = Boolean(sourcesGroup && sourcesGroup.sources.length > 0);
+  // A multi-source group exists once the user has added at least one source
+  // (or started adding one). We enter "multi-source mode" as soon as we're
+  // NOT in the legacy single-file path — i.e. whenever there's no old
+  // uploadSession, OR a sourcesGroup already exists. This is what unblocks
+  // the paste-text / multi-file / URL inputs before the first source is
+  // added (otherwise they could never appear, since adding the first source
+  // is exactly what creates the group).
+  const hasLegacyUpload = Boolean(uploadSession);
+  const hasSourcesGroup = Boolean(sourcesGroup && sourcesGroup.sources.length > 0);
+  const useMultiSource = hasSourcesGroup || !hasLegacyUpload;
 
-  const sourceItems = useMultiSource
+  const sourceItems = hasSourcesGroup
     ? (sourcesGroup!.sources.map((s) => ({
         id: s.id,
         name: s.label,
@@ -1825,7 +1831,7 @@ function SourcesPanel({
           <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "papers" | "links")} className="w-full">
             <TabsList className="source-tabs grid w-full grid-cols-2">
               <TabsTrigger value="papers">{t("source.papers")} <span>{paperCount}</span></TabsTrigger>
-              <TabsTrigger value="links">{t("source.links")} <span>{useMultiSource ? sourcesGroup!.sources.filter((s) => s.kind === "url").length : 0}</span></TabsTrigger>
+              <TabsTrigger value="links">{t("source.links")} <span>{sourcesGroup?.sources.filter((s) => s.kind === "url").length ?? 0}</span></TabsTrigger>
             </TabsList>
 
             {activeTab === "papers" && (
