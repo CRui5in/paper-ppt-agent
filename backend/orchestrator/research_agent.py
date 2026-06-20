@@ -57,8 +57,9 @@ LEGACY_PROMPT = PROMPTS_DIR / "research.md"
 DEEPSEEK_MAX_TOKENS = 24576
 MAX_MANUSCRIPT_ATTEMPTS = 3
 SINGLE_PASS_SYSTEM_PROMPT = (
-    "You write slide-structured manuscripts from academic papers. "
-    "Extract the paper's problem, method, evidence, and takeaway; turn them into "
+    "You write slide-structured manuscripts from research source corpora. "
+    "Extract the sources' problems, methods, evidence, agreements, differences, "
+    "and takeaways; turn them into "
     "a clear slide sequence. Output only the manuscript, separated by standalone "
     "`---` lines."
 )
@@ -79,6 +80,42 @@ _REVIEW_HEADING_RE = re.compile(
 )
 _FIG_TOKEN_RE = re.compile(r"\[\[FIG:([A-Za-z0-9_\-]+)\]\]")
 _INTERNAL_EVIDENCE_ID_RE = re.compile(r"`?\bs\d{2,}[ct]\d{2,}\b`?", re.IGNORECASE)
+_SOURCE_CITATION_RE = re.compile(
+    r"<!--\s*sources?\s*:\s*([^>]+?)\s*-->",
+    re.IGNORECASE,
+)
+_SOURCE_REF_RE = re.compile(r"\bS\d+\b", re.IGNORECASE)
+
+
+def _is_multi_source_corpus(paper: ParsedPaper) -> bool:
+    return paper.source_type == "mixed" and len(paper.source_manifest) > 1
+
+
+def _multi_source_contract(paper: ParsedPaper) -> str:
+    if not _is_multi_source_corpus(paper):
+        return ""
+    rows = []
+    for index, source in enumerate(paper.source_manifest, 1):
+        ref = str(source.get("ref") or f"S{index}")
+        label = str(source.get("label") or "Untitled source")
+        title = str(source.get("title") or "").strip()
+        kind = str(source.get("kind") or "unknown")
+        title_suffix = f" — {title}" if title and title != label else ""
+        rows.append(f"- {ref}: {label}{title_suffix} ({kind})")
+    return (
+        "## Multi-Source Synthesis Contract\n\n"
+        "Treat the entries below as peer research inputs, not as one main paper plus "
+        "attachments. Build the deck around a cross-source question and synthesize "
+        "agreements, differences, complementary evidence, and limitations. Do not let "
+        "source order determine emphasis. Every successfully parsed source must affect "
+        "the narrative, and at least one content slide must combine evidence from two "
+        "or more sources.\n\n"
+        "At the end of every content slide, add one invisible provenance comment using "
+        "only the source references that materially support that slide, for example "
+        "`<!-- sources: S1, S3 -->`. These comments are required for coverage validation "
+        "but are not visible slide text.\n\n"
+        + "\n".join(rows)
+    )
 
 
 def _debug_write_text(debug_dir: Path | None, filename: str, content: str) -> None:
@@ -304,11 +341,15 @@ async def _run_single_pass_analysis(
 ) -> str:
     """Generate a slide manuscript for the non-deep mode."""
     paper_context = paper_markdown or paper.to_markdown()
+    corpus_label = "Source Corpus Working Memory" if _is_multi_source_corpus(paper) else "Paper Working Memory"
     user_parts = [
-        f"## Paper Working Memory\n\n{paper_context}",
+        f"## {corpus_label}\n\n{paper_context}",
         f"\n## Target Language\n\n{language}\n\n{_language_guidance(language)}",
         f"\n## Target Slides\n\n{_target_slides_guidance(num_pages, detail_level)}",
     ]
+    multi_source_contract = _multi_source_contract(paper)
+    if multi_source_contract:
+        user_parts.append(f"\n{multi_source_contract}")
     figure_inventory = _figure_token_inventory_block(paper)
     if figure_inventory:
         user_parts.append(f"\n{figure_inventory}")
@@ -319,7 +360,7 @@ async def _run_single_pass_analysis(
     user_parts.append(
         "\n\n## Internal Structure Planning Contract\n\n"
         "Before writing the manuscript, internally allocate the deck into coherent "
-        "chapter groups based on your understanding of the paper's content, not a "
+        "chapter groups based on your understanding of the source corpus, not a "
         "fixed template. Chapter titles should reflect the paper's real conceptual "
         "blocks, argument stages, mechanisms, evidence clusters, or contribution "
         "logic. Slide 2 is the mandatory table of contents and must list the final "
@@ -650,6 +691,50 @@ def _manuscript_figure_token_error(manuscript: str, paper: ParsedPaper) -> str |
     )
 
 
+def _manuscript_source_coverage_error(
+    manuscript: str,
+    paper: ParsedPaper,
+) -> str | None:
+    if not _is_multi_source_corpus(paper):
+        return None
+
+    valid_refs = {
+        str(source.get("ref") or f"S{index}").upper()
+        for index, source in enumerate(paper.source_manifest, 1)
+        if str(source.get("status") or "ok") == "ok"
+    }
+    if len(valid_refs) < 2:
+        return None
+
+    citation_groups = []
+    for raw_group in _SOURCE_CITATION_RE.findall(manuscript):
+        refs = {ref.upper() for ref in _SOURCE_REF_RE.findall(raw_group)}
+        valid_group = refs.intersection(valid_refs)
+        if valid_group:
+            citation_groups.append(valid_group)
+
+    used_refs = set().union(*citation_groups) if citation_groups else set()
+    required_count = len(valid_refs)
+    missing = sorted(valid_refs - used_refs)
+    errors: list[str] = []
+    if len(used_refs) < required_count:
+        errors.append(
+            f"multi-source coverage is {len(used_refs)}/{len(valid_refs)}; "
+            f"cite at least {required_count} sources using invisible "
+            "`<!-- sources: S1, S2 -->` comments"
+        )
+        if missing:
+            errors.append("missing source references: " + ", ".join(missing))
+    if citation_groups and not any(len(group) >= 2 for group in citation_groups):
+        errors.append(
+            "no content slide combines multiple sources; at least one provenance "
+            "comment must cite two or more materially used sources"
+        )
+    elif not citation_groups:
+        errors.append("no multi-source provenance comments were found")
+    return "; ".join(errors) or None
+
+
 def _manuscript_validation_error(
     manuscript: str,
     paper: ParsedPaper,
@@ -658,9 +743,9 @@ def _manuscript_validation_error(
 ) -> str | None:
     structure_error = _manuscript_structure_error(manuscript, num_pages, detail_level)
     figure_error = _manuscript_figure_token_error(manuscript, paper)
-    if structure_error and figure_error:
-        return f"{structure_error}; {figure_error}"
-    return structure_error or figure_error
+    source_error = _manuscript_source_coverage_error(manuscript, paper)
+    errors = [error for error in (structure_error, figure_error, source_error) if error]
+    return "; ".join(errors) or None
 
 
 def _structure_retry_prompt(
@@ -673,6 +758,7 @@ def _structure_retry_prompt(
         f"{error}.\n\n"
         "Regenerate the full slide manuscript only. Preserve the visible content and evidence as closely as possible.\n"
         "If the error mentions paper figure tokens, replace invalid tokens with exact tokens from the Valid Paper Figure Tokens list, or omit the real figure when no listed token matches.\n"
+        "If the error mentions multi-source coverage, revise the actual narrative so the missing sources contribute evidence, then add accurate invisible `<!-- sources: S1, S2 -->` comments to content slides. Do not add source references without using their evidence.\n"
         "Use valid standalone slide separators and explicit page_type metadata. Slide 1 must be cover, slide 2 must be the mandatory table of contents, and the final slide must be ending when the page budget requires it.\n"
         f"{page_type_budget_guidance(num_pages, detail_level)}"
     )
@@ -729,17 +815,24 @@ async def analyze_paper(
 
     if not enable_deep_research:
         context_meta: dict[str, object] = {
-            "mode": "full_first",
+            "mode": "full_multi_source_no_truncation" if _is_multi_source_corpus(paper) else "full_first",
             "manuscript_selected": "full",
-            "manuscript_reason": "default_full_parsed_paper",
+            "manuscript_reason": "complete_source_corpus",
             "full_chars": len(paper_md),
             "compact_chars": len(compact_paper_md),
             "compact_available": bool(compact_paper_md.strip()),
             "compact_truncated": "[Compact paper memory truncated here.]" in compact_paper_md,
         }
-        repair_source = _figure_token_inventory_block(paper)
+        multi_source_contract = _multi_source_contract(paper)
+        repair_source = "\n\n".join(
+            part
+            for part in (paper_md if multi_source_contract else "", multi_source_contract, _figure_token_inventory_block(paper))
+            if part
+        )
         logger.info(
-            "Research normal mode context: manuscript=full (full=%d chars, compact=%d chars)",
+            "Research normal mode context: manuscript=%s (full=%d chars, selected=%d chars, compact=%d chars)",
+            context_meta["manuscript_selected"],
+            len(paper_md),
             len(paper_md),
             len(compact_paper_md),
         )
@@ -766,6 +859,12 @@ async def analyze_paper(
                 debug_dir=debug_dir,
             )
         except Exception as exc:
+            if _is_multi_source_corpus(paper) and _is_context_window_error(exc):
+                raise ValueError(
+                    "The complete multi-source corpus exceeds the selected model's "
+                    "context window. No automatic truncation was applied; use a model "
+                    "with a larger context window or remove sources explicitly."
+                ) from exc
             if (
                 not _is_context_window_error(exc)
                 or not compact_paper_md.strip()
@@ -804,7 +903,11 @@ async def analyze_paper(
                 repair_source_markdown=repair_source,
                 debug_dir=debug_dir,
             )
-        context_meta["manuscript_chars"] = len(paper_md if context_meta["manuscript_selected"] == "full" else compact_paper_md)
+        context_meta["manuscript_chars"] = len(
+            compact_paper_md
+            if context_meta["manuscript_selected"] == "compact"
+            else paper_md
+        )
         _debug_write_text(
             debug_dir,
             "lightweight_context_selection.json",
@@ -818,15 +921,17 @@ async def analyze_paper(
     logger.info("Research Pass 1: Deep reading...")
     pass1_system = PASS1_PROMPT.read_text(encoding="utf-8")
 
-    pass1_user_parts = [
-        f"## Paper Content\n\n{paper_md}",
-    ]
+    content_label = "Source Corpus Content" if _is_multi_source_corpus(paper) else "Paper Content"
+    pass1_user_parts = [f"## {content_label}\n\n{paper_md}"]
+    multi_source_contract = _multi_source_contract(paper)
+    if multi_source_contract:
+        pass1_user_parts.append(f"\n{multi_source_contract}")
     if enrichment_block:
         pass1_user_parts.append(f"\n{enrichment_block}")
     if instruction:
         pass1_user_parts.append(f"\n## User Instruction\n\n{instruction}")
     pass1_user_parts.append(
-        "\n\nAnalyze this paper following the structured format above. Be specific and insightful. "
+        "\n\nAnalyze this source corpus following the structured format above. Be specific and insightful. "
         "When supplementary related-work context is provided, use it to ground the gap analysis "
         "in concrete prior art rather than vague claims."
     )
@@ -844,6 +949,13 @@ async def analyze_paper(
             max_tokens=DEEPSEEK_MAX_TOKENS if is_deepseek else None,
         )
     except Exception as exc:
+        if _is_multi_source_corpus(paper) and _is_context_window_error(exc):
+            raise ValueError(
+                "The complete multi-source corpus exceeds the selected model's "
+                "context window during deep analysis. No automatic truncation was "
+                "applied; use a model with a larger context window or remove sources "
+                "explicitly."
+            ) from exc
         if (
             not _is_context_window_error(exc)
             or not compact_paper_md.strip()
@@ -875,11 +987,13 @@ async def analyze_paper(
     pass2_system = PASS2_PROMPT.read_text(encoding="utf-8")
 
     pass2_user_parts = [
-        f"## Deep Analysis of the Paper\n\n{deep_analysis}",
+        f"## Deep Analysis of the Source Corpus\n\n{deep_analysis}",
         f"\n## Target Slides\n\n{_target_slides_guidance(num_pages, detail_level)}",
     ]
+    if multi_source_contract:
+        pass2_user_parts.append(f"\n{multi_source_contract}")
     pass2_user_parts.append(
-        "\n\nDesign the narrative arc for this paper's presentation. Choose the best narrative strategy "
+        "\n\nDesign the narrative arc for this source corpus presentation. Choose the best narrative strategy "
         "and specify each slide's role, core insight, and visual strategy."
     )
 
@@ -910,6 +1024,8 @@ async def analyze_paper(
         f"\n## Target Language\n\n{language}\n\n{_language_guidance(language)}",
         f"\n## Target Slides\n\n{_target_slides_guidance(num_pages, detail_level)}",
     ]
+    if multi_source_contract:
+        pass3_user_parts.append(f"\n{multi_source_contract}")
     figure_inventory = _figure_token_inventory_block(paper)
     if figure_inventory:
         pass3_user_parts.append(f"\n{figure_inventory}")
@@ -921,7 +1037,7 @@ async def analyze_paper(
     pass3_user_parts.append(
         "\n\nGenerate the complete slide manuscript now. Use `---` to separate slides. "
         "Follow the narrative arc plan and the information aesthetics principles. "
-        "Make the chapter plan come from the paper's real content logic, not a fixed "
+        "Make the chapter plan come from the source corpus's real content logic, not a fixed "
         "template. Slide 2 must be the table of contents "
         "and must use the same final chapter titles. Keep chapter slides concise; detailed "
         "evidence belongs on content slides."
@@ -982,7 +1098,11 @@ async def analyze_paper(
         logger.warning("Pass 3 manuscript structure invalid after retry; repairing: %s", last_structure_error)
         manuscript = await _repair_manuscript_structure_if_needed(
             manuscript,
-            figure_inventory,
+            "\n\n".join(
+                part
+                for part in (paper_md if multi_source_contract else "", multi_source_contract, figure_inventory)
+                if part
+            ),
             llm,
             model,
             language=language,
@@ -1004,13 +1124,15 @@ async def analyze_paper(
 
     pass4_user_parts = [
         f"## Slide Manuscript to Evaluate\n\n{manuscript}",
-        f"\n## Source Paper (authoritative)\n\n{pass4_source_context}",
+        f"\n## Source Corpus (authoritative)\n\n{pass4_source_context}",
         f"\n## Original Deep Analysis\n\n{deep_analysis[:5000]}",
         f"\n## Narrative Plan\n\n{narrative_plan[:2000]}",
         f"\n## Target Language\n\n{language}",
     ]
     if figure_inventory:
         pass4_user_parts.append(f"\n{figure_inventory}")
+    if multi_source_contract:
+        pass4_user_parts.append(f"\n{multi_source_contract}")
     pass4_user_parts.append(
         "\n\nEvaluate the manuscript against the seven dimensions. "
         "If the total score is below 28/35 or any dimension is below 3, "
@@ -1032,6 +1154,13 @@ async def analyze_paper(
             max_tokens=DEEPSEEK_MAX_TOKENS if is_deepseek else None,
         )
     except Exception as exc:
+        if _is_multi_source_corpus(paper) and _is_context_window_error(exc):
+            raise ValueError(
+                "The complete multi-source corpus exceeds the selected model's "
+                "context window during quality review. No automatic truncation was "
+                "applied; use a model with a larger context window or remove sources "
+                "explicitly."
+            ) from exc
         if (
             not _is_context_window_error(exc)
             or not compact_paper_md.strip()
@@ -1068,7 +1197,11 @@ async def analyze_paper(
         logger.warning("Final manuscript validation failed after retries; repairing: %s", final_error)
         final_output = await _repair_manuscript_structure_if_needed(
             final_output,
-            figure_inventory,
+            "\n\n".join(
+                part
+                for part in (paper_md if multi_source_contract else "", multi_source_contract, figure_inventory)
+                if part
+            ),
             llm,
             model,
             language=language,

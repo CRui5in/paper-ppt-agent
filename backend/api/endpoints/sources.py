@@ -24,18 +24,22 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, File, HTTPException, UploadFile, status
+from fastapi.responses import FileResponse
 
 from backend.api.schemas import (
     AddTextSourceRequest,
     AddUrlSourceRequest,
     AddUrlSourceResponse,
+    BrowserInstallStatusResponse,
     SourceItem,
+    SourcePreviewResponse,
     SourcesGroupResponse,
 )
 from backend.config import settings
 from backend.parser.source_model import Source
 from backend.parser.url_parser import UrlFetchError, fetch_url_html
-from backend.runtime import aensure_dir, awrite_bytes, awrite_text
+from backend.runtime import aensure_dir, aoffload, awrite_bytes, awrite_text
+from backend.runtime.web_browser import get_url_browser_install_status
 from backend.session.manager import session_manager
 
 router = APIRouter()
@@ -73,6 +77,9 @@ def _upload_dir(session_id: str) -> Path:
 
 
 def _source_to_item(src: Source) -> SourceItem:
+    char_count = src.char_count
+    if not char_count and src.raw_text:
+        char_count = len(src.raw_text)
     return SourceItem(
         id=src.id,
         kind=src.kind,
@@ -83,7 +90,7 @@ def _source_to_item(src: Source) -> SourceItem:
         url=src.url,
         parse_status=src.parse_status,
         parse_error=src.parse_error,
-        char_count=src.char_count,
+        char_count=char_count,
     )
 
 
@@ -119,6 +126,31 @@ def _require_session(session_id: str):
 
 def _new_source_id() -> str:
     return uuid.uuid4().hex[:12]
+
+
+def _require_source(session_id: str, source_id: str) -> Source:
+    _require_session(session_id)
+    source = next(
+        (item for item in session_manager.get_sources(session_id) if item.id == source_id),
+        None,
+    )
+    if source is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Source {source_id!r} not found.",
+        )
+    return source
+
+
+async def _read_preview_text(path: Path) -> tuple[str, bool]:
+    limit = max(1, settings.source_preview_max_chars)
+
+    def _read() -> tuple[str, bool]:
+        with path.open("r", encoding="utf-8-sig", errors="replace") as handle:
+            content = handle.read(limit + 1)
+        return content[:limit], len(content) > limit
+
+    return await aoffload(_read)
 
 
 # ── endpoints ────────────────────────────────────────────────────────────────
@@ -198,6 +230,11 @@ async def add_file_sources(
             label=upload.filename or file_path.name,
             file_path=file_path,
             file_size=len(content),
+            char_count=(
+                len(content.decode("utf-8-sig", errors="replace"))
+                if kind in {"text", "markdown"}
+                else 0
+            ),
         )
         session_manager.add_source(session_id, source)
 
@@ -229,6 +266,7 @@ async def add_text_source(
         role=payload.role,
         raw_text=text,
         file_size=len(text.encode("utf-8")),
+        char_count=len(text),
     )
     session_manager.add_source(session_id, source)
     return _group_response(session_id)
@@ -261,7 +299,8 @@ async def add_url_source(
     await aensure_dir(source_dir)
     # Cache the extracted markdown; the UrlParser reads it back at parse time
     # instead of re-fetching (network may be flaky / page may change).
-    await awrite_text(source_dir / "page.md", result.markdown, encoding="utf-8")
+    await awrite_text(source_dir / "page.txt", result.markdown, encoding="utf-8")
+    await awrite_text(source_dir / "page.html", result.html, encoding="utf-8")
 
     label = payload.label.strip() if payload.label else (result.title or result.url)
     char_count = len(result.markdown)
@@ -289,6 +328,95 @@ async def add_url_source(
 async def get_sources_group(session_id: str) -> SourcesGroupResponse:
     _require_session(session_id)
     return _group_response(session_id)
+
+
+@router.get(
+    "/sources/runtime/browser-status",
+    response_model=BrowserInstallStatusResponse,
+)
+async def get_browser_install_status() -> BrowserInstallStatusResponse:
+    current = get_url_browser_install_status()
+    return BrowserInstallStatusResponse(
+        state=current.state,
+        progress=current.progress,
+        message=current.message,
+    )
+
+
+@router.get(
+    "/sources/{session_id}/{source_id}/preview",
+    response_model=SourcePreviewResponse,
+)
+async def get_source_preview(
+    session_id: str,
+    source_id: str,
+) -> SourcePreviewResponse:
+    source = _require_source(session_id, source_id)
+    if source.kind == "pdf" and source.file_path is not None:
+        return SourcePreviewResponse(
+            source_id=source.id,
+            title=source.label,
+            preview_type="pdf",
+            file_url=f"/api/sources/{session_id}/{source_id}/file",
+            mime_type="application/pdf",
+        )
+    if source.kind == "url" or (source.kind == "text" and source.raw_text is not None):
+        content = source.raw_text or ""
+        limit = max(1, settings.source_preview_max_chars)
+        truncated = len(content) > limit
+        return SourcePreviewResponse(
+            source_id=source.id,
+            title=source.label,
+            preview_type="text",
+            content=content[:limit],
+            mime_type="text/plain",
+            truncated=truncated,
+        )
+    if source.kind in {"text", "markdown"} and source.file_path is not None:
+        content, truncated = await _read_preview_text(source.file_path)
+        return SourcePreviewResponse(
+            source_id=source.id,
+            title=source.label,
+            preview_type="text",
+            content=content,
+            mime_type="text/markdown" if source.kind == "markdown" else "text/plain",
+            truncated=truncated,
+        )
+    return SourcePreviewResponse(
+        source_id=source.id,
+        title=source.label,
+        preview_type="unsupported",
+    )
+
+
+@router.get("/sources/{session_id}/{source_id}/file")
+async def get_source_preview_file(session_id: str, source_id: str) -> FileResponse:
+    source = _require_source(session_id, source_id)
+    if source.kind != "pdf" or source.file_path is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="This source has no directly previewable file.",
+        )
+    path = source.file_path.resolve()
+    try:
+        path.relative_to(_upload_dir(session_id).resolve())
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Source file is outside the session upload directory.",
+        ) from exc
+    if not path.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Source file no longer exists.",
+        )
+    return FileResponse(
+        path,
+        media_type="application/pdf",
+        filename=source.label,
+        content_disposition_type="inline",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @router.delete("/sources/{session_id}/{source_id}", response_model=SourcesGroupResponse)

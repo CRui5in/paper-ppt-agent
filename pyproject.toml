@@ -20,8 +20,8 @@ dependencies = [
     "pymupdf4llm>=0.0.17",
     "pymupdf-layout>=1.27.0",
     "pylatexenc>=2.10",
-    # URL source: HTML main-content extraction (lxml already pinned below)
-    "trafilatura>=1.12.0",
+    # URL sources: render the real page locally, including JavaScript content.
+    "playwright>=1.52.0",
     # PPT generation
     "python-pptx>=0.6.21",
     "svglib>=1.5.0",

@@ -18,7 +18,7 @@ Follow this structure exactly:
 - Deck-level visual system: define the reusable visual vocabulary for the whole deck. Be **concrete and actionable** — describe specific SVG techniques the executor should use:
   - **Page chrome**: header/footer style (gradient bar? colored strip? subtle line?)
   - **Background treatment**: flat color? subtle radial gradient? geometric pattern?
-  - **Card/panel style**: rounded corners radius, shadow type (soft filter shadow recommended), accent top-bar or left-border, inner padding
+  - **Card/panel style**: rounded corners radius, simple per-shape drop shadow, accent top-bar or left-border, inner padding. Do not plan offset translucent duplicate rectangles as shadows.
   - **Chart style**: monochromatic opacity gradient or 2-3 color palette, direct data labels preferred over legends
   - **Figure frame style**: rounded rect with shadow? bordered? clip-path shaped?
   - **Decorative motifs**: corner accents (rotated small shapes), gradient dividers, subtle geometric patterns, brand-color orbs/circles
@@ -81,6 +81,9 @@ Follow this structure exactly:
 
 ### XI. Technical Constraints Reminder
 - SVG banned features, allowed features, PPT compatibility rules
+- Only simple drop shadows directly attached to one shape are allowed. Never
+  plan offset translucent duplicate rectangles as shadows, group-level filters,
+  text glow, or complex blur effects; they can force a full-slide raster fallback.
 
 ## Principles
 

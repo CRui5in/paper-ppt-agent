@@ -42,7 +42,9 @@ import type {
   UploadResponse,
   SourcesGroupResponse,
   SourceItem,
+  SourcePreviewResponse,
   AddUrlSourceResponse,
+  BrowserInstallStatusResponse,
   UserAnnotation,
   UserTemplateItem,
   VersionDetailResponse,
@@ -223,6 +225,23 @@ export async function addUrlSource(
 /** List all sources in a group (also returned by every add/remove call). */
 export async function getSourcesGroup(sessionId: string): Promise<SourcesGroupResponse> {
   return request<SourcesGroupResponse>(`/api/sources/${sessionId}`);
+}
+
+export async function getBrowserInstallStatus(): Promise<BrowserInstallStatusResponse> {
+  return request<BrowserInstallStatusResponse>("/api/sources/runtime/browser-status");
+}
+
+export async function getSourcePreview(
+  sessionId: string,
+  sourceId: string,
+): Promise<SourcePreviewResponse> {
+  return request<SourcePreviewResponse>(
+    `/api/sources/${sessionId}/${sourceId}/preview`,
+  );
+}
+
+export function sourcePreviewFileUrl(fileUrl: string): string {
+  return `${API_BASE}${fileUrl}`;
 }
 
 /** Remove one source by id (also deletes its upload bytes server-side). */

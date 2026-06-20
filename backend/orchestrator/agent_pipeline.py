@@ -2122,8 +2122,8 @@ async def _stage_agent_sources(
 
     Returns ``[(source_id, path_for_agent_to_read), ...]`` in source order.
     For pdf/latex the file is copied; for text/markdown the payload is written
-    as ``source.md``; for url the cached page.md (written at add time) is
-    copied if present, else the url is recorded for the agent to fetch.
+    as ``source.md``; URL sources use the rendered visible text cached at add
+    time.
     """
     from backend.parser.source_model import Source  # noqa: F401 — type only
 
@@ -2136,28 +2136,21 @@ async def _stage_agent_sources(
             await aoffload(shutil.copy2, str(src.file_path), target)
             staged.append((src.id, target))
         elif src.kind == "url":
-            # The /api/sources/{sid}/url endpoint cached page.md at add time;
-            # copy it through so the agent reads deterministic content.
-            cached = None
-            if src.file_path is not None:
-                cached_candidate = Path(src.file_path).parent / "page.md"
-                if cached_candidate.exists():
-                    cached = cached_candidate
             target = src_dir / "page.md"
-            if cached is not None:
-                await aoffload(shutil.copy2, str(cached), target)
-            else:
-                await awrite_text(
-                    target,
-                    f"# {src.label}\n\nSource URL: {src.url or ''}\n\n"
-                    f"{src.raw_text or '(no cached content; the agent should fetch the URL)'}\n",
-                    encoding="utf-8",
-                )
+            await awrite_text(
+                target,
+                f"# {src.label}\n\nSource URL: {src.url or ''}\n\n"
+                f"{src.raw_text or '(no cached rendered text)'}\n",
+                encoding="utf-8",
+            )
             staged.append((src.id, target))
         else:  # text / markdown
             ext = ".md" if src.kind == "markdown" else ".txt"
             target = src_dir / f"source{ext}"
-            await awrite_text(target, src.raw_text or "", encoding="utf-8")
+            if src.file_path is not None:
+                await aoffload(shutil.copy2, str(src.file_path), target)
+            else:
+                await awrite_text(target, src.raw_text or "", encoding="utf-8")
             staged.append((src.id, target))
     return staged
 
@@ -4232,8 +4225,8 @@ def _agent_layout_policy() -> dict[str, Any]:
             "Avoid empty quadrants, floating short bullet lists, and bottom callouts detached from the main grid.",
             "For sparse content, enlarge the supported figure, convert bullets into grouped callouts, or draw a simple paper-supported mechanism diagram.",
             "For image+text pages, reserve the figure frame first, preserve aspect ratio inside that frame, and make the text column use comparable vertical rhythm.",
-            "Visual depth is required: use filter shadows on cards, gradients for backgrounds/overlays, accent top-bars on cards, and subtle decorative elements. Flat pages without elevation look unfinished.",
-            "Every card/panel should have a shadow, an accent element, and proper inner padding — not just a plain flat rect with a stroke border.",
+            "Visual depth is required: use simple drop shadows directly on individual card shapes, plus gradients and accent bars. Never simulate shadows with offset translucent duplicate rectangles, never apply filters to groups, and never use text glow or complex blur filters because they can rasterize the entire PPT slide.",
+            "Every card/panel should have an accent element and proper inner padding — not just a plain flat rect with a stroke border.",
             "Use large bold numbers with small gray labels for KPI/metrics. Use color-coded status indicators. Use accent callout boxes with tinted backgrounds for key takeaways.",
         ],
         "text_wrapping": {

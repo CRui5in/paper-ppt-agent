@@ -80,6 +80,10 @@ class ParsedPaper:
     # sections/to_markdown()/all_figures(), so new kinds are additive.
     source_type: Literal["pdf", "latex", "text", "markdown", "url", "mixed"] = "pdf"
     figures_dir: Path | None = None
+    # Ordered provenance records for a merged corpus. Each item is intentionally
+    # JSON-shaped so it can be written into prompts/debug artifacts without
+    # coupling downstream stages to the Source dataclass.
+    source_manifest: list[dict[str, object]] = field(default_factory=list)
 
     def all_figures(self) -> list[PaperFigure]:
         """Collect all figures from all sections."""
@@ -122,6 +126,16 @@ class ParsedPaper:
         if self.abstract:
             parts.append(f"## Abstract\n\n{self.abstract}\n")
 
+        if self.source_manifest:
+            parts.append("## Source Corpus\n")
+            for index, source in enumerate(self.source_manifest, 1):
+                ref = str(source.get("ref") or f"S{index}")
+                label = str(source.get("label") or source.get("title") or "Untitled source")
+                title = str(source.get("title") or "").strip()
+                kind = str(source.get("kind") or "unknown")
+                detail = f" — {title}" if title and title != label else ""
+                parts.append(f"- [{ref}] {label}{detail} ({kind})")
+
         # Sections
         for section in self.sections:
             prefix = "#" * (section.level + 1)
@@ -159,4 +173,6 @@ class ParsedPaper:
             for i, ref in enumerate(self.references, 1):
                 parts.append(f"{i}. {ref}")
 
-        return "\n".join(parts)
+        # Some PDF text layers contain embedded NUL controls. They are not
+        # meaningful document content and can corrupt prompt/debug consumers.
+        return "\n".join(parts).replace("\x00", "")

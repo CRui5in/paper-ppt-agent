@@ -116,7 +116,23 @@ def _pick_title_abstract(sources: list[Source], papers: list[ParsedPaper | None]
     first body line, so prefer the user-chosen source label as the corpus
     title and keep the first parsed abstract.
     """
-    for src, paper in zip(sources, papers):
+    parsed_primary = [
+        (src, paper)
+        for src, paper in zip(sources, papers)
+        if paper is not None and src.role == "primary"
+    ]
+    if len(parsed_primary) > 1:
+        return (
+            "Multi-source research synthesis",
+            [],
+            (
+                f"A research corpus assembled from {len(parsed_primary)} primary sources. "
+                "The presentation must compare, reconcile, and synthesize evidence across "
+                "the source set rather than retell one document."
+            ),
+        )
+
+    for src, paper in parsed_primary:
         if paper is None or src.role != "primary":
             continue
         if src.kind in ("pdf", "latex"):
@@ -238,6 +254,21 @@ async def merge_sources(
             merged_sections.extend(_wrap_source_sections(src, paper))
 
     title, authors, abstract = _pick_title_abstract(updated_sources, papers)
+    source_manifest: list[dict[str, object]] = []
+    for index, (src, paper) in enumerate(zip(updated_sources, papers), 1):
+        source_manifest.append(
+            {
+                "ref": f"S{index}",
+                "id": src.id,
+                "label": src.label,
+                "title": paper.title if paper is not None else src.label,
+                "kind": src.kind,
+                "role": src.role,
+                "status": "ok" if paper is not None else "error",
+                "url": src.url or "",
+                "char_count": src.char_count,
+            }
+        )
 
     merged = ParsedPaper(
         title=title,
@@ -246,6 +277,7 @@ async def merge_sources(
         sections=merged_sections,
         source_type="mixed",
         figures_dir=sources_root,
+        source_manifest=source_manifest,
     )
 
     _merge_figure_manifests(updated_sources, papers, sources_root)

@@ -105,6 +105,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             yield
         finally:
             _cleanup_all_job_processes()
+            from backend.runtime.web_browser import close_url_browser
+
+            await close_url_browser()
             if scheduler is not None:
                 await scheduler.shutdown(timeout=30.0)
     finally:

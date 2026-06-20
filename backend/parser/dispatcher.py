@@ -57,16 +57,23 @@ async def _materialize_source_file(src: Source, out_dir: Path) -> Path:
     text/markdown/url sources we stage the payload into ``out_dir`` first:
 
     * ``text`` / ``markdown`` → write ``raw_text`` to ``source.<ext>``.
-    * ``url`` → write ``url=<the url>`` marker; :class:`UrlParser` re-fetches.
+    * ``url`` → prefer cached ``raw_text`` as ``source.md``; otherwise write
+      ``url=<the url>`` marker so :class:`UrlParser` can fetch it.
     * ``pdf`` / ``latex`` → return the original ``file_path`` unchanged.
     """
     if src.kind in ("pdf", "latex"):
         if src.file_path is None:
             raise ValueError(f"{src.kind} source {src.id!r} has no file_path")
         return src.file_path
+    if src.kind in ("text", "markdown") and src.file_path is not None:
+        return src.file_path
 
     out_dir.mkdir(parents=True, exist_ok=True)
     if src.kind == "url":
+        if src.raw_text and src.raw_text.strip():
+            target = out_dir / "source.md"
+            await awrite_text(target, src.raw_text, encoding="utf-8")
+            return target
         marker = out_dir / "source.url"
         await awrite_text(marker, f"url={src.url or ''}", encoding="utf-8")
         return marker

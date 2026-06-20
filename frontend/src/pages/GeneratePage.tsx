@@ -47,7 +47,13 @@ import { RecentTasksPanel } from "../components/history/RecentTasksPanel";
 import { PptistStudioHost } from "../components/pptist/PptistStudioHost";
 import { useGeneration } from "../hooks/useGeneration";
 import { useLocale } from "../i18n";
-import { fetchTemplateAgentClaudeCodeStatus, fetchTemplates } from "../lib/api";
+import {
+  fetchTemplateAgentClaudeCodeStatus,
+  fetchTemplates,
+  getBrowserInstallStatus,
+  getSourcePreview,
+  sourcePreviewFileUrl,
+} from "../lib/api";
 import type {
   DeepSeekSettings,
   GenerationHistoryItem,
@@ -62,6 +68,8 @@ import type {
   UploadResponse,
   SourcesGroupResponse,
   SourceItem,
+  SourcePreviewResponse,
+  BrowserInstallStatusResponse,
 } from "../lib/types";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
@@ -638,8 +646,12 @@ export function GeneratePage() {
     connect(nextJobId);
   };
 
+  const hasGenerationSource = Boolean(
+    uploadSession ||
+      (sourcesGroup && sourcesGroup.sources.length > 0),
+  );
   const generationDisabled =
-    !uploadSession ||
+    !hasGenerationSource ||
     (generationBackend === "provider" && (!provider || !model.trim() || !apiKey)) ||
     (languageMode === "custom" && !customLanguage.trim()) ||
     canCancelCurrentRun;
@@ -1753,13 +1765,13 @@ function SourcesPanel({
     ? (sourcesGroup!.sources.map((s) => ({
         id: s.id,
         name: s.label,
-        meta: sourceMetaLine(s),
+        meta: sourceMetaLine(s, t("source.characters")),
         type: s.kind,
       })))
     : uploadSession
       ? [
           {
-            id: undefined as string | undefined,
+            id: uploadSession.session_id,
             name: uploadSession.file_info.name,
             meta: `${uploadSession.file_info.source_type.toUpperCase()} · ${(uploadSession.file_info.size / 1024).toFixed(1)} KB`,
             type: uploadSession.file_info.source_type.toLowerCase(),
@@ -1772,15 +1784,88 @@ function SourcesPanel({
   // Local UI state for the paste-text and add-url sub-forms. These only mount
   // in the editing (pre-generation) view, so they live here rather than in the
   // global store.
-  const [activeTab, setActiveTab] = useState<"papers" | "links">("papers");
+  const [activeTab, setActiveTab] = useState<"papers" | "links" | "text">("papers");
   const [pasteText, setPasteText] = useState("");
   const [pasteLabel, setPasteLabel] = useState("");
   const [pasteBusy, setPasteBusy] = useState(false);
   const [urlInput, setUrlInput] = useState("");
   const [urlBusy, setUrlBusy] = useState(false);
   const [urlError, setUrlError] = useState<string | undefined>();
+  const [browserInstallStatus, setBrowserInstallStatus] = useState<BrowserInstallStatusResponse>();
+  const browserInstallObservedRef = useRef(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | undefined>();
+  const [previewData, setPreviewData] = useState<SourcePreviewResponse>();
 
-  const paperCount = sourceItems.length;
+  const paperCount = sourcesGroup?.sources.filter((s) => s.kind === "pdf" || s.kind === "latex" || s.kind === "markdown").length
+    ?? (uploadSession ? 1 : 0);
+  const linkCount = sourcesGroup?.sources.filter((s) => s.kind === "url").length ?? 0;
+  const textCount = sourcesGroup?.sources.filter((s) => s.kind === "text").length ?? 0;
+  const sourceCount = sourceItems.length;
+  const sourceSessionId = sourcesGroup?.session_id ?? uploadSession?.session_id;
+
+  useEffect(() => {
+    if (!urlBusy) return;
+    let disposed = false;
+    const refresh = async () => {
+      try {
+        const status = await getBrowserInstallStatus();
+        if (disposed) return;
+        if (status.state === "installing") {
+          browserInstallObservedRef.current = true;
+          setBrowserInstallStatus(status);
+        } else if (
+          status.state === "ready" &&
+          browserInstallObservedRef.current
+        ) {
+          setBrowserInstallStatus(status);
+        } else if (
+          status.state === "error" &&
+          browserInstallObservedRef.current
+        ) {
+          setBrowserInstallStatus(status);
+        }
+      } catch {
+        // The add-URL request owns the user-facing network error.
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 500);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [urlBusy]);
+
+  useEffect(() => {
+    if (
+      browserInstallStatus?.state !== "ready" &&
+      browserInstallStatus?.state !== "error"
+    ) {
+      return;
+    }
+    const timer = window.setTimeout(
+      () => setBrowserInstallStatus(undefined),
+      browserInstallStatus.state === "ready" ? 1500 : 5000,
+    );
+    return () => window.clearTimeout(timer);
+  }, [browserInstallStatus?.state]);
+
+  const handlePreview = async (item: { id?: string }) => {
+    if (!sourceSessionId || !item.id) return;
+    setPreviewOpen(true);
+    setPreviewLoading(true);
+    setPreviewError(undefined);
+    setPreviewData(undefined);
+    try {
+      setPreviewData(await getSourcePreview(sourceSessionId, item.id));
+    } catch (error) {
+      setPreviewError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
 
   const handleAddText = async () => {
     const text = pasteText.trim();
@@ -1800,6 +1885,8 @@ function SourcesPanel({
     if (!url || !onAddUrl) return;
     setUrlBusy(true);
     setUrlError(undefined);
+    setBrowserInstallStatus(undefined);
+    browserInstallObservedRef.current = false;
     try {
       await onAddUrl({ url });
       setUrlInput("");
@@ -1813,6 +1900,7 @@ function SourcesPanel({
   };
 
   return (
+    <>
     <Card className="sources-panel">
       <CardHeader className="workspace-panel-header">
         <div className="workspace-panel-title">
@@ -1823,21 +1911,77 @@ function SourcesPanel({
       <CardContent className="sources-content">
       {!hasStartedTask ? (
         <>
-          {useMultiSource ? (
-            <UploadZone onFilesSelect={(files) => { void onAddFiles?.(files); }} bodyKey="upload.body_multi" />
-          ) : (
-            <UploadZone onFileSelect={onFileSelect} />
-          )}
-          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "papers" | "links")} className="w-full">
-            <TabsList className="source-tabs grid w-full grid-cols-2">
+          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "papers" | "links" | "text")} className="w-full">
+            <TabsList className="source-tabs grid w-full">
               <TabsTrigger value="papers">{t("source.papers")} <span>{paperCount}</span></TabsTrigger>
-              <TabsTrigger value="links">{t("source.links")} <span>{sourcesGroup?.sources.filter((s) => s.kind === "url").length ?? 0}</span></TabsTrigger>
+              <TabsTrigger value="links">{t("source.links")} <span>{linkCount}</span></TabsTrigger>
+              <TabsTrigger value="text">{t("source.texts")} <span>{textCount}</span></TabsTrigger>
             </TabsList>
 
             {activeTab === "papers" && (
               <div className="source-tab-body">
-                {/* Paste-text entry — only available in multi-source mode. */}
-                {useMultiSource && onAddText && (
+                {useMultiSource ? (
+                  <UploadZone onFilesSelect={(files) => { void onAddFiles?.(files); }} bodyKey="upload.body_multi" />
+                ) : (
+                  <UploadZone onFileSelect={onFileSelect} />
+                )}
+              </div>
+            )}
+
+            {activeTab === "links" && (
+              <div className="source-tab-body">
+                <div className="source-url-add">
+                  <input
+                    className="source-url-input"
+                    type="url"
+                    placeholder={t("source.url_label")}
+                    value={urlInput}
+                    onChange={(e) => setUrlInput(e.target.value)}
+                  />
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    type="button"
+                    disabled={!urlInput.trim() || urlBusy || !onAddUrl}
+                    onClick={() => { void handleAddUrl(); }}
+                  >
+                    {urlBusy ? t("source.fetching") : t("source.add_url")}
+                  </Button>
+                </div>
+                {browserInstallStatus ? (
+                  <div
+                    className={`source-browser-install source-browser-install-${browserInstallStatus.state}`}
+                    role="status"
+                    aria-live="polite"
+                  >
+                    <div className="source-browser-install-copy">
+                      {browserInstallStatus.state === "ready" ? (
+                        <CircleCheck size={15} />
+                      ) : browserInstallStatus.state === "error" ? (
+                        <X size={15} />
+                      ) : (
+                        <LoaderCircle size={15} className="spin" />
+                      )}
+                      <span>
+                        {browserInstallStatus.state === "installing"
+                            ? t("source.browser_installing")
+                            : browserInstallStatus.state === "ready"
+                              ? t("source.browser_ready")
+                              : t("source.browser_error")}
+                      </span>
+                    </div>
+                  </div>
+                ) : null}
+                {urlError && <p className="source-url-error">{urlError}</p>}
+                {!useMultiSource && (
+                  <p className="source-limit-note">{t("source.url_hint")}</p>
+                )}
+              </div>
+            )}
+
+            {activeTab === "text" && (
+              <div className="source-tab-body">
+                {useMultiSource && onAddText ? (
                   <div className="source-paste">
                     <input
                       className="source-paste-label"
@@ -1863,55 +2007,34 @@ function SourcesPanel({
                       {pasteBusy ? t("source.fetching") : t("source.add_text")}
                     </Button>
                   </div>
-                )}
-                <SourceList
-                  sourceItems={sourceItems}
-                  onRemove={
-                    useMultiSource && onRemoveSource
-                      ? (item) => { if (item.id) { void onRemoveSource(item.id); } }
-                      : onSourceRemove
-                        ? () => { void onSourceRemove(); }
-                        : undefined
-                  }
-                />
-              </div>
-            )}
-
-            {activeTab === "links" && (
-              <div className="source-tab-body">
-                <div className="source-url-add">
-                  <input
-                    className="source-url-input"
-                    type="url"
-                    placeholder={t("source.url_label")}
-                    value={urlInput}
-                    onChange={(e) => setUrlInput(e.target.value)}
-                  />
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    type="button"
-                    disabled={!urlInput.trim() || urlBusy || !onAddUrl}
-                    onClick={() => { void handleAddUrl(); }}
-                  >
-                    {urlBusy ? t("source.fetching") : t("source.add_url")}
-                  </Button>
-                </div>
-                {urlError && <p className="source-url-error">{urlError}</p>}
-                <SourceList sourceItems={sourceItems.filter((i) => i.type === "url")} />
-                {!useMultiSource && (
+                ) : (
                   <p className="source-limit-note">{t("source.url_hint")}</p>
                 )}
               </div>
             )}
           </Tabs>
+          <SourceList
+            sourceItems={sourceItems}
+            onPreview={(item) => { void handlePreview(item); }}
+            onRemove={
+              useMultiSource && onRemoveSource
+                ? (item) => { if (item.id) { void onRemoveSource(item.id); } }
+                : onSourceRemove
+                  ? () => { void onSourceRemove(); }
+                  : undefined
+            }
+          />
           <div className="source-footer">
-            <span>{t("source.count").replace("{n}", String(paperCount))}</span>
+            <span>{t("source.count").replace("{n}", String(sourceCount))}</span>
           </div>
         </>
       ) : (
         <>
-          <SourceList sourceItems={sourceItems} compact />
+          <SourceList
+            sourceItems={sourceItems}
+            compact
+            onPreview={(item) => { void handlePreview(item); }}
+          />
           <div className="source-inline-process">
             <div className="panel-title-row source-inline-process-title">
               <BarChart3 size={17} className="panel-title-icon" />
@@ -1924,22 +2047,34 @@ function SourcesPanel({
       <RecentTasksPanel history={history} runs={runs} currentJobId={jobId} locale={locale} />
       </CardContent>
     </Card>
+    {previewOpen
+      ? createPortal(
+          <SourcePreviewDialog
+            loading={previewLoading}
+            error={previewError}
+            preview={previewData}
+            onClose={() => setPreviewOpen(false)}
+          />,
+          document.body,
+        )
+      : null}
+    </>
   );
 }
 
 /** Build the secondary meta line (size / char count / url) for a source row. */
-function sourceMetaLine(s: SourceItem): string {
+function sourceMetaLine(s: SourceItem, characterUnit: string): string {
   const kind = s.kind.toUpperCase();
   if (s.kind === "url" && s.url) {
     try {
       const host = new URL(s.url).host;
-      return `${kind} · ${host} · ${s.char_count.toLocaleString()} chars`;
+      return `${kind} · ${host} · ${s.char_count.toLocaleString()} ${characterUnit}`;
     } catch {
-      return `${kind} · ${s.char_count.toLocaleString()} chars`;
+      return `${kind} · ${s.char_count.toLocaleString()} ${characterUnit}`;
     }
   }
   if (s.kind === "text" || s.kind === "markdown") {
-    return `${kind} · ${s.char_count.toLocaleString()} chars`;
+    return `${kind} · ${s.char_count.toLocaleString()} ${characterUnit}`;
   }
   return `${kind} · ${(s.file_size / 1024).toFixed(1)} KB`;
 }
@@ -1948,10 +2083,12 @@ function SourceList({
   sourceItems,
   compact = false,
   onRemove,
+  onPreview,
 }: {
   sourceItems: Array<{ id?: string; name: string; meta: string; type: string }>;
   compact?: boolean;
   onRemove?: (item: { id?: string; name: string; meta: string; type: string }) => Promise<void> | void;
+  onPreview?: (item: { id?: string; name: string; meta: string; type: string }) => Promise<void> | void;
 }) {
   const { t } = useLocale();
   return (
@@ -1961,7 +2098,19 @@ function SourceList({
         // PDF/Markdown/Text/URL rows are visually distinguishable in the list.
         const badge = sourceBadge(item.type);
         return (
-          <div className={`source-row ${onRemove ? "source-row-removable" : ""}`} key={item.id ?? `${item.name}-${index}`}>
+          <div
+            className={`source-row ${onRemove ? "source-row-removable" : ""} ${onPreview ? "source-row-previewable" : ""}`}
+            key={item.id ?? `${item.name}-${index}`}
+            role={onPreview ? "button" : undefined}
+            tabIndex={onPreview ? 0 : undefined}
+            onClick={() => { if (onPreview) void onPreview(item); }}
+            onKeyDown={(event) => {
+              if (onPreview && (event.key === "Enter" || event.key === " ")) {
+                event.preventDefault();
+                void onPreview(item);
+              }
+            }}
+          >
             <span className="source-row-leading">
               <span className={`source-file-type source-file-${badge.cls}`}>
                 {badge.label}
@@ -1985,10 +2134,90 @@ function SourceList({
               <strong>{item.name}</strong>
               <em>{item.meta}</em>
             </span>
-            <CircleCheck size={15} className="source-check" />
+            {onPreview ? <Eye size={15} className="source-preview-icon" /> : <CircleCheck size={15} className="source-check" />}
           </div>
         );
       }) : null}
+    </div>
+  );
+}
+
+function SourcePreviewDialog({
+  loading,
+  error,
+  preview,
+  onClose,
+}: {
+  loading: boolean;
+  error?: string;
+  preview?: SourcePreviewResponse;
+  onClose: () => void;
+}) {
+  const { t } = useLocale();
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  return (
+    <div className="source-preview-overlay" onMouseDown={onClose}>
+      <section
+        className="source-preview-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="source-preview-title"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <header className="source-preview-header">
+          <div>
+            <span>{t("source.preview")}</span>
+            <h2 id="source-preview-title">{preview?.title ?? t("source.preview")}</h2>
+          </div>
+          <button
+            type="button"
+            className="source-preview-close"
+            aria-label={t("source.preview_close")}
+            onClick={onClose}
+          >
+            <X size={18} />
+          </button>
+        </header>
+        <div className="source-preview-body">
+          {loading ? (
+            <div className="source-preview-state">
+              <LoaderCircle size={22} className="spin" />
+              <span>{t("source.preview_loading")}</span>
+            </div>
+          ) : error ? (
+            <div className="source-preview-state source-preview-error">
+              <strong>{t("source.preview_failed")}</strong>
+              <span>{error}</span>
+            </div>
+          ) : preview?.preview_type === "pdf" && preview.file_url ? (
+            <iframe
+              className="source-preview-pdf"
+              title={preview.title}
+              src={sourcePreviewFileUrl(preview.file_url)}
+            />
+          ) : preview?.preview_type === "text" ? (
+            <>
+              {preview.truncated ? (
+                <div className="source-preview-warning">{t("source.preview_truncated")}</div>
+              ) : null}
+              <pre className="source-preview-text">{preview.content}</pre>
+            </>
+          ) : (
+            <div className="source-preview-state">
+              <strong>{t("source.preview_unavailable")}</strong>
+              <span>{preview?.reason || t("source.preview_latex")}</span>
+            </div>
+          )}
+        </div>
+      </section>
     </div>
   );
 }

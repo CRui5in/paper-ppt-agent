@@ -68,6 +68,25 @@ class AddUrlSourceResponse(BaseModel):
     char_count: int
 
 
+class SourcePreviewResponse(BaseModel):
+    """Preview contract shared by uploaded, pasted, and URL sources."""
+
+    source_id: str
+    title: str
+    preview_type: Literal["pdf", "text", "unsupported"]
+    content: str | None = None
+    file_url: str | None = None
+    mime_type: str | None = None
+    truncated: bool = False
+    reason: str | None = None
+
+
+class BrowserInstallStatusResponse(BaseModel):
+    state: Literal["idle", "checking", "installing", "ready", "error"]
+    progress: int | None = None
+    message: str = ""
+
+
 class DeepSeekSettings(BaseModel):
     thinking_enabled: bool = True
     reasoning_effort: Literal["high", "max"] = "max"

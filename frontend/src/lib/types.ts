@@ -35,9 +35,26 @@ export interface SourcesGroupResponse {
 
 /** Response from POST /api/sources/{sid}/url — includes the fetched title. */
 export interface AddUrlSourceResponse {
-  source: SourceItem;
+    source: SourceItem;
+    title: string;
+    char_count: number;
+}
+
+export interface SourcePreviewResponse {
+  source_id: string;
   title: string;
-  char_count: number;
+  preview_type: "pdf" | "text" | "unsupported";
+  content: string | null;
+  file_url: string | null;
+  mime_type: string | null;
+  truncated: boolean;
+  reason: string | null;
+}
+
+export interface BrowserInstallStatusResponse {
+  state: "idle" | "checking" | "installing" | "ready" | "error";
+  progress: number | null;
+  message: string;
 }
 
 export interface ProviderModel {

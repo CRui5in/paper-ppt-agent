@@ -1778,7 +1778,20 @@ export const useGeneration = create<GenerationState>()(
         seenSeqByJob.delete(jobId);
       },
       reset() {
-        const { jobId, socketsByJob } = get();
+        const { jobId, socketsByJob, uploadSession, sourcesGroup } = get();
+        // Only delete a source session that has never been used to start a
+        // generation job. Completed/history runs retain their session and
+        // source snapshot; "new task" merely detaches the current editor.
+        if (!jobId) {
+          const sessionIds = new Set(
+            [uploadSession?.session_id, sourcesGroup?.session_id].filter(
+              (sessionId): sessionId is string => Boolean(sessionId),
+            ),
+          );
+          for (const sessionId of sessionIds) {
+            void deleteSession(sessionId).catch(() => undefined);
+          }
+        }
         if (jobId) {
           // Tear down any live socket for the run we're about to abandon
           // so it doesn't keep mutating store state in the background.
@@ -1803,6 +1816,7 @@ export const useGeneration = create<GenerationState>()(
           }
           return {
             uploadSession: undefined,
+            sourcesGroup: undefined,
             jobId: undefined,
             job: undefined,
             slides: [],

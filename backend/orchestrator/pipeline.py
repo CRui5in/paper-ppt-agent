@@ -270,19 +270,21 @@ async def run_pipeline(
                 f"Parsing {len(request.sources)} sources...",
                 0.05,
             )
-            async with heavy_stage_slot():
-                paper, updated_sources = await merge_sources(
-                    list(request.sources),
-                    project_dir,
-                    on_progress=_emit_parse_progress,
-                )
+            # merge_sources acquires the heavy-stage gate per source. Holding
+            # the same gate around the whole merge deadlocks when the limit is
+            # one because every child parse waits for its parent to release it.
+            paper, updated_sources = await merge_sources(
+                list(request.sources),
+                project_dir,
+                on_progress=_emit_parse_progress,
+            )
             # Persist the resolved source statuses back onto the session so
             # the Sources panel can show parse failures after the run.
             _persist_source_parse_status(request, updated_sources)
             failed = [s for s in updated_sources if s.parse_status == "error"]
             if failed:
                 complete_msg = (
-                    f"Parsed {paper.title} "
+                    f"Parsed: {paper.title} "
                     f"({len(failed)} source(s) failed and were skipped)"
                 )
             else:
