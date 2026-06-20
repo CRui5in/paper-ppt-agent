@@ -12,7 +12,6 @@ import {
   EyeOff,
   Image as ImageIcon,
   LoaderCircle,
-  Link as LinkIcon,
   Maximize2,
   MessageSquareText,
   Minus,
@@ -48,7 +47,13 @@ import { RecentTasksPanel } from "../components/history/RecentTasksPanel";
 import { PptistStudioHost } from "../components/pptist/PptistStudioHost";
 import { useGeneration } from "../hooks/useGeneration";
 import { useLocale } from "../i18n";
-import { fetchTemplateAgentClaudeCodeStatus, fetchTemplates } from "../lib/api";
+import {
+  fetchTemplateAgentClaudeCodeStatus,
+  fetchTemplates,
+  getBrowserInstallStatus,
+  getSourcePreview,
+  sourcePreviewFileUrl,
+} from "../lib/api";
 import type {
   DeepSeekSettings,
   GenerationHistoryItem,
@@ -61,6 +66,10 @@ import type {
   ResearchEnrichmentStats,
   TemplateInfo,
   UploadResponse,
+  SourcesGroupResponse,
+  SourceItem,
+  SourcePreviewResponse,
+  BrowserInstallStatusResponse,
 } from "../lib/types";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
@@ -132,6 +141,7 @@ export function GeneratePage() {
   const {
     providers,
     uploadSession,
+    sourcesGroup,
     jobId,
     job,
     slides,
@@ -147,6 +157,11 @@ export function GeneratePage() {
     loadProviders,
     uploadFile,
     clearUploadSession,
+    addFiles,
+    addText,
+    addUrl,
+    removeSourceById,
+    clearSourcesGroup,
     startGeneration,
     cancelCurrentRun,
     interruptCurrentAgent,
@@ -528,7 +543,12 @@ export function GeneratePage() {
   }, [job?.status, jobId, navigate]);
 
   const launchGeneration = async () => {
-    if (!uploadSession) {
+    // Multi-source group takes precedence over the legacy single-file session.
+    const activeSessionId =
+      sourcesGroup && sourcesGroup.sources.length > 0
+        ? sourcesGroup.session_id
+        : uploadSession?.session_id;
+    if (!activeSessionId) {
       return;
     }
     const normalizedModel = model.trim();
@@ -556,7 +576,7 @@ export function GeneratePage() {
             : undefined
         : undefined;
     const nextJobId = await startGeneration({
-      session_id: uploadSession.session_id,
+      session_id: activeSessionId,
       instruction,
       model_config: generationBackend === "provider"
         ? {
@@ -626,8 +646,12 @@ export function GeneratePage() {
     connect(nextJobId);
   };
 
+  const hasGenerationSource = Boolean(
+    uploadSession ||
+      (sourcesGroup && sourcesGroup.sources.length > 0),
+  );
   const generationDisabled =
-    !uploadSession ||
+    !hasGenerationSource ||
     (generationBackend === "provider" && (!provider || !model.trim() || !apiKey)) ||
     (languageMode === "custom" && !customLanguage.trim()) ||
     canCancelCurrentRun;
@@ -696,6 +720,7 @@ export function GeneratePage() {
         </div>
         <SourcesPanel
           uploadSession={uploadSession}
+          sourcesGroup={sourcesGroup}
           job={job}
           jobId={jobId}
           connectionStatus={connectionStatus}
@@ -707,6 +732,10 @@ export function GeneratePage() {
           locale={locale}
           onFileSelect={(file) => void uploadFile(file)}
           onSourceRemove={() => void clearUploadSession()}
+          onAddFiles={(files) => addFiles(files)}
+          onAddText={(payload) => addText(payload)}
+          onAddUrl={(payload) => addUrl(payload)}
+          onRemoveSource={(sourceId) => removeSourceById(sourceId)}
         />
 
         <SlideWorkspace
@@ -1684,6 +1713,7 @@ function formatGenerationTokens(value: number): string {
 
 function SourcesPanel({
   uploadSession,
+  sourcesGroup,
   job,
   jobId,
   connectionStatus,
@@ -1695,8 +1725,13 @@ function SourcesPanel({
   locale,
   onFileSelect,
   onSourceRemove,
+  onAddFiles,
+  onAddText,
+  onAddUrl,
+  onRemoveSource,
 }: {
   uploadSession?: UploadResponse;
+  sourcesGroup?: SourcesGroupResponse;
   job?: JobStatus;
   jobId?: string;
   connectionStatus: string;
@@ -1708,19 +1743,164 @@ function SourcesPanel({
   locale: "en" | "zh";
   onFileSelect: (file: File) => void;
   onSourceRemove: () => void;
+  onAddFiles?: (files: File[]) => Promise<void>;
+  onAddText?: (payload: { label: string; text: string; role?: "primary" | "supplementary" }) => Promise<void>;
+  onAddUrl?: (payload: { url: string; label?: string; role?: "primary" | "supplementary" }) => Promise<{ title: string; charCount: number } | undefined>;
+  onRemoveSource?: (sourceId: string) => Promise<void>;
 }) {
   const { t } = useLocale();
-  const sourceItems = uploadSession
-    ? [
-        {
-          name: uploadSession.file_info.name,
-          meta: `${uploadSession.file_info.source_type.toUpperCase()} · ${(uploadSession.file_info.size / 1024).toFixed(1)} KB`,
-          type: uploadSession.file_info.source_type.toLowerCase(),
-        },
-      ]
-    : [];
+
+  // A multi-source group exists once the user has added at least one source
+  // (or started adding one). We enter "multi-source mode" as soon as we're
+  // NOT in the legacy single-file path — i.e. whenever there's no old
+  // uploadSession, OR a sourcesGroup already exists. This is what unblocks
+  // the paste-text / multi-file / URL inputs before the first source is
+  // added (otherwise they could never appear, since adding the first source
+  // is exactly what creates the group).
+  const hasLegacyUpload = Boolean(uploadSession);
+  const hasSourcesGroup = Boolean(sourcesGroup && sourcesGroup.sources.length > 0);
+  const useMultiSource = hasSourcesGroup || !hasLegacyUpload;
+
+  const sourceItems = hasSourcesGroup
+    ? (sourcesGroup!.sources.map((s) => ({
+        id: s.id,
+        name: s.label,
+        meta: sourceMetaLine(s, t("source.characters")),
+        type: s.kind,
+      })))
+    : uploadSession
+      ? [
+          {
+            id: uploadSession.session_id,
+            name: uploadSession.file_info.name,
+            meta: `${uploadSession.file_info.source_type.toUpperCase()} · ${(uploadSession.file_info.size / 1024).toFixed(1)} KB`,
+            type: uploadSession.file_info.source_type.toLowerCase(),
+          },
+        ]
+      : [];
+
   const hasStartedTask = Boolean(jobId && job && job.status !== "idle");
+
+  // Local UI state for the paste-text and add-url sub-forms. These only mount
+  // in the editing (pre-generation) view, so they live here rather than in the
+  // global store.
+  const [activeTab, setActiveTab] = useState<"papers" | "links" | "text">("papers");
+  const [pasteText, setPasteText] = useState("");
+  const [pasteLabel, setPasteLabel] = useState("");
+  const [pasteBusy, setPasteBusy] = useState(false);
+  const [urlInput, setUrlInput] = useState("");
+  const [urlBusy, setUrlBusy] = useState(false);
+  const [urlError, setUrlError] = useState<string | undefined>();
+  const [browserInstallStatus, setBrowserInstallStatus] = useState<BrowserInstallStatusResponse>();
+  const browserInstallObservedRef = useRef(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | undefined>();
+  const [previewData, setPreviewData] = useState<SourcePreviewResponse>();
+
+  const paperCount = sourcesGroup?.sources.filter((s) => s.kind === "pdf" || s.kind === "latex" || s.kind === "markdown").length
+    ?? (uploadSession ? 1 : 0);
+  const linkCount = sourcesGroup?.sources.filter((s) => s.kind === "url").length ?? 0;
+  const textCount = sourcesGroup?.sources.filter((s) => s.kind === "text").length ?? 0;
+  const sourceCount = sourceItems.length;
+  const sourceSessionId = sourcesGroup?.session_id ?? uploadSession?.session_id;
+
+  useEffect(() => {
+    if (!urlBusy) return;
+    let disposed = false;
+    const refresh = async () => {
+      try {
+        const status = await getBrowserInstallStatus();
+        if (disposed) return;
+        if (status.state === "installing") {
+          browserInstallObservedRef.current = true;
+          setBrowserInstallStatus(status);
+        } else if (
+          status.state === "ready" &&
+          browserInstallObservedRef.current
+        ) {
+          setBrowserInstallStatus(status);
+        } else if (
+          status.state === "error" &&
+          browserInstallObservedRef.current
+        ) {
+          setBrowserInstallStatus(status);
+        }
+      } catch {
+        // The add-URL request owns the user-facing network error.
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 500);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [urlBusy]);
+
+  useEffect(() => {
+    if (
+      browserInstallStatus?.state !== "ready" &&
+      browserInstallStatus?.state !== "error"
+    ) {
+      return;
+    }
+    const timer = window.setTimeout(
+      () => setBrowserInstallStatus(undefined),
+      browserInstallStatus.state === "ready" ? 1500 : 5000,
+    );
+    return () => window.clearTimeout(timer);
+  }, [browserInstallStatus?.state]);
+
+  const handlePreview = async (item: { id?: string }) => {
+    if (!sourceSessionId || !item.id) return;
+    setPreviewOpen(true);
+    setPreviewLoading(true);
+    setPreviewError(undefined);
+    setPreviewData(undefined);
+    try {
+      setPreviewData(await getSourcePreview(sourceSessionId, item.id));
+    } catch (error) {
+      setPreviewError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const handleAddText = async () => {
+    const text = pasteText.trim();
+    if (!text || !onAddText) return;
+    setPasteBusy(true);
+    try {
+      await onAddText({ label: pasteLabel.trim(), text });
+      setPasteText("");
+      setPasteLabel("");
+    } finally {
+      setPasteBusy(false);
+    }
+  };
+
+  const handleAddUrl = async () => {
+    const url = urlInput.trim();
+    if (!url || !onAddUrl) return;
+    setUrlBusy(true);
+    setUrlError(undefined);
+    setBrowserInstallStatus(undefined);
+    browserInstallObservedRef.current = false;
+    try {
+      await onAddUrl({ url });
+      setUrlInput("");
+    } catch (err) {
+      // The backend returns a reason on 400 (bad URL / unreadable page).
+      const message = err instanceof Error ? err.message : String(err);
+      setUrlError(message);
+    } finally {
+      setUrlBusy(false);
+    }
+  };
+
   return (
+    <>
     <Card className="sources-panel">
       <CardHeader className="workspace-panel-header">
         <div className="workspace-panel-title">
@@ -1731,24 +1911,130 @@ function SourcesPanel({
       <CardContent className="sources-content">
       {!hasStartedTask ? (
         <>
-          <UploadZone onFileSelect={onFileSelect} />
-          <p className="source-limit-note">{t("source.limit")}</p>
-          <Tabs value="papers" className="w-full">
-            <TabsList className="source-tabs grid w-full grid-cols-3">
-              <TabsTrigger value="papers">{t("source.papers")} <span>{sourceItems.length}</span></TabsTrigger>
-              <HoverTooltip content={t("common.pending")}><TabsTrigger value="links" disabled>{t("source.links")} <span>0</span></TabsTrigger></HoverTooltip>
-              <HoverTooltip content={t("common.pending")}><TabsTrigger value="datasets" disabled>{t("source.datasets")} <span>0</span></TabsTrigger></HoverTooltip>
+          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "papers" | "links" | "text")} className="w-full">
+            <TabsList className="source-tabs grid w-full">
+              <TabsTrigger value="papers">{t("source.papers")} <span>{paperCount}</span></TabsTrigger>
+              <TabsTrigger value="links">{t("source.links")} <span>{linkCount}</span></TabsTrigger>
+              <TabsTrigger value="text">{t("source.texts")} <span>{textCount}</span></TabsTrigger>
             </TabsList>
+
+            {activeTab === "papers" && (
+              <div className="source-tab-body">
+                {useMultiSource ? (
+                  <UploadZone onFilesSelect={(files) => { void onAddFiles?.(files); }} bodyKey="upload.body_multi" />
+                ) : (
+                  <UploadZone onFileSelect={onFileSelect} />
+                )}
+              </div>
+            )}
+
+            {activeTab === "links" && (
+              <div className="source-tab-body">
+                <div className="source-url-add">
+                  <input
+                    className="source-url-input"
+                    type="url"
+                    placeholder={t("source.url_label")}
+                    value={urlInput}
+                    onChange={(e) => setUrlInput(e.target.value)}
+                  />
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    type="button"
+                    disabled={!urlInput.trim() || urlBusy || !onAddUrl}
+                    onClick={() => { void handleAddUrl(); }}
+                  >
+                    {urlBusy ? t("source.fetching") : t("source.add_url")}
+                  </Button>
+                </div>
+                {browserInstallStatus ? (
+                  <div
+                    className={`source-browser-install source-browser-install-${browserInstallStatus.state}`}
+                    role="status"
+                    aria-live="polite"
+                  >
+                    <div className="source-browser-install-copy">
+                      {browserInstallStatus.state === "ready" ? (
+                        <CircleCheck size={15} />
+                      ) : browserInstallStatus.state === "error" ? (
+                        <X size={15} />
+                      ) : (
+                        <LoaderCircle size={15} className="spin" />
+                      )}
+                      <span>
+                        {browserInstallStatus.state === "installing"
+                            ? t("source.browser_installing")
+                            : browserInstallStatus.state === "ready"
+                              ? t("source.browser_ready")
+                              : t("source.browser_error")}
+                      </span>
+                    </div>
+                  </div>
+                ) : null}
+                {urlError && <p className="source-url-error">{urlError}</p>}
+                {!useMultiSource && (
+                  <p className="source-limit-note">{t("source.url_hint")}</p>
+                )}
+              </div>
+            )}
+
+            {activeTab === "text" && (
+              <div className="source-tab-body">
+                {useMultiSource && onAddText ? (
+                  <div className="source-paste">
+                    <input
+                      className="source-paste-label"
+                      type="text"
+                      placeholder={t("source.text_label")}
+                      value={pasteLabel}
+                      onChange={(e) => setPasteLabel(e.target.value)}
+                    />
+                    <textarea
+                      className="source-paste-textarea"
+                      placeholder={t("source.paste_placeholder")}
+                      value={pasteText}
+                      rows={3}
+                      onChange={(e) => setPasteText(e.target.value)}
+                    />
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      type="button"
+                      disabled={!pasteText.trim() || pasteBusy}
+                      onClick={() => { void handleAddText(); }}
+                    >
+                      {pasteBusy ? t("source.fetching") : t("source.add_text")}
+                    </Button>
+                  </div>
+                ) : (
+                  <p className="source-limit-note">{t("source.url_hint")}</p>
+                )}
+              </div>
+            )}
           </Tabs>
-          <SourceList sourceItems={sourceItems} onRemove={onSourceRemove} />
+          <SourceList
+            sourceItems={sourceItems}
+            onPreview={(item) => { void handlePreview(item); }}
+            onRemove={
+              useMultiSource && onRemoveSource
+                ? (item) => { if (item.id) { void onRemoveSource(item.id); } }
+                : onSourceRemove
+                  ? () => { void onSourceRemove(); }
+                  : undefined
+            }
+          />
           <div className="source-footer">
-            <span>{sourceItems.length} / 1 source</span>
-            <HoverTooltip content="Multiple links are planned for a later version"><Button variant="secondary" size="sm" type="button" disabled><LinkIcon size={13} /> Add Link</Button></HoverTooltip>
+            <span>{t("source.count").replace("{n}", String(sourceCount))}</span>
           </div>
         </>
       ) : (
         <>
-          <SourceList sourceItems={sourceItems} compact />
+          <SourceList
+            sourceItems={sourceItems}
+            compact
+            onPreview={(item) => { void handlePreview(item); }}
+          />
           <div className="source-inline-process">
             <div className="panel-title-row source-inline-process-title">
               <BarChart3 size={17} className="panel-title-icon" />
@@ -1761,51 +2047,191 @@ function SourcesPanel({
       <RecentTasksPanel history={history} runs={runs} currentJobId={jobId} locale={locale} />
       </CardContent>
     </Card>
+    {previewOpen
+      ? createPortal(
+          <SourcePreviewDialog
+            loading={previewLoading}
+            error={previewError}
+            preview={previewData}
+            onClose={() => setPreviewOpen(false)}
+          />,
+          document.body,
+        )
+      : null}
+    </>
   );
+}
+
+/** Build the secondary meta line (size / char count / url) for a source row. */
+function sourceMetaLine(s: SourceItem, characterUnit: string): string {
+  const kind = s.kind.toUpperCase();
+  if (s.kind === "url" && s.url) {
+    try {
+      const host = new URL(s.url).host;
+      return `${kind} · ${host} · ${s.char_count.toLocaleString()} ${characterUnit}`;
+    } catch {
+      return `${kind} · ${s.char_count.toLocaleString()} ${characterUnit}`;
+    }
+  }
+  if (s.kind === "text" || s.kind === "markdown") {
+    return `${kind} · ${s.char_count.toLocaleString()} ${characterUnit}`;
+  }
+  return `${kind} · ${(s.file_size / 1024).toFixed(1)} KB`;
 }
 
 function SourceList({
   sourceItems,
   compact = false,
   onRemove,
+  onPreview,
 }: {
-  sourceItems: Array<{ name: string; meta: string; type: string }>;
+  sourceItems: Array<{ id?: string; name: string; meta: string; type: string }>;
   compact?: boolean;
-  onRemove?: () => Promise<void> | void;
+  onRemove?: (item: { id?: string; name: string; meta: string; type: string }) => Promise<void> | void;
+  onPreview?: (item: { id?: string; name: string; meta: string; type: string }) => Promise<void> | void;
 }) {
   const { t } = useLocale();
   return (
     <div className={`source-list ${compact ? "source-list-compact" : ""}`}>
-      {sourceItems.length > 0 ? sourceItems.map((item) => (
-        <div className={`source-row ${onRemove ? "source-row-removable" : ""}`} key={item.name}>
-          <span className="source-row-leading">
-            <span className={`source-file-type source-file-${item.type.includes("doc") ? "doc" : "pdf"}`}>
-              {item.type.includes("doc") ? "DOC" : item.type.toUpperCase().slice(0, 3)}
+      {sourceItems.length > 0 ? sourceItems.map((item, index) => {
+        // Badge: map the source type to a short label + CSS color class so
+        // PDF/Markdown/Text/URL rows are visually distinguishable in the list.
+        const badge = sourceBadge(item.type);
+        return (
+          <div
+            className={`source-row ${onRemove ? "source-row-removable" : ""} ${onPreview ? "source-row-previewable" : ""}`}
+            key={item.id ?? `${item.name}-${index}`}
+            role={onPreview ? "button" : undefined}
+            tabIndex={onPreview ? 0 : undefined}
+            onClick={() => { if (onPreview) void onPreview(item); }}
+            onKeyDown={(event) => {
+              if (onPreview && (event.key === "Enter" || event.key === " ")) {
+                event.preventDefault();
+                void onPreview(item);
+              }
+            }}
+          >
+            <span className="source-row-leading">
+              <span className={`source-file-type source-file-${badge.cls}`}>
+                {badge.label}
+              </span>
+              {onRemove ? (
+                <button
+                  type="button"
+                  className="source-remove-button"
+                  aria-label={t("versions.delete")}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    void onRemove(item);
+                  }}
+                >
+                  <X size={13} />
+                </button>
+              ) : null}
             </span>
-            {onRemove ? (
-              <button
-                type="button"
-                className="source-remove-button"
-                aria-label={t("versions.delete")}
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  void onRemove();
-                }}
-              >
-                <X size={13} />
-              </button>
-            ) : null}
-          </span>
-          <span className="source-row-copy">
-            <strong>{item.name}</strong>
-            <em>{item.meta}</em>
-          </span>
-          <CircleCheck size={15} className="source-check" />
-        </div>
-      )) : null}
+            <span className="source-row-copy">
+              <strong>{item.name}</strong>
+              <em>{item.meta}</em>
+            </span>
+            {onPreview ? <Eye size={15} className="source-preview-icon" /> : <CircleCheck size={15} className="source-check" />}
+          </div>
+        );
+      }) : null}
     </div>
   );
+}
+
+function SourcePreviewDialog({
+  loading,
+  error,
+  preview,
+  onClose,
+}: {
+  loading: boolean;
+  error?: string;
+  preview?: SourcePreviewResponse;
+  onClose: () => void;
+}) {
+  const { t } = useLocale();
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  return (
+    <div className="source-preview-overlay" onMouseDown={onClose}>
+      <section
+        className="source-preview-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="source-preview-title"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <header className="source-preview-header">
+          <div>
+            <span>{t("source.preview")}</span>
+            <h2 id="source-preview-title">{preview?.title ?? t("source.preview")}</h2>
+          </div>
+          <button
+            type="button"
+            className="source-preview-close"
+            aria-label={t("source.preview_close")}
+            onClick={onClose}
+          >
+            <X size={18} />
+          </button>
+        </header>
+        <div className="source-preview-body">
+          {loading ? (
+            <div className="source-preview-state">
+              <LoaderCircle size={22} className="spin" />
+              <span>{t("source.preview_loading")}</span>
+            </div>
+          ) : error ? (
+            <div className="source-preview-state source-preview-error">
+              <strong>{t("source.preview_failed")}</strong>
+              <span>{error}</span>
+            </div>
+          ) : preview?.preview_type === "pdf" && preview.file_url ? (
+            <iframe
+              className="source-preview-pdf"
+              title={preview.title}
+              src={sourcePreviewFileUrl(preview.file_url)}
+            />
+          ) : preview?.preview_type === "text" ? (
+            <>
+              {preview.truncated ? (
+                <div className="source-preview-warning">{t("source.preview_truncated")}</div>
+              ) : null}
+              <pre className="source-preview-text">{preview.content}</pre>
+            </>
+          ) : (
+            <div className="source-preview-state">
+              <strong>{t("source.preview_unavailable")}</strong>
+              <span>{preview?.reason || t("source.preview_latex")}</span>
+            </div>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+/** Map a backend source kind to a (label, cssClass) badge. */
+function sourceBadge(type: string): { label: string; cls: string } {
+  const lower = type.toLowerCase();
+  if (lower.includes("pdf")) return { label: "PDF", cls: "pdf" };
+  if (lower.includes("doc") || lower.includes("latex") || lower.includes("tex")) return { label: "TEX", cls: "doc" };
+  if (lower.includes("md") || lower.includes("markdown")) return { label: "MD", cls: "md" };
+  if (lower.includes("text") || lower.includes("txt")) return { label: "TXT", cls: "txt" };
+  if (lower.includes("url") || lower.includes("link") || lower.includes("web")) return { label: "URL", cls: "link" };
+  if (lower.includes("mixed")) return { label: "MIX", cls: "md" };
+  return { label: type.toUpperCase().slice(0, 3) || "SRC", cls: "pdf" };
 }
 
 function SlideWorkspace({

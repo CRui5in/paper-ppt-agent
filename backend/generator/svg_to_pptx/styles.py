@@ -24,6 +24,11 @@ class SvgEffectRequiresRasterFallback(ValueError):
     """Raised when an SVG effect should be preserved by raster fallback."""
 
 
+def is_supported_shadow_filter(filter_elem: Any) -> bool:
+    """Return whether an SVG filter maps to one native DrawingML shadow."""
+    return _extract_shadow_filter(filter_elem) is not None
+
+
 def build_fill_xml(elem: Any, ctx: Any, opacity: float = 1.0) -> str:
     """Build DrawingML fill XML from SVG element attributes."""
     fill = ctx.get_attr(elem, "fill", "#000000")

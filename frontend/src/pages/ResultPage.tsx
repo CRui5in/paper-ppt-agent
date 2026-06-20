@@ -13,7 +13,7 @@ import { FontCustomizer } from "../components/result/FontCustomizer";
 import { HoverTooltip } from "../components/common/HoverTooltip";
 import { translateJobMessage, translateStageStatus } from "../lib/i18nStatus";
 import { readProviderProfile } from "../hooks/useSettingsStore";
-import type { CriticEvent, GenerateRequestPayload, GenerationHistoryItem, JobStatus, PreviewResponse, PreviewSlide, SlideDocument, SlideScene } from "../lib/types";
+import type { CriticEvent, GenerateRequestPayload, GenerationHistoryItem, JobStatus, PreviewResponse, PreviewSlide, SlideDocument, SlideScene, SourcesGroupResponse } from "../lib/types";
 import { Switch } from "../components/ui/switch";
 import { Progress } from "../components/ui/progress";
 import { RecentTasksPanel } from "../components/history/RecentTasksPanel";
@@ -546,7 +546,10 @@ export function ResultPage() {
             </div>
           </div>
           <div className="sources-content">
-            <ResultSourceSummary historyEntry={historyEntry} />
+            <ResultSourceSummary
+              historyEntry={historyEntry}
+              sourcesGroup={resolvedRun?.sourcesGroup}
+            />
             {(job?.status ?? result?.status ?? historyEntry?.status) === "complete" && jobId ? (
               <div className="result-left-section">
                 <div className="panel-title-row result-left-section-title">
@@ -743,16 +746,17 @@ export function ResultPage() {
   );
 }
 
-function ResultSourceSummary({ historyEntry }: { historyEntry?: GenerationHistoryItem }) {
+function ResultSourceSummary({
+  historyEntry,
+  sourcesGroup,
+}: {
+  historyEntry?: GenerationHistoryItem;
+  sourcesGroup?: SourcesGroupResponse;
+}) {
   const { t } = useLocale();
-  const type = (historyEntry?.sourceType ?? "pdf").toLowerCase();
-  const label = type.includes("doc") ? "DOC" : type.toUpperCase().slice(0, 3);
-  const meta = [
-    historyEntry?.sourceType?.toUpperCase(),
-    historyEntry?.updatedAt,
-  ].filter(Boolean).join(" · ");
+  const sources = sourcesGroup?.sources ?? [];
 
-  if (!historyEntry) {
+  if (!historyEntry && sources.length === 0) {
     return (
       <div className="source-empty-state result-source-summary">
         <FileText size={22} />
@@ -763,16 +767,67 @@ function ResultSourceSummary({ historyEntry }: { historyEntry?: GenerationHistor
 
   return (
     <div className="source-list source-list-compact result-source-summary">
-      <div className="source-row">
-        <span className={`source-file-type source-file-${type.includes("doc") ? "doc" : "pdf"}`}>{label}</span>
-        <span className="source-row-copy">
-          <strong>{historyEntry.fileName}</strong>
-          <em>{meta}</em>
-        </span>
-        <CircleCheck size={15} className="source-check" />
-      </div>
+      {sources.length > 0
+        ? sources.map((source) => {
+            const type = source.kind.toLowerCase();
+            const label = sourceTypeLabel(type);
+            const meta = [
+              source.kind.toUpperCase(),
+              source.char_count > 0
+                ? `${source.char_count.toLocaleString()} ${t("source.characters")}`
+                : source.url,
+            ].filter(Boolean).join(" · ");
+            return (
+              <div className="source-row" key={source.id}>
+                <span className={`source-file-type source-file-${sourceTypeClass(type)}`}>{label}</span>
+                <span className="source-row-copy">
+                  <strong>{source.label}</strong>
+                  <em>{meta}</em>
+                </span>
+                <CircleCheck size={15} className="source-check" />
+              </div>
+            );
+          })
+        : historyEntry
+          ? (() => {
+              const type = (historyEntry.sourceType ?? "pdf").toLowerCase();
+              const meta = [
+                historyEntry.sourceType?.toUpperCase(),
+                historyEntry.updatedAt,
+              ].filter(Boolean).join(" · ");
+              return (
+                <div className="source-row">
+                  <span className={`source-file-type source-file-${sourceTypeClass(type)}`}>
+                    {sourceTypeLabel(type)}
+                  </span>
+                  <span className="source-row-copy">
+                    <strong>{historyEntry.fileName}</strong>
+                    <em>{meta}</em>
+                  </span>
+                  <CircleCheck size={15} className="source-check" />
+                </div>
+              );
+            })()
+          : null}
     </div>
   );
+}
+
+function sourceTypeLabel(type: string): string {
+  if (type === "markdown") return "MD";
+  if (type === "text") return "TXT";
+  if (type === "latex") return "TEX";
+  if (type === "url") return "URL";
+  if (type.includes("doc")) return "DOC";
+  return type.toUpperCase().slice(0, 3);
+}
+
+function sourceTypeClass(type: string): string {
+  if (type === "url") return "link";
+  if (type === "text") return "txt";
+  if (type === "markdown") return "md";
+  if (type === "latex" || type.includes("tex") || type.includes("doc")) return "doc";
+  return "pdf";
 }
 
 function ResultSlideWorkspace({
@@ -858,7 +913,8 @@ function ResultRunStatus({
   const { t } = useLocale();
   const status = job?.status ?? historyEntry?.status;
   const reason = job?.error ?? historyEntry?.error ?? (status === "cancelled" ? t("result.cancelledReason") : "");
-  const latest = logs.length ? logs[logs.length - 1].replace(/^\[[^\]]+\]\s*/, "") : job?.message;
+  const rawLatest = logs.length ? logs[logs.length - 1].replace(/^\[[^\]]+\]\s*/, "") : job?.message;
+  const latest = translateJobMessage(rawLatest, locale) ?? rawLatest;
   return (
     <section className="result-run-status">
       <div className={`result-run-status-card result-run-status-${status ?? "unknown"}`}>

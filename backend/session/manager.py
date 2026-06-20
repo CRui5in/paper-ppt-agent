@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Any
 
 from backend.config import settings
+from backend.parser.source_model import Source, SourceGroup
 
 logger = logging.getLogger(__name__)
 
@@ -49,13 +50,25 @@ EVENT_RING_SIZE = 1000
 
 @dataclass
 class Session:
-    """A user upload session."""
+    """A user upload session.
+
+    The legacy single-file fields (``file_path`` / ``source_type`` /
+    ``file_name`` / ``file_size``) are retained for backward compatibility —
+    the old ``/api/upload`` endpoint still populates them, and historical
+    session snapshots are loaded with them. New multi-source sessions also
+    populate ``sources``; when non-empty it takes precedence over the
+    single-file fields at generation time (see ``GenerationRequest``).
+    """
 
     id: str
     file_path: Path
-    source_type: str  # "pdf" or "latex"
+    source_type: str  # "pdf", "latex", "text", "markdown", "url", or "mixed"
     file_name: str
     file_size: int
+    # Multi-source list. Empty for legacy single-file sessions. Each Source
+    # carries its own kind/label/file_path so the API can serve a Sources
+    # panel and the pipeline can dispatch per-source parsers.
+    sources: list = field(default_factory=list)
 
 
 @dataclass
@@ -117,6 +130,7 @@ class SessionManager:
         file_name: str,
         file_size: int,
         session_id: str | None = None,
+        sources: list[Source] | None = None,
     ) -> Session:
         session_id = session_id or uuid.uuid4().hex[:12]
         session = Session(
@@ -125,6 +139,7 @@ class SessionManager:
             source_type=source_type,
             file_name=file_name,
             file_size=file_size,
+            sources=list(sources) if sources else [],
         )
         self._sessions[session_id] = session
         self._persist_state()
@@ -132,6 +147,72 @@ class SessionManager:
 
     def get_session(self, session_id: str) -> Session | None:
         return self._sessions.get(session_id)
+
+    # ── multi-source management ─────────────────────────────────────────────
+    # These mutate the Session.sources list in place and persist. The API
+    # layer (endpoints/sources.py) is the sole intended caller; it resolves
+    # the actual upload bytes / URL fetch before invoking these so the stored
+    # Source is already concrete (has a file_path or raw_text).
+
+    def add_source(self, session_id: str, source: Source) -> Session | None:
+        session = self._sessions.get(session_id)
+        if session is None:
+            return None
+        # ``order`` defaults to "append after the last source" so the panel
+        # shows sources in insertion order without the caller tracking it.
+        if not any(s.id == source.id for s in session.sources):
+            if not source.order:
+                source.order = len(session.sources)
+            session.sources.append(source)
+        else:
+            # Replace in place if the id already exists (re-add after fetch).
+            for i, existing in enumerate(session.sources):
+                if existing.id == source.id:
+                    if not source.order:
+                        source.order = existing.order
+                    session.sources[i] = source
+                    break
+        self._persist_state()
+        return session
+
+    def update_source(self, session_id: str, source: Source) -> Session | None:
+        session = self._sessions.get(session_id)
+        if session is None:
+            return None
+        for i, existing in enumerate(session.sources):
+            if existing.id == source.id:
+                session.sources[i] = source
+                self._persist_state()
+                return session
+        return session
+
+    def remove_source(self, session_id: str, source_id: str) -> tuple[Session | None, Source | None]:
+        """Remove one source from a session.
+
+        Returns ``(session, removed_source)`` so the caller can delete the
+        source's upload bytes from disk. ``(session, None)`` when the id was
+        not present; ``(None, None)`` when the session itself is unknown.
+        """
+        session = self._sessions.get(session_id)
+        if session is None:
+            return None, None
+        removed: Source | None = None
+        new_list: list[Source] = []
+        for s in session.sources:
+            if s.id == source_id and removed is None:
+                removed = s
+                continue
+            new_list.append(s)
+        if removed is not None:
+            session.sources = new_list
+            self._persist_state()
+        return session, removed
+
+    def get_sources(self, session_id: str) -> list[Source]:
+        session = self._sessions.get(session_id)
+        if session is None:
+            return []
+        return list(session.sources)
 
     def create_job(self, session_id: str) -> Job:
         job_id = uuid.uuid4().hex[:12]
@@ -570,12 +651,18 @@ class SessionManager:
 
         for raw_session in payload.get("sessions", []):
             try:
+                # ``sources`` is optional (absent on legacy single-file
+                # snapshots). Source.from_dict tolerates missing fields and
+                # coerces the file_path string back to Path.
+                raw_sources = raw_session.get("sources") or []
+                sources = [Source.from_dict(item) for item in raw_sources]
                 session = Session(
                     id=str(raw_session["id"]),
                     file_path=Path(raw_session["file_path"]),
                     source_type=str(raw_session["source_type"]),
                     file_name=str(raw_session["file_name"]),
                     file_size=int(raw_session["file_size"]),
+                    sources=sources,
                 )
             except (KeyError, TypeError, ValueError):
                 continue
@@ -627,6 +714,9 @@ class SessionManager:
             "source_type": session.source_type,
             "file_name": session.file_name,
             "file_size": session.file_size,
+            # Source.to_dict stores file_path as str and keeps every field
+            # JSON-native, so the whole snapshot stays json.dumps-able.
+            "sources": [s.to_dict() for s in session.sources],
         }
 
     @staticmethod

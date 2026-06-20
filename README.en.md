@@ -42,7 +42,6 @@ A multi-agent pipeline for automatically generating editable PowerPoint presenta
 | **Multi-Agent Pipeline** | Strategist → Executor → Critic three-stage collaboration for content extraction and layout generation |
 | **Agent Generation Mode** | The workbench supports local Claude Code / Codex runtimes for presentation generation |
 | **Static + Visual QA** | Automatically detects text overflow, element overlap, low contrast, and triggers repair |
-| **Icon Semantic Matching** | RAG semantic search via Gemini Embedding to automatically match icons to slide content |
 | **Feedback Iteration** | Targeted or full regeneration with structural changes (insert, remove, reorder) and version snapshots |
 | **Real-time Observability** | Agent log stream, Token usage aggregation, per-page Critic detail panel |
 | **Multi-language** | Chinese, English, bilingual, and custom language output |
@@ -108,27 +107,25 @@ cd frontend && npm run dev -- --host 127.0.0.1 --port 5173 --strictPort
 
 ### June 2026
 
-- Enhanced paper parsing, section planning, and content filtering
-- Improved accuracy of body figures and page image matching
-- Refined table of contents and section division for better report structure
-- Improved Provider and Agent generation stability
-- Refined SVG repair, preview parsing, and generation status feedback
+- 📚 **Multi-source Data Support** — Use papers, links, and text materials together as generation sources
+- 🧠 **Paper Parsing Enhancements** — Enhanced paper parsing, section planning, and content filtering
+- 🖼️ **Figure Matching Improvements** — Improved accuracy of body figures and page image matching
+- 🧭 **Report Structure Optimization** — Refined table of contents and section division for better report structure
+- 🛠️ **Generation Stability Improvements** — Improved Provider and Agent generation stability
+- 🌐 **Status and Preview Refinements** — Refined SVG repair, preview parsing, and generation status feedback
 - 🧩 **Template Import Codex Support**
 - 🚀 **Interactive Launcher**
 
 ### May 2026
 
-- 🧠 **DeepSeek Provider** — Dedicated DeepSeek provider support with thinking mode configuration
 - 👁️ **Visual QA (Experimental)** — Multimodal LLM renders slides as images for layout and contrast review
 - 🖥️ **Real-time SVG Preview + Log Panel + Critic Detail View** — Live slide preview, Agent logs, and review details during generation
-- 🎯 **Icon RAG Semantic Search** — Gemini Embedding-based semantic search for icon candidates, independently toggleable
 - 🎨 **Template System & Custom Fonts** — Pre-built industry-style templates with custom heading/body font configuration
 - 🧩 **Template Import** — PPTX direct import, five-page template mapping, and Claude Code Agent mode for automated template analysis and templateization
 - 🤖 **Agent Generation Mode** — Integrated Claude Code / Codex presentation generation in the workbench
 - 📝 **PPT Editor** — Visual PPT editor integrated into generated results and template-import workflows, with slide editing, notes, saving, and re-export
 - 🔬 **Deep Research Workflow** — External research enrichment (arXiv / Semantic Scholar / Web) with relevance filtering
-- 🖼️ **Online Image Search** — Search for images online using Tavily / SerpAPI, with AI layout analysis, one-click undo, and download
-- 🎨 **UI Refactor** — Rewrote UI with Konva canvas editor and upgraded SVG-to-PPTX converter
+- 🎨 **Frontend UI Refactor** — Refactored the workbench, result page, and template-import frontend experience, and upgraded the SVG-to-PPTX converter
 
 ### April 2026
 

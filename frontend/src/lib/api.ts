@@ -40,6 +40,11 @@ import type {
   UpdateFontsRequest,
   UpdateFontsResponse,
   UploadResponse,
+  SourcesGroupResponse,
+  SourceItem,
+  SourcePreviewResponse,
+  AddUrlSourceResponse,
+  BrowserInstallStatusResponse,
   UserAnnotation,
   UserTemplateItem,
   VersionDetailResponse,
@@ -158,6 +163,96 @@ export async function uploadPaper(file: File): Promise<UploadResponse> {
     method: "POST",
     body: formData,
   });
+}
+
+// ── Multi-source API (Sources panel) ────────────────────────────────────────
+// Mirrors the backend /api/sources endpoints. Each source is appended to the
+// session's ordered list; the panel renders the full group from getSourcesGroup.
+
+/** Create an empty sources group and return its session id. */
+export async function createSourcesGroup(): Promise<SourcesGroupResponse> {
+  return request<SourcesGroupResponse>("/api/sources", { method: "POST" });
+}
+
+/** Append one or more uploaded files (pdf/tex/zip/md/txt) to the group. */
+export async function addFileSources(
+  sessionId: string,
+  files: File[],
+): Promise<SourcesGroupResponse> {
+  const formData = new FormData();
+  for (const file of files) {
+    formData.append("files", file);
+  }
+  return request<SourcesGroupResponse>(
+    `/api/sources/${sessionId}/files`,
+    { method: "POST", body: formData },
+  );
+}
+
+/** Append pasted text to the group. */
+export async function addTextSource(
+  sessionId: string,
+  payload: { label: string; text: string; role?: "primary" | "supplementary" },
+): Promise<SourcesGroupResponse> {
+  return request<SourcesGroupResponse>(`/api/sources/${sessionId}/text`, {
+    method: "POST",
+    body: JSON.stringify({
+      label: payload.label,
+      text: payload.text,
+      role: payload.role ?? "primary",
+    }),
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+/** Append a URL; the page is fetched + validated on the backend, so this
+ *  throws (ApiError with .status 400) when the URL is bad. */
+export async function addUrlSource(
+  sessionId: string,
+  payload: { url: string; label?: string; role?: "primary" | "supplementary" },
+): Promise<AddUrlSourceResponse> {
+  return request<AddUrlSourceResponse>(`/api/sources/${sessionId}/url`, {
+    method: "POST",
+    body: JSON.stringify({
+      url: payload.url,
+      label: payload.label ?? null,
+      role: payload.role ?? "primary",
+    }),
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+/** List all sources in a group (also returned by every add/remove call). */
+export async function getSourcesGroup(sessionId: string): Promise<SourcesGroupResponse> {
+  return request<SourcesGroupResponse>(`/api/sources/${sessionId}`);
+}
+
+export async function getBrowserInstallStatus(): Promise<BrowserInstallStatusResponse> {
+  return request<BrowserInstallStatusResponse>("/api/sources/runtime/browser-status");
+}
+
+export async function getSourcePreview(
+  sessionId: string,
+  sourceId: string,
+): Promise<SourcePreviewResponse> {
+  return request<SourcePreviewResponse>(
+    `/api/sources/${sessionId}/${sourceId}/preview`,
+  );
+}
+
+export function sourcePreviewFileUrl(fileUrl: string): string {
+  return `${API_BASE}${fileUrl}`;
+}
+
+/** Remove one source by id (also deletes its upload bytes server-side). */
+export async function removeSource(
+  sessionId: string,
+  sourceId: string,
+): Promise<SourcesGroupResponse> {
+  return request<SourcesGroupResponse>(
+    `/api/sources/${sessionId}/${sourceId}`,
+    { method: "DELETE" },
+  );
 }
 
 export async function fetchProviders(): Promise<ProvidersResponse> {

@@ -9,6 +9,7 @@ from fastapi import APIRouter, File, HTTPException, UploadFile, status
 
 from backend.api.schemas import FileInfo, UploadResponse
 from backend.config import settings
+from backend.parser.source_model import Source
 from backend.runtime import aensure_dir, awrite_bytes
 from backend.session.manager import session_manager
 
@@ -66,12 +67,24 @@ async def upload_paper(file: UploadFile = File(...)) -> UploadResponse:
     # block the event loop for 50–200ms on slow disks.
     await awrite_bytes(file_path, content)
 
+    # Mirror the single upload into the multi-source list so the generation
+    # path (which reads session.sources when present) treats legacy uploads
+    # uniformly. The id is derived from the session for traceability.
+    legacy_source = Source(
+        id=session_id,
+        kind=source_type,  # type: ignore[arg-type]
+        label=file.filename or file_path.name,
+        file_path=file_path,
+        file_size=len(content),
+        order=0,
+    )
     session = session_manager.create_session(
         file_path=file_path,
         source_type=source_type,
         file_name=file.filename or file_path.name,
         file_size=len(content),
         session_id=session_id,
+        sources=[legacy_source],
     )
 
     return UploadResponse(

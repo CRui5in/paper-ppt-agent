@@ -41,11 +41,17 @@ def _event_payload(event: Any) -> dict[str, Any]:
 def _request_from_payload(payload: dict[str, Any]) -> Any:
     from backend.api.schemas import ResearchConfig
     from backend.orchestrator.pipeline import GenerationRequest
+    from backend.parser.source_model import Source
 
     data = dict(payload["request"])
     data["file_path"] = Path(data["file_path"])
     if isinstance(data.get("research_config"), dict):
         data["research_config"] = ResearchConfig(**data["research_config"])
+    if isinstance(data.get("sources"), list):
+        data["sources"] = [
+            Source.from_dict(item) if isinstance(item, dict) else item
+            for item in data["sources"]
+        ]
     allowed = {field.name for field in fields(GenerationRequest)}
     ignored = sorted(set(data) - allowed)
     if ignored:

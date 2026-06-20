@@ -18,6 +18,75 @@ class UploadResponse(BaseModel):
     file_info: FileInfo
 
 
+# ── Multi-source schemas (Layer 4) ───────────────────────────────────────────
+# These mirror backend.parser.source_model.Source but are the wire contract
+# with the frontend Sources panel. ``kind`` widens beyond pdf/latex to the
+# multi-source set; ``role`` / ``order`` carry display intent.
+
+
+class SourceItem(BaseModel):
+    id: str
+    kind: Literal["pdf", "latex", "text", "markdown", "url"]
+    label: str
+    role: Literal["primary", "supplementary"] = "primary"
+    order: int = 0
+    file_size: int = 0
+    url: str | None = None
+    parse_status: Literal["pending", "fetching", "ok", "error"] = "pending"
+    parse_error: str | None = None
+    char_count: int = 0
+
+
+class SourcesGroupResponse(BaseModel):
+    """The full Sources panel state for one session."""
+
+    session_id: str
+    sources: list[SourceItem] = []
+
+
+class AddTextSourceRequest(BaseModel):
+    label: str = Field(default="", description="Display name for the pasted text.")
+    text: str = Field(..., min_length=1, description="Pasted text body.")
+    role: Literal["primary", "supplementary"] = "primary"
+
+
+class AddUrlSourceRequest(BaseModel):
+    url: str = Field(..., min_length=1, description="http(s) URL to fetch.")
+    label: str | None = Field(default=None, description="Optional display name.")
+    role: Literal["primary", "supplementary"] = "primary"
+
+
+class AddUrlSourceResponse(BaseModel):
+    """Returned after a URL is fetched + validated on add.
+
+    Including ``char_count`` / ``title`` up front lets the frontend show
+    "Added: <title> (4.2k chars)" without a separate round trip.
+    """
+
+    source: SourceItem
+    title: str
+    char_count: int
+
+
+class SourcePreviewResponse(BaseModel):
+    """Preview contract shared by uploaded, pasted, and URL sources."""
+
+    source_id: str
+    title: str
+    preview_type: Literal["pdf", "text", "unsupported"]
+    content: str | None = None
+    file_url: str | None = None
+    mime_type: str | None = None
+    truncated: bool = False
+    reason: str | None = None
+
+
+class BrowserInstallStatusResponse(BaseModel):
+    state: Literal["idle", "checking", "installing", "ready", "error"]
+    progress: int | None = None
+    message: str = ""
+
+
 class DeepSeekSettings(BaseModel):
     thinking_enabled: bool = True
     reasoning_effort: Literal["high", "max"] = "max"
