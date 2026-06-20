@@ -38,7 +38,7 @@ Every page MUST follow this three-region structure. Content area boundary is a *
 1. Generate pages **sequentially**, one at a time
 2. Follow the design_spec color scheme, typography, and layout exactly
 3. Use proper text sizing: titles large, body readable, captions small
-4. **Visual depth is required** — flat pages without elevation or emphasis look unfinished. Use shadows, gradients, and layered elements to create depth. See `## Visual Design Techniques` below.
+4. **Visual depth is required** — use gradients, accent bars, or a simple drop shadow attached directly to one shape. Never simulate shadows with offset translucent duplicate rectangles, never apply a filter to `<g>`, and never use text glow or complex blur filters.
 5. Data visualizations: use SVG shapes directly (rect bars, circle pies, path lines)
 6. Images: reference with `<image href="path" x="" y="" width="" height=""/>`. The `href` MUST point to a real file path that exists (e.g. `../sources/images/fig_001_p1.png`). Do NOT invent filenames. If no real image is available, use native SVG shapes, charts, or diagrams instead. **When Paper Figure Guidance includes `actual dimensions: WxH (ratio R)`, calculate the final visible image rectangle from that ratio.** Do not center a small image inside a much larger empty frame — revise the image/text regions before drawing. Treat the assigned image box height as a hard cap that must include the visible image and any nearby caption.
 7. **Content area boundary**: All text and essential visual elements MUST remain within the content area (x=40, y=100, width=1200, height=520). Account for text width when positioning—longer text needs more left margin. When in doubt, leave breathing room rather than risk clipping.
@@ -80,56 +80,22 @@ Do not over-wrap Chinese text by using a narrow box when horizontal room exists.
 
 **Flat pages without elevation or emphasis look unfinished.** Use these techniques to create visual depth and professional polish.
 
-### Shadows (for cards, panels, floating elements)
+### Simple Shadows (for cards, panels, floating elements)
 
-Filter soft shadow — best for cards and elevated elements:
+Use a simple `<feDropShadow>` referenced directly by one `rect`, `path`,
+`circle`, or other individual shape. Do not create shadow depth by placing an
+offset translucent duplicate rounded rectangle behind the card.
 ```xml
 <defs>
-  <filter id="softShadow" x="-15%" y="-15%" width="140%" height="140%">
-    <feGaussianBlur in="SourceAlpha" stdDeviation="12"/>
-    <feOffset dx="0" dy="6" result="offsetBlur"/>
-    <feFlood flood-color="#000000" flood-opacity="0.15" result="shadowColor"/>
-    <feComposite in="shadowColor" in2="offsetBlur" operator="in" result="shadow"/>
-    <feMerge>
-      <feMergeNode in="shadow"/>
-      <feMergeNode in="SourceGraphic"/>
-    </feMerge>
+  <filter id="cardShadow" x="-10%" y="-10%" width="120%" height="120%">
+    <feDropShadow dx="0" dy="4" stdDeviation="3"
+                  flood-color="#0F172A" flood-opacity="0.14"/>
   </filter>
 </defs>
-<rect x="60" y="60" width="400" height="240" rx="12" fill="#FFFFFF" filter="url(#softShadow)"/>
+<rect x="60" y="60" width="400" height="240" rx="12"
+      fill="#FFFFFF" filter="url(#cardShadow)"/>
 ```
-Parameters: `stdDeviation: 10-16`, `flood-opacity: 0.12-0.20`, `dy: 4-8`, `dx: 0-2`.
-
-Colored shadow — for accent cards and brand-colored elements:
-```xml
-<filter id="colorShadow" x="-15%" y="-15%" width="140%" height="140%">
-  <feGaussianBlur in="SourceAlpha" stdDeviation="10"/>
-  <feOffset dx="0" dy="6" result="offsetBlur"/>
-  <feFlood flood-color="#1A73E8" flood-opacity="0.20" result="shadowColor"/>
-  <feComposite in="shadowColor" in2="offsetBlur" operator="in" result="shadow"/>
-  <feMerge>
-    <feMergeNode in="shadow"/>
-    <feMergeNode in="SourceGraphic"/>
-  </feMerge>
-</filter>
-```
-
-### Glow (for titles, key metrics, hero text)
-
-```xml
-<defs>
-  <filter id="titleGlow" x="-30%" y="-30%" width="160%" height="160%">
-    <feGaussianBlur in="SourceAlpha" stdDeviation="6" result="blur"/>
-    <feFlood flood-color="#1A73E8" flood-opacity="0.45" result="glowColor"/>
-    <feComposite in="glowColor" in2="blur" operator="in" result="glow"/>
-    <feMerge>
-      <feMergeNode in="glow"/>
-      <feMergeNode in="SourceGraphic"/>
-    </feMerge>
-  </filter>
-</defs>
-```
-Parameters: `stdDeviation: 4-8`, `flood-opacity: 0.35-0.55`, use brand color (NOT black).
+Do not use filters on `<g>` groups, and do not use glow effects.
 
 ### Gradients (for backgrounds, buttons, overlays)
 
@@ -167,8 +133,7 @@ Radial gradient — for spotlight backgrounds, vignette effects:
 
 Every card/panel should follow this layered structure:
 ```xml
-<!-- Shadow layer -->
-<rect x="60" y="120" width="380" height="200" rx="12" fill="#FFFFFF" filter="url(#softShadow)"/>
+<rect x="60" y="120" width="380" height="200" rx="12" fill="#FFFFFF" filter="url(#cardShadow)"/>
 <!-- Accent top bar -->
 <rect x="60" y="120" width="380" height="4" rx="2" fill="#1A73E8"/>
 <!-- Icon -->

@@ -9,7 +9,8 @@ Orchestrates all finalization steps in sequence:
 5.5. Merge overlapping sibling text nodes
 5.55. Fix icon-text alignment & merge underfilled text lines
 5.6. Normalize CSS font fallback stacks
-6. Convert rounded rects to paths
+6. Remove rasterizing SVG filters
+7. Convert rounded rects to paths
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ from .flatten_tspan import flatten_text_in_svg
 from .merge_adjacent_text import merge_adjacent_text_in_svg
 from .normalize_fonts import normalize_text_fonts_in_svg
 from .svg_text_reflow import reflow_text_in_svg
+from .strip_filters import strip_filters_in_svg
 from .repair_svg import repair_svg_file
 from .svg_rect_to_path import convert_rounded_rects_in_svg
 from ..project_manager import prepare_for_finalize, get_svg_files
@@ -77,6 +79,7 @@ def finalize_project(
         "texts_reflowed": 0,
         "fonts_normalized": 0,
         "text_integrity_restored": 0,
+        "filters_removed": 0,
         "rects_converted": 0,
     }
 
@@ -127,7 +130,10 @@ def finalize_project(
             stats["text_integrity_restored"] += 1
             stats["fonts_normalized"] += normalize_text_fonts_in_svg(svg_path)
 
-        # Step 6: Convert rounded rects to paths
+        # Step 6: Remove filters that would force full-slide raster fallback.
+        stats["filters_removed"] += strip_filters_in_svg(svg_path)
+
+        # Step 7: Convert rounded rects to paths
         stats["rects_converted"] += convert_rounded_rects_in_svg(svg_path)
 
     return stats

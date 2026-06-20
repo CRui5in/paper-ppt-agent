@@ -114,7 +114,9 @@ export function translateJobMessage(message: string | undefined, locale: Locale)
     "Agent job stopped before a live session was available.": "Agent 会话启动前已停止任务。",
     "Preparing paper brief": "正在准备论文概要",
     "Generating manuscript": "正在生成讲稿",
+    "Generating manuscript from full paper": "正在根据完整论文生成讲稿",
     "Generating manuscript from brief": "正在根据论文概要生成讲稿",
+    "Full paper exceeded provider context; retrying compact fallback": "完整论文超出模型上下文，正在使用精简内容重试",
     "Pass 1/4 — Deep reading": "第 1/4 轮 — 深度研读",
     "Pass 2/4 — Narrative arc": "第 2/4 轮 — 叙事弧线",
     "Pass 3/4 — Manuscript": "第 3/4 轮 — 讲稿生成",
@@ -143,6 +145,22 @@ export function translateJobMessage(message: string | undefined, locale: Locale)
     "Manuscript revised": "讲稿已更新",
     "Rebuilding design specification...": "正在重建设计规范...",
     "Design spec rebuilt": "设计规范已重建",
+    "Usage update": "用量已更新",
+    "Codex Agent turn started.": "Codex Agent 已开始当前轮次。",
+    "Codex app-server is ready; starting Agent thread...": "Codex 服务已就绪，正在启动 Agent 线程...",
+    "Codex Agent thread started; waiting for initial prompt...": "Codex Agent 线程已启动，正在等待初始任务...",
+    "Submitting Codex Agent turn...": "正在提交 Codex Agent 轮次...",
+    "Codex Agent turn submitted; streaming events...": "Codex Agent 轮次已提交，正在接收实时事件...",
+    "Checking Agent output by exporting PPTX...": "正在通过导出 PPTX 检查 Agent 输出...",
+    "Agent generation contract failed; requesting a direct per-slide repair...": "Agent 生成结果不符合要求，正在请求逐页修复...",
+    "Agent still has SVG/layout contract warnings after repair; continuing export with warnings recorded.": "修复后仍有 SVG/布局警告，已记录警告并继续导出。",
+    "Agent repaired direct authoring and SVG contract violations.": "Agent 已修复页面编写和 SVG 规范问题。",
+    "Presentation re-exported": "演示文稿已重新导出",
+    "Presentation saved from PPTist": "演示文稿已从编辑器保存",
+    "Server is busy: too many jobs queued.": "服务器繁忙：排队任务过多。",
+    "Server is shutting down.": "服务器正在关闭。",
+    "Failed to prepare refine workspace": "无法准备优化工作区",
+    "Cannot refine: manuscript.md or design_spec.md missing from project.": "无法优化：项目中缺少 manuscript.md 或 design_spec.md。",
   };
   if (exact[message]) {
     return exact[message];
@@ -150,6 +168,23 @@ export function translateJobMessage(message: string | undefined, locale: Locale)
 
   if (message.startsWith("External research prefetch failed:")) {
     return message.replace("External research prefetch failed:", "外部研究预取失败：");
+  }
+
+  const parsingSourcesMatch = message.match(/^Parsing (\d+) sources\.\.\.$/);
+  if (parsingSourcesMatch) {
+    return `正在解析 ${parsingSourcesMatch[1]} 个来源...`;
+  }
+
+  const queuePositionMatch = message.match(/^Queued for generation \(position (\d+)\)$/);
+  if (queuePositionMatch) {
+    return `已加入生成队列（第 ${queuePositionMatch[1]} 位）`;
+  }
+
+  const parsedWithFailuresMatch = message.match(
+    /^Parsed:\s*(.+)\s+\((\d+) source\(s\) failed and were skipped\)$/,
+  );
+  if (parsedWithFailuresMatch) {
+    return `已解析：${parsedWithFailuresMatch[1]}（${parsedWithFailuresMatch[2]} 个来源解析失败，已跳过）`;
   }
 
   const parsedMatch = message.match(/^Parsed:\s*(.+)$/);
@@ -174,6 +209,21 @@ export function translateJobMessage(message: string | undefined, locale: Locale)
     return `已生成 ${generatedSlidesMatch[1]} 页`;
   }
 
+  const agentGeneratedSlidesMatch = message.match(/^Agent generated (\d+) slides\.$/);
+  if (agentGeneratedSlidesMatch) {
+    return `Agent 已生成 ${agentGeneratedSlidesMatch[1]} 页`;
+  }
+
+  const agentUpdatedSlidesMatch = message.match(/^Agent updated (\d+) slides\.$/);
+  if (agentUpdatedSlidesMatch) {
+    return `Agent 已更新 ${agentUpdatedSlidesMatch[1]} 页`;
+  }
+
+  const agentUpdatedSlideMatch = message.match(/^Agent updated slide (\d+)$/);
+  if (agentUpdatedSlideMatch) {
+    return `Agent 已更新第 ${agentUpdatedSlideMatch[1]} 页`;
+  }
+
   const regeneratedSlidesMatch = message.match(/^(\d+) slides regenerated$/);
   if (regeneratedSlidesMatch) {
     return `已重新生成 ${regeneratedSlidesMatch[1]} 页`;
@@ -182,6 +232,67 @@ export function translateJobMessage(message: string | undefined, locale: Locale)
   const processedFilesMatch = message.match(/^Processed (\d+) files$/);
   if (processedFilesMatch) {
     return `已处理 ${processedFilesMatch[1]} 个文件`;
+  }
+
+  const templateCopiedMatch = message.match(/^Template '([^']+)' copied into Agent workspace\.$/);
+  if (templateCopiedMatch) {
+    return `模板「${templateCopiedMatch[1]}」已复制到 Agent 工作区。`;
+  }
+
+  const exportGatePassedMatch = message.match(/^Agent export gate passed(?::|; PPTX exported successfully:)\s*(.*)$/);
+  if (exportGatePassedMatch) {
+    const path = exportGatePassedMatch[1].trim();
+    return path ? `Agent 导出检查已通过：${path}` : "Agent 导出检查已通过";
+  }
+
+  const exportGateFailedDuringMatch = message.match(/^Agent export gate failed during ([^:]+):\s*(.+)$/);
+  if (exportGateFailedDuringMatch) {
+    return `Agent 导出检查在 ${translateStageStatus(exportGateFailedDuringMatch[1], locale, "progress")} 阶段失败：${exportGateFailedDuringMatch[2]}`;
+  }
+
+  const exportGateFailedMatch = message.match(/^Agent export gate failed after (\d+) attempt\(s\)\.\s*(.*)$/);
+  if (exportGateFailedMatch) {
+    return `Agent 导出检查在 ${exportGateFailedMatch[1]} 次尝试后仍失败。${exportGateFailedMatch[2]}`;
+  }
+
+  const timeoutMatch = message.match(/^Job exceeded timeout of (\d+)s$/);
+  if (timeoutMatch) {
+    return `任务超过 ${timeoutMatch[1]} 秒超时限制`;
+  }
+
+  const producedSlidesMismatch = message.match(
+    /^Agent produced (\d+) slides, expected at least (\d+)\.$/,
+  );
+  if (producedSlidesMismatch) {
+    return `Agent 生成了 ${producedSlidesMismatch[1]} 页，至少需要 ${producedSlidesMismatch[2]} 页。`;
+  }
+
+  const projectMissingMatch = message.match(/^Project directory not found:\s*(.+)$/);
+  if (projectMissingMatch) {
+    return `未找到项目目录：${projectMissingMatch[1]}`;
+  }
+
+  const generationFailedDuringMatch = message.match(/^Generation failed during ([^.]+)\.$/);
+  if (generationFailedDuringMatch) {
+    return `生成在“${translateStageStatus(generationFailedDuringMatch[1], locale, "progress")}”阶段失败。`;
+  }
+
+  const failurePrefixes: Array<[string, string]> = [
+    ["Pipeline failed:", "生成流程失败："],
+    ["Generation failed:", "生成失败："],
+    ["Agent generation failed:", "Agent 生成失败："],
+    ["Refinement failed:", "优化失败："],
+    ["External research prefetch failed:", "外部研究预取失败："],
+    ["Codex runtime is not ready:", "Codex 运行环境未就绪："],
+  ];
+  for (const [prefix, translated] of failurePrefixes) {
+    if (message.startsWith(prefix)) {
+      return translated + message.slice(prefix.length).trimStart();
+    }
+  }
+
+  if (message.startsWith("The complete multi-source corpus exceeds the selected model's context window")) {
+    return "完整的多来源资料超出了当前模型的上下文窗口。系统未自动截断内容，请改用更大上下文的模型或主动移除部分来源。";
   }
 
   // External research enrichment summary, e.g.

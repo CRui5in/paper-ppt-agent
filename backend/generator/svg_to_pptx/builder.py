@@ -413,6 +413,9 @@ def _evaluate_export_audit(
     findings: list[str] = []
 
     if conversion_mode == "fallback_image":
+        findings.append(
+            "native SVG conversion failed and the slide was rasterized as a full-slide picture"
+        )
         return findings
 
     if source_metrics["text_nodes"] > 0 and output_metrics["text_boxes"] == 0:

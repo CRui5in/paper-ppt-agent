@@ -1,4 +1,4 @@
-export type SourceType = "pdf" | "latex";
+export type SourceType = "pdf" | "latex" | "text" | "markdown" | "url" | "mixed";
 
 export interface FileInfo {
   name: string;
@@ -9,6 +9,52 @@ export interface FileInfo {
 export interface UploadResponse {
   session_id: string;
   file_info: FileInfo;
+}
+
+// ── Multi-source (NotebookLM-style Sources panel) ───────────────────────────
+
+/** Wire shape of one source row (mirrors backend SourceItem). */
+export interface SourceItem {
+  id: string;
+  kind: "pdf" | "latex" | "text" | "markdown" | "url";
+  label: string;
+  role: "primary" | "supplementary";
+  order: number;
+  file_size: number;
+  url: string | null;
+  parse_status: "pending" | "fetching" | "ok" | "error";
+  parse_error: string | null;
+  char_count: number;
+}
+
+/** Response from the /api/sources group endpoints. */
+export interface SourcesGroupResponse {
+  session_id: string;
+  sources: SourceItem[];
+}
+
+/** Response from POST /api/sources/{sid}/url — includes the fetched title. */
+export interface AddUrlSourceResponse {
+    source: SourceItem;
+    title: string;
+    char_count: number;
+}
+
+export interface SourcePreviewResponse {
+  source_id: string;
+  title: string;
+  preview_type: "pdf" | "text" | "unsupported";
+  content: string | null;
+  file_url: string | null;
+  mime_type: string | null;
+  truncated: boolean;
+  reason: string | null;
+}
+
+export interface BrowserInstallStatusResponse {
+  state: "idle" | "checking" | "installing" | "ready" | "error";
+  progress: number | null;
+  message: string;
 }
 
 export interface ProviderModel {

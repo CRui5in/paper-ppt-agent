@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
-import { cancelJob, deleteJob, deleteSession, fetchBackendHealth, fetchJobEvents, fetchJobStatus, fetchPreview, fetchProjectPreview, fetchProviders, generatePresentation, interruptGenerationAgent, isNotFoundError, refinePresentation, sendGenerationAgentFeedback, uploadPaper } from "../lib/api";
+import { cancelJob, deleteJob, deleteSession, fetchBackendHealth, fetchJobEvents, fetchJobStatus, fetchPreview, fetchProjectPreview, fetchProviders, generatePresentation, interruptGenerationAgent, isNotFoundError, refinePresentation, sendGenerationAgentFeedback, uploadPaper, createSourcesGroup, addFileSources, addTextSource, addUrlSource, getSourcesGroup, removeSource } from "../lib/api";
 import type {
   CriticEvent,
   GenerateRequestPayload,
@@ -16,6 +16,9 @@ import type {
   ResearchEnrichmentStats,
   ResearchConfig,
   UploadResponse,
+  SourcesGroupResponse,
+  SourceItem,
+  SourceType,
 } from "../lib/types";
 import { openJobSocket } from "../lib/ws";
 
@@ -114,6 +117,10 @@ interface RunConfigSnapshot {
 interface RunSnapshot {
   jobId: string;
   uploadSession?: UploadResponse;
+  /** Multi-source group snapshot at generation time, so a run can be
+   *  resumed / displayed in history with its source list intact even when
+   *  the user has since cleared the Sources panel. */
+  sourcesGroup?: SourcesGroupResponse;
   job?: JobStatus;
   slides: PreviewSlide[];
   logs: string[];
@@ -139,6 +146,9 @@ type StoredRunSnapshot = Partial<RunSnapshot> & { jobId: string };
 
 interface GenerationState {
   uploadSession?: UploadResponse;
+  /** Multi-source group (NotebookLM-style Sources panel). Takes precedence
+   *  over uploadSession at generation time when non-empty. */
+  sourcesGroup?: SourcesGroupResponse;
   providers: ProviderListItem[];
   jobId?: string;
   job?: JobStatus;
@@ -161,6 +171,13 @@ interface GenerationState {
   loadProviders: () => Promise<void>;
   uploadFile: (file: File) => Promise<void>;
   clearUploadSession: () => Promise<void>;
+  // Multi-source (Sources panel)
+  initSourcesGroup: () => Promise<string>;
+  addFiles: (files: File[]) => Promise<void>;
+  addText: (payload: { label: string; text: string; role?: "primary" | "supplementary" }) => Promise<void>;
+  addUrl: (payload: { url: string; label?: string; role?: "primary" | "supplementary" }) => Promise<{ title: string; charCount: number } | undefined>;
+  removeSourceById: (sourceId: string) => Promise<void>;
+  clearSourcesGroup: () => Promise<void>;
   startGeneration: (payload: GenerateRequestPayload) => Promise<string>;
   startRefine: (payload: RefineRequestPayload) => Promise<string>;
   cancelCurrentRun: () => Promise<void>;
@@ -239,6 +256,25 @@ function upsertHistoryItem(history: GenerationHistoryItem[], item: GenerationHis
     .slice(0, HISTORY_STORAGE_LIMIT);
 }
 
+/** Summarize a multi-source group into a single display file name for the
+ *  history list (e.g. "paper.pdf + 2 more"). Returns undefined when there's
+ *  no group, so callers fall through to the legacy uploadSession/jobId. */
+function deriveRunFileNameFromSources(group?: SourcesGroupResponse): string | undefined {
+  if (!group || group.sources.length === 0) return undefined;
+  const first = group.sources[0].label;
+  if (group.sources.length === 1) return first;
+  return `${first} +${group.sources.length - 1} more`;
+}
+
+/** Pick a representative source_type for a multi-source run. "mixed" when
+ *  there's more than one distinct kind; otherwise the single kind. */
+function deriveRunSourceTypeFromSources(group?: SourcesGroupResponse): SourceType | undefined {
+  if (!group || group.sources.length === 0) return undefined;
+  const kinds = new Set(group.sources.map((s) => s.kind));
+  if (kinds.size === 1) return group.sources[0].kind;
+  return "mixed";
+}
+
 function buildHistoryItemFromRun(history: GenerationHistoryItem[], run?: RunSnapshot) {
   if (!run) {
     return undefined;
@@ -257,8 +293,15 @@ function buildHistoryItemFromRun(history: GenerationHistoryItem[], run?: RunSnap
 
   return {
     jobId: run.jobId,
-    fileName: run.uploadSession?.file_info.name ?? existing?.fileName ?? run.jobId,
-    sourceType: run.uploadSession?.file_info.source_type ?? existing?.sourceType,
+    fileName:
+      run.uploadSession?.file_info.name ??
+      deriveRunFileNameFromSources(run.sourcesGroup) ??
+      existing?.fileName ??
+      run.jobId,
+    sourceType:
+      run.uploadSession?.file_info.source_type ??
+      deriveRunSourceTypeFromSources(run.sourcesGroup) ??
+      existing?.sourceType,
     status,
     slideCount,
     createdAt: existing?.createdAt ?? existing?.updatedAt ?? now,
@@ -374,6 +417,7 @@ function createRunSnapshot(
   return {
     jobId,
     uploadSession: params?.uploadSession,
+    sourcesGroup: params?.sourcesGroup,
     job: params?.job,
     slides: params?.slides ?? [],
     criticEvents: params?.criticEvents ?? [],
@@ -514,6 +558,7 @@ function applyRunToCurrent(run?: RunSnapshot) {
   const criticEvents = Array.isArray(run.criticEvents) ? run.criticEvents : [];
   return {
     uploadSession: run.uploadSession,
+    sourcesGroup: run.sourcesGroup,
     jobId: run.jobId,
     job: run.job,
     slides,
@@ -556,6 +601,7 @@ function serializeRunsForStorage(
       {
         jobId,
         uploadSession: run.uploadSession,
+        sourcesGroup: run.sourcesGroup,
         job: run.job,
         logs: run.logs.slice(-PERSISTED_RUN_LOG_LIMIT),
         agentMessages: run.agentMessages.slice(-PERSISTED_RUN_LOG_LIMIT),
@@ -574,6 +620,7 @@ function serializeRunsForStorage(
 function normalizeStoredRun(jobId: string, run?: Partial<RunSnapshot>): RunSnapshot {
   return createRunSnapshot(jobId, {
     uploadSession: run?.uploadSession,
+    sourcesGroup: run?.sourcesGroup,
     job: run?.job,
     slides: [],
     logs: Array.isArray(run?.logs)
@@ -616,6 +663,7 @@ function normalizePersistedGenerationFields(persistedState: unknown): Partial<Ge
 
   return {
     uploadSession: state.uploadSession,
+    sourcesGroup: state.sourcesGroup,
     jobId: state.jobId,
     job: state.job,
     error: state.error,
@@ -729,11 +777,61 @@ export const useGeneration = create<GenerationState>()(
         }
         set({ uploadSession: undefined, error: undefined });
       },
+      // ── Multi-source actions ──────────────────────────────────────────────
+      // Each action keeps sourcesGroup in sync with the backend. The group is
+      // created lazily on first add so an empty panel doesn't allocate a
+      // session until the user actually adds something.
+      async initSourcesGroup() {
+        let group = get().sourcesGroup;
+        if (!group) {
+          group = await createSourcesGroup();
+          set({ sourcesGroup: group, error: undefined });
+        }
+        return group.session_id;
+      },
+      async addFiles(files) {
+        const sessionId = await get().initSourcesGroup();
+        const group = await addFileSources(sessionId, files);
+        set({ sourcesGroup: group, error: undefined });
+      },
+      async addText(payload) {
+        const sessionId = await get().initSourcesGroup();
+        const group = await addTextSource(sessionId, payload);
+        set({ sourcesGroup: group, error: undefined });
+      },
+      async addUrl(payload) {
+        const sessionId = await get().initSourcesGroup();
+        try {
+          const result = await addUrlSource(sessionId, payload);
+          // addUrlSource returns the full group via the response's source, but
+          // refresh the whole group so ordering/status is consistent.
+          const group = await getSourcesGroup(sessionId);
+          set({ sourcesGroup: group, error: undefined });
+          return { title: result.title, charCount: result.char_count };
+        } catch (err) {
+          // Re-throw so the panel can show the backend's reason (e.g. bad URL).
+          throw err;
+        }
+      },
+      async removeSourceById(sourceId) {
+        const group = get().sourcesGroup;
+        if (!group) return;
+        const updated = await removeSource(group.session_id, sourceId);
+        set({ sourcesGroup: updated, error: undefined });
+      },
+      async clearSourcesGroup() {
+        const sessionId = get().sourcesGroup?.session_id;
+        if (sessionId) {
+          await deleteSession(sessionId).catch(() => undefined);
+        }
+        set({ sourcesGroup: undefined, error: undefined });
+      },
       async startGeneration(payload) {
         const response = await generatePresentation(payload);
         const initialJob = await fetchJobStatus(response.job_id).catch(() => undefined);
         const run = createRunSnapshot(response.job_id, {
           uploadSession: get().uploadSession,
+          sourcesGroup: get().sourcesGroup,
           job: {
             status: initialJob?.status ?? "parsing",
             progress: initialJob?.progress ?? 0,
@@ -783,6 +881,10 @@ export const useGeneration = create<GenerationState>()(
       async startRefine(payload) {
         const response = await refinePresentation(payload);
         const existingParent = get().history.find((entry) => entry.jobId === payload.job_id);
+        // Carry the parent run's multi-source group forward so a refined run
+        // still shows its full source list. Falls back to reconstructing a
+        // legacy single-file uploadSession from history metadata.
+        const parentRun = get().runs[payload.job_id];
         const run = createRunSnapshot(response.job_id, {
           uploadSession: existingParent?.sourceType
             ? {
@@ -794,6 +896,7 @@ export const useGeneration = create<GenerationState>()(
                 },
               }
             : undefined,
+          sourcesGroup: parentRun?.sourcesGroup,
           job: {
             status: response.status,
             progress: 0,
@@ -1675,7 +1778,20 @@ export const useGeneration = create<GenerationState>()(
         seenSeqByJob.delete(jobId);
       },
       reset() {
-        const { jobId, socketsByJob } = get();
+        const { jobId, socketsByJob, uploadSession, sourcesGroup } = get();
+        // Only delete a source session that has never been used to start a
+        // generation job. Completed/history runs retain their session and
+        // source snapshot; "new task" merely detaches the current editor.
+        if (!jobId) {
+          const sessionIds = new Set(
+            [uploadSession?.session_id, sourcesGroup?.session_id].filter(
+              (sessionId): sessionId is string => Boolean(sessionId),
+            ),
+          );
+          for (const sessionId of sessionIds) {
+            void deleteSession(sessionId).catch(() => undefined);
+          }
+        }
         if (jobId) {
           // Tear down any live socket for the run we're about to abandon
           // so it doesn't keep mutating store state in the background.
@@ -1700,6 +1816,7 @@ export const useGeneration = create<GenerationState>()(
           }
           return {
             uploadSession: undefined,
+            sourcesGroup: undefined,
             jobId: undefined,
             job: undefined,
             slides: [],
@@ -1734,6 +1851,7 @@ export const useGeneration = create<GenerationState>()(
         }) satisfies GenerationState,
       partialize: (state) => ({
         uploadSession: state.uploadSession,
+        sourcesGroup: state.sourcesGroup,
         jobId: state.jobId,
         job: state.job,
         connectionStatus: "disconnected",

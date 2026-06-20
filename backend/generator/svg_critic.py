@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 from typing import Literal
 from xml.etree import ElementTree as ET
 
+from backend.generator.svg_to_pptx.styles import is_supported_shadow_filter
+
 Severity = Literal["error", "warning"]
 
 # Character-width heuristic per font-size. 0.55 covers most Latin glyphs;
@@ -30,6 +32,7 @@ _TEXT_CLOSE_RE = re.compile(r"</text\s*>", re.IGNORECASE)
 # Elements explicitly forbidden by executor.md — mirrored here so the
 # critic fails fast instead of relying on LLM self-discipline.
 _FORBIDDEN_TAGS = {"mask", "style", "clipPath", "foreignObject"}
+_FILTER_REF_RE = re.compile(r"url\(\s*#([^)]+)\s*\)", re.IGNORECASE)
 # `use` is allowed for icon references; `image` allowed for raster.
 
 
@@ -238,6 +241,14 @@ def _strip_ns(tag: str) -> str:
     if "}" in tag:
         return tag.split("}", 1)[1]
     return tag
+
+
+def _style_property(style: str, name: str) -> str | None:
+    for declaration in style.split(";"):
+        key, separator, value = declaration.partition(":")
+        if separator and key.strip().lower() == name:
+            return value.strip()
+    return None
 
 
 def _parse_viewbox(root: ET.Element) -> tuple[float, float] | None:
@@ -466,6 +477,11 @@ def check_svg(svg_content: str, config: CriticConfig | None = None) -> CriticRep
     canvas = _parse_viewbox(root)
     ordered_elements = list(_iter_all(root))
     element_order = {id(el): index for index, el in enumerate(ordered_elements)}
+    filter_defs = {
+        el.get("id"): el
+        for el in ordered_elements
+        if _strip_ns(el.tag) == "filter" and el.get("id")
+    }
 
     # 2. Forbidden elements.
     for el in _iter_all(root):
@@ -490,6 +506,32 @@ def check_svg(svg_content: str, config: CriticConfig | None = None) -> CriticRep
                     detail=(
                         f"Element <{tag}> is disallowed by the executor specification. "
                         "Remove it and inline the effect if possible."
+                    ),
+                    element=_element_identifier(el),
+                )
+            )
+        style = el.get("style") or ""
+        filter_value = el.get("filter") or _style_property(style, "filter")
+        if filter_value and filter_value != "none":
+            match = _FILTER_REF_RE.search(filter_value)
+            filter_elem = filter_defs.get(match.group(1).strip()) if match else None
+            reason = ""
+            if tag == "g":
+                reason = "group-level filters are not supported"
+            elif filter_elem is None:
+                reason = "the referenced filter is missing or invalid"
+            elif not is_supported_shadow_filter(filter_elem):
+                reason = "the filter is not a simple convertible drop shadow"
+            if not reason:
+                continue
+            violations.append(
+                Violation(
+                    rule="filter_requires_raster_fallback",
+                    severity="error",
+                    detail=(
+                        f"{reason}; it would rasterize the entire slide during PPTX "
+                        "export. Use a supported simple shadow directly on one shape, "
+                        "or editable layered shapes."
                     ),
                     element=_element_identifier(el),
                 )
