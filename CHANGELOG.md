@@ -5,6 +5,14 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.0.1] - 2026-07-01
+
+🛠️ 维护性补丁。
+
+### 🔧 修复
+
+- 同步 `uv.lock` 中项目版本号，修复 `uv sync --locked` 因版本不一致而失败的问题。
+
 ## [1.0.0] - 2026-06-23
 
 🎉 第一个正式版本。上传论文 PDF / TeX 源码（或链接、文本），由多智能体协作自动生成可编辑的 PowerPoint。

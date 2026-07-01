@@ -6,7 +6,7 @@
 
 <p align="center">
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-AGPL--3.0-blue.svg" alt="AGPL-3.0 License"></a>
-  <a href="https://github.com/CRui5in/paper-ppt-agent/releases"><img src="https://img.shields.io/badge/release-v1.0.0-brightgreen" alt="Release"></a>
+  <a href="https://github.com/CRui5in/paper-ppt-agent/releases"><img src="https://img.shields.io/badge/release-v1.0.1-brightgreen" alt="Release"></a>
   <img src="https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white" alt="Python">
   <img src="https://img.shields.io/badge/FastAPI-0.115+-009688?logo=fastapi&logoColor=white" alt="FastAPI">
   <img src="https://img.shields.io/badge/React-18+-61DAFB?logo=react&logoColor=black" alt="React">
