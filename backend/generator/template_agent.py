@@ -795,13 +795,14 @@ class TemplateAgentManager:
         prompt: str,
     ):
         try:
-            from openai_codex import AppServerConfig, ApprovalMode, AsyncCodex, TextInput
-            from openai_codex.generated.v2_all import (
-                DangerFullAccessSandboxPolicy,
-                ReasoningEffort,
-                SandboxPolicy,
+            from openai_codex import (
+                ApprovalMode,
+                AsyncCodex,
+                CodexConfig,
+                Sandbox,
+                TextInput,
             )
-            from openai_codex.types import SandboxMode
+            from openai_codex.types import ReasoningEffort
         except ImportError as exc:
             raise RuntimeError(
                 "Codex Agent runtime requires the `openai-codex` Python SDK. "
@@ -824,15 +825,11 @@ class TemplateAgentManager:
         job.model_name = model or "codex-default"
         _safe_create_task(self._publish(job, _usage_event(job)))
 
-        codex_config = AppServerConfig(
+        codex_config = CodexConfig(
             cwd=str(import_dir),
             env={},
             codex_bin=str(settings.codex_bin) if settings.codex_bin else None,
         )
-        sandbox_policy = SandboxPolicy(
-            root=DangerFullAccessSandboxPolicy(type="dangerFullAccess")
-        )
-
         await self._publish(
             job,
             {
@@ -849,7 +846,7 @@ class TemplateAgentManager:
                 "cwd": str(import_dir),
                 "developer_instructions": _codex_developer_instructions(import_dir, job.planning),
                 "model": model,
-                "sandbox": SandboxMode.danger_full_access,
+                "sandbox": Sandbox.full_access,
                 "config": {"model_reasoning_effort": effort.value},
             }
             resume_session = (
@@ -885,7 +882,7 @@ class TemplateAgentManager:
                 cwd=str(import_dir),
                 effort=effort,
                 model=model,
-                sandbox_policy=sandbox_policy,
+                sandbox=Sandbox.full_access,
             )
             try:
                 async for event in turn.stream():

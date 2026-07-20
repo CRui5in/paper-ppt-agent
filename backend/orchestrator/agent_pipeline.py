@@ -154,7 +154,7 @@ async def agent_runtime_status(runtime: str) -> dict[str, Any]:
         }
 
     try:
-        from openai_codex import AppServerConfig, AsyncCodex
+        from openai_codex import AsyncCodex, CodexConfig
     except ImportError as exc:
         return {
             "runtime": runtime,
@@ -170,7 +170,7 @@ async def agent_runtime_status(runtime: str) -> dict[str, Any]:
     _install_codex_jsonrpc_noise_filter()
 
     try:
-        codex_config = AppServerConfig(
+        codex_config = CodexConfig(
             cwd=str(PROJECT_ROOT),
             env={},
             codex_bin=str(settings.codex_bin) if settings.codex_bin else None,
@@ -727,18 +727,14 @@ class PersistentAgentSession:
         try:
             try:
                 from openai_codex import (
-                    AppServerConfig,
                     AsyncCodex,
                     ApprovalMode,
+                    CodexConfig,
+                    Sandbox,
                     SkillInput,
                     TextInput,
                 )
-                from openai_codex.generated.v2_all import (
-                    DangerFullAccessSandboxPolicy,
-                    ReasoningEffort,
-                    SandboxPolicy,
-                )
-                from openai_codex.types import SandboxMode
+                from openai_codex.types import ReasoningEffort
             except ImportError as exc:
                 raise RuntimeError(
                     "Codex Agent runtime requires the `openai-codex` Python SDK. "
@@ -762,16 +758,13 @@ class PersistentAgentSession:
             skill_path = str(
                 (self._project_dir / "skills" / _AGENT_SKILL_NAME).resolve()
             )
-            codex_config = AppServerConfig(
+            codex_config = CodexConfig(
                 cwd=str(self._project_dir),
                 env=_agent_runtime_env(
                     self._project_dir,
                     self._agent_config.get("_research_env"),
                 ),
                 codex_bin=str(settings.codex_bin) if settings.codex_bin else None,
-            )
-            sandbox_policy = SandboxPolicy(
-                root=DangerFullAccessSandboxPolicy(type="dangerFullAccess")
             )
             self._emit(
                 AgentProgressEvent(
@@ -788,7 +781,7 @@ class PersistentAgentSession:
                     "cwd": str(self._project_dir),
                     "developer_instructions": _codex_developer_instructions(self._project_dir),
                     "model": model,
-                    "sandbox": SandboxMode.danger_full_access,
+                    "sandbox": Sandbox.full_access,
                     "config": {"model_reasoning_effort": effort.value},
                 }
                 if self._resume_session_id:
@@ -844,7 +837,7 @@ class PersistentAgentSession:
                         cwd=str(self._project_dir),
                         effort=effort,
                         model=model,
-                        sandbox_policy=sandbox_policy,
+                        sandbox=Sandbox.full_access,
                     )
                     self._emit(
                         AgentProgressEvent(
