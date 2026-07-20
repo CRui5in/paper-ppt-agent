@@ -1,6 +1,6 @@
 [project]
 name = "paper-ppt-agent"
-version = "1.0.1"
+version = "1.0.2"
 description = "Generate editable PowerPoint presentations from academic papers (PDF/TeX) using multi-agent AI"
 requires-python = ">=3.11,<3.13"
 dependencies = [
@@ -54,7 +54,7 @@ dev = [
 ]
 
 [tool.uv.sources]
-openai-codex = { git = "https://github.com/openai/codex.git", rev = "7d47056ea42636271ac020b86347fbbef49490aa", subdirectory = "sdk/python" }
+openai-codex = { git = "https://github.com/openai/codex.git", rev = "bf3c1972b7d045c0a3a48dff91f381070f8f69e1", subdirectory = "sdk/python" }
 
 [build-system]
 requires = ["hatchling"]

@@ -5,6 +5,20 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.0.2] - 2026-07-20
+
+🛠️ Codex Agent 运行时兼容性补丁。
+
+### 🔧 修复
+
+- 将 Codex Python SDK 更新到 OpenAI 官方 commit `bf3c1972b7d045c0a3a48dff91f381070f8f69e1`。
+- 将配套 `openai-codex-cli-bin` 从 `0.131.0a4` 更新至 `0.144.4`，修复 `gpt-5.6-sol` 因旧 Codex CLI 无法运行而被误报为 `svg_output/` 为空的问题。
+- 同步 `pyproject.toml` 与 `uv.lock`，确保 `uv sync --locked` 安装新版 SDK/CLI。
+
+### 📝 维护
+
+- 移除独立版本说明文件，统一以 `CHANGELOG.md` 作为发布记录来源。
+
 ## [1.0.1] - 2026-07-01
 
 🛠️ 维护性补丁。

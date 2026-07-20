@@ -929,8 +929,8 @@ wheels = [
 
 [[package]]
 name = "openai-codex"
-version = "0.131.0a4"
-source = { git = "https://github.com/openai/codex.git?subdirectory=sdk%2Fpython&rev=7d47056ea42636271ac020b86347fbbef49490aa#7d47056ea42636271ac020b86347fbbef49490aa" }
+version = "0.0.0.dev0"
+source = { git = "https://github.com/openai/codex.git?subdirectory=sdk%2Fpython&rev=bf3c1972b7d045c0a3a48dff91f381070f8f69e1#bf3c1972b7d045c0a3a48dff91f381070f8f69e1" }
 dependencies = [
     { name = "openai-codex-cli-bin" },
     { name = "pydantic" },
@@ -938,15 +938,17 @@ dependencies = [
 
 [[package]]
 name = "openai-codex-cli-bin"
-version = "0.131.0a4"
+version = "0.144.4"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6b/9f/f9fc4bb1b2b7a20d4d65143ebb4c4dcd2301a718183b539ecb5b1c0ac3ec/openai_codex_cli_bin-0.131.0a4-py3-none-macosx_10_9_x86_64.whl", hash = "sha256:db0f3cb7dda310641ac04fbaf3f128693a3817ab83ae59b67a3c9c74bd53f8b8", size = 88367585, upload-time = "2026-05-09T06:14:09.453Z" },
-    { url = "https://files.pythonhosted.org/packages/dc/39/eb95ed0e8156669e895a192dec760be07dabe891c3c6340f7c6487b9a976/openai_codex_cli_bin-0.131.0a4-py3-none-macosx_11_0_arm64.whl", hash = "sha256:6cae5af6edca7f6d3f0bcbbd93cfc8a6dc3e33fb5955af21ae492b6d5d0dcb72", size = 79245567, upload-time = "2026-05-09T06:14:13.581Z" },
-    { url = "https://files.pythonhosted.org/packages/0c/92/ade176fa78d746d5ff7a6e371d64740c0d95ab299b0dd58a5404b89b3915/openai_codex_cli_bin-0.131.0a4-py3-none-musllinux_1_1_aarch64.whl", hash = "sha256:5728f9887baf62d7e72f4f242093b3ff81e26c81d80d346fe1eef7eda6838aa8", size = 77758628, upload-time = "2026-05-09T06:14:18.374Z" },
-    { url = "https://files.pythonhosted.org/packages/28/e6/bfe6c65f8e3e5499f71b24c3b6e8d07e4d426543d25e429b9b141b544e5f/openai_codex_cli_bin-0.131.0a4-py3-none-musllinux_1_1_x86_64.whl", hash = "sha256:d7a47fd3667fbcc216593839c202deffa056e9b3d46c6933e72594d461f4fea0", size = 84535509, upload-time = "2026-05-09T06:14:22.851Z" },
-    { url = "https://files.pythonhosted.org/packages/bd/b7/53dc094a691ab6f2ca079e8e865b122843809ac4fad51cac4d59021e599d/openai_codex_cli_bin-0.131.0a4-py3-none-win_amd64.whl", hash = "sha256:c61bcf029672494c4c7fdc8567dbaa659a48bb75641d91c2ade27c1e46803434", size = 88185543, upload-time = "2026-05-09T06:14:27.282Z" },
-    { url = "https://files.pythonhosted.org/packages/82/99/e0852ffcf9b4d2794fef83e0c3a267b3c773a776f136e9f7ce19f0c8df42/openai_codex_cli_bin-0.131.0a4-py3-none-win_arm64.whl", hash = "sha256:bbde750186861f102e346ac066f4e9608f515f7b71b16a6e8b7ef1ddc02a97a5", size = 81196380, upload-time = "2026-05-09T06:14:32.103Z" },
+    { url = "https://files.pythonhosted.org/packages/79/30/7e457c007a32aa7333a78438a9f532504c3b77a1ea57e7808855712c2c0f/openai_codex_cli_bin-0.144.4-py3-none-macosx_10_9_x86_64.whl", hash = "sha256:4d587d152d5f0aa25f21ded4d08aac5150da48639b29fc3e57b2a8b413d06903", size = 126851183, upload-time = "2026-07-15T00:14:00.171Z" },
+    { url = "https://files.pythonhosted.org/packages/65/eb/64c180514a2cc3e2500e486813f5a8d7f7e349342e9bebd78d99ddd9791a/openai_codex_cli_bin-0.144.4-py3-none-macosx_11_0_arm64.whl", hash = "sha256:05db505a9c7f020f58b70837a94e00d32a50086986c267bcc44ea97b573d4a05", size = 116474758, upload-time = "2026-07-15T00:14:08.177Z" },
+    { url = "https://files.pythonhosted.org/packages/85/34/921ab692c7ed140941a91e39b84c6deafddb45072793f3a5f6dcbf86f59a/openai_codex_cli_bin-0.144.4-py3-none-manylinux_2_17_aarch64.whl", hash = "sha256:cd4bb31b8a477a3adba22139c8c493693fa5292ba21e86eef08ace3e96c41294", size = 119437596, upload-time = "2026-07-15T00:14:17.418Z" },
+    { url = "https://files.pythonhosted.org/packages/25/62/39e630cf8b7b2e2444a5a6669235a6cd88004869a25bb7f3f629ed35638c/openai_codex_cli_bin-0.144.4-py3-none-manylinux_2_17_x86_64.whl", hash = "sha256:4106229c38f37245c3eea8d904426afd45b8bf19831765715647f5402f757c06", size = 128817757, upload-time = "2026-07-15T00:14:30.539Z" },
+    { url = "https://files.pythonhosted.org/packages/23/24/318f91a95baaff845307e529d138d42a7202e6bd0e626556058eab3dead5/openai_codex_cli_bin-0.144.4-py3-none-musllinux_1_1_aarch64.whl", hash = "sha256:d2d3fada11731938e3d3e3660819d5324b7f92e825a0ed5aede63100b36ffc9a", size = 119437594, upload-time = "2026-07-15T00:14:39.327Z" },
+    { url = "https://files.pythonhosted.org/packages/2e/a0/65e6fd3a6fba52639937801d9ce517b0c48026458723bb9f08eb07a1dd35/openai_codex_cli_bin-0.144.4-py3-none-musllinux_1_1_x86_64.whl", hash = "sha256:70fb62ed7755e332dd8b00ed48e22ee16df10f4a977335039e237cd330490df3", size = 128817755, upload-time = "2026-07-15T00:14:47.849Z" },
+    { url = "https://files.pythonhosted.org/packages/e3/8a/3ab5fc97352e8f780d472c8dd6d7504d6a670cd7dede106d461ac1171999/openai_codex_cli_bin-0.144.4-py3-none-win_amd64.whl", hash = "sha256:56e142974467332f1f669b89f2636e06b3ada09413512abb2f24c33b4a4f59fc", size = 140595092, upload-time = "2026-07-15T00:14:58.484Z" },
+    { url = "https://files.pythonhosted.org/packages/70/1a/3aa52ab8f89e0f596b6eea835e3f3494697da51917d3231f5f48f92e2bcb/openai_codex_cli_bin-0.144.4-py3-none-win_arm64.whl", hash = "sha256:2ad01058db7181323ae7c6217e560702e38c4f107595b99ab1d0abc9f184890a", size = 130665105, upload-time = "2026-07-15T00:15:08.861Z" },
 ]
 
 [[package]]
@@ -960,7 +962,7 @@ wheels = [
 
 [[package]]
 name = "paper-ppt-agent"
-version = "1.0.1"
+version = "1.0.2"
 source = { editable = "." }
 dependencies = [
     { name = "aiofiles" },
@@ -1018,7 +1020,7 @@ requires-dist = [
     { name = "lxml", specifier = ">=5.0.0" },
     { name = "numpy", specifier = ">=1.20.0" },
     { name = "openai", specifier = ">=1.50.0" },
-    { name = "openai-codex", git = "https://github.com/openai/codex.git?subdirectory=sdk%2Fpython&rev=7d47056ea42636271ac020b86347fbbef49490aa" },
+    { name = "openai-codex", git = "https://github.com/openai/codex.git?subdirectory=sdk%2Fpython&rev=bf3c1972b7d045c0a3a48dff91f381070f8f69e1" },
     { name = "peewee", specifier = ">=4.0.6" },
     { name = "pillow", specifier = ">=9.0.0" },
     { name = "playwright", specifier = ">=1.52.0" },
