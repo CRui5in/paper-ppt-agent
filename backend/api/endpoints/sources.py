@@ -423,15 +423,15 @@ async def get_source_preview_file(session_id: str, source_id: str) -> FileRespon
 async def remove_source(session_id: str, source_id: str) -> SourcesGroupResponse:
     _require_session(session_id)
     session, removed = session_manager.remove_source(session_id, source_id)
-    if removed is not None and removed.file_path is not None:
-        # Best-effort cleanup of the source's upload subdir. Never fails the
-        # request — the session is already updated.
-        source_dir = Path(removed.file_path).parent
-        if source_dir.is_dir() and source_dir != _upload_dir(session_id):
-            try:
-                import shutil
+    if removed is not None:
+        # Every multi-source input owns a source-id subdirectory. URL and
+        # pasted-text sources do not have file_path set, but may still leave
+        # cached page files or an empty staging directory behind.
+        upload_dir = _upload_dir(session_id).resolve()
+        source_dir = (upload_dir / removed.id).resolve()
+        if source_dir.parent == upload_dir:
+            # Best-effort cleanup: the session has already been updated.
+            import shutil
 
-                shutil.rmtree(source_dir, ignore_errors=True)
-            except OSError:
-                pass
+            await aoffload(shutil.rmtree, source_dir, ignore_errors=True)
     return _group_response(session_id)
