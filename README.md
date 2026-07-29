@@ -81,6 +81,8 @@ cd paper-ppt-agent
 .\start-dev.bat
 # Linux
 sh start-dev.sh
+# macOS
+zsh start-dev.sh
 ```
 
 启动后访问：前端 [http://127.0.0.1:5173](http://127.0.0.1:5173) · 后端 [http://127.0.0.1:8000](http://127.0.0.1:8000)
