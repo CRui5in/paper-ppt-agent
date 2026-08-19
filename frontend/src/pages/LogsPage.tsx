@@ -73,6 +73,13 @@ function formatNumber(n: number): string {
   return new Intl.NumberFormat().format(n);
 }
 
+function formatAxisNumber(n: number): string {
+  return new Intl.NumberFormat(undefined, {
+    notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(n);
+}
+
 function toUtcFilterTimestamp(value: string): string | undefined {
   if (!value) return undefined;
   const date = new Date(value);
@@ -360,7 +367,12 @@ export function LogsPage() {
       data: dailyRows.map((row) => row.day.slice(5)),
       axisLine: { lineStyle: { color: chartColors.line } },
       axisTick: { show: false },
-      axisLabel: { color: chartColors.muted, fontSize: 12, fontWeight: 600 },
+      axisLabel: {
+        color: chartColors.muted,
+        fontSize: 12,
+        fontWeight: 600,
+        hideOverlap: true,
+      },
     },
     yAxis: {
       type: "value",
@@ -371,7 +383,7 @@ export function LogsPage() {
         color: chartColors.muted,
         fontSize: 12,
         fontWeight: 600,
-        formatter: (value: number) => formatNumber(value),
+        formatter: (value: number) => formatAxisNumber(value),
       },
       splitLine: { lineStyle: { color: chartColors.line } },
     },
@@ -422,13 +434,15 @@ export function LogsPage() {
     },
     xAxis: {
       type: "value",
+      splitNumber: 4,
       axisLine: { show: false },
       axisTick: { show: false },
       axisLabel: {
         color: chartColors.muted,
         fontSize: 12,
         fontWeight: 600,
-        formatter: (value: number) => formatNumber(value),
+        hideOverlap: true,
+        formatter: (value: number) => formatAxisNumber(value),
       },
       splitLine: { lineStyle: { color: chartColors.line } },
     },
@@ -500,6 +514,7 @@ export function LogsPage() {
       axisLabel: {
         color: chartColors.muted,
         fontSize: 11,
+        hideOverlap: true,
         formatter: "{value}%",
       },
       splitLine: { lineStyle: { color: chartColors.line } },

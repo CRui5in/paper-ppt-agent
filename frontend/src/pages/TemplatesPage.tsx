@@ -1905,7 +1905,7 @@ function AgentImportUploadGuide({
       >
         <header className="ti-direct-guide-header">
           <div>
-            <p className="ti-direct-guide-kicker">Agent</p>
+            <p className="ti-direct-guide-kicker">{t("generation.mode.agent")}</p>
             <h2 id="agent-import-guide-title">{t("template.agentGuide.uploadTitle")}</h2>
             <p>{t("template.agentGuide.uploadDescription")}</p>
           </div>

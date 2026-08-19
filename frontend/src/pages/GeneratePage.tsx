@@ -658,7 +658,7 @@ export function GeneratePage() {
   const activeAgentGeneration = Boolean(
     jobId && selectedRunConfig?.provider?.startsWith("agent:") && job,
   );
-  const sideConfigLabel = activeAgentGeneration ? "Agent" : t("config.title");
+  const sideConfigLabel = activeAgentGeneration ? t("generation.mode.agent") : t("config.title");
   const requestGenerationBackend = (nextBackend: "provider" | "agent") => {
     if (nextBackend === "provider") {
       setShowAgentModeConfirm(false);
@@ -768,20 +768,24 @@ export function GeneratePage() {
         ) : (
         <aside className="configuration-panel">
           <section className="agent-mode-section">
-            <div className="segmented-control generation-backend-toggle" role="tablist">
+            <div
+              className="segmented-control generation-backend-toggle"
+              role="tablist"
+              aria-label={t("generation.mode.label")}
+            >
               <button
                 type="button"
                 className={generationBackend === "provider" ? "active" : ""}
                 onClick={() => requestGenerationBackend("provider")}
               >
-                Provider
+                {t("generation.mode.workflow")}
               </button>
               <button
                 type="button"
                 className={generationBackend === "agent" ? "active" : ""}
                 onClick={() => requestGenerationBackend("agent")}
               >
-                Agent
+                {t("generation.mode.agent")}
               </button>
             </div>
             {generationBackend === "agent" ? (
@@ -1360,7 +1364,7 @@ function GenerationAgentThinking({ slowResponse = false }: { slowResponse?: bool
       <div className="generation-agent-bubble generation-agent-thinking">
         <div className="generation-agent-bubble-head">
           <span><Bot size={11} /></span>
-          <strong>Agent</strong>
+          <strong>{t("generation.mode.agent")}</strong>
         </div>
         <p>
           <span>{t(slowResponse ? "generation.agent.slowResponse" : "template.collab.thinking")}</span>
