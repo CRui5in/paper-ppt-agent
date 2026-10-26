@@ -16,8 +16,24 @@ from backend.orchestrator.manuscript import (
 logger = logging.getLogger(__name__)
 
 PROMPT_PATH = Path(__file__).parent / "prompts" / "strategist.md"
-DESIGN_SPEC_MAX_TOKENS = 32768
 MAX_DESIGN_SPEC_ATTEMPTS = 2
+MAX_DESIGN_SPEC_CONTINUATIONS = 2
+
+
+def _design_spec_max_tokens(model: str) -> int:
+    name = model.lower().rsplit("/", 1)[-1]
+    if name == "deepseek-flash" or name.startswith("deepseek-v4-"):
+        return settings.deepseek_design_spec_max_tokens
+    return settings.design_spec_max_tokens
+
+
+def _design_spec_continuation(content: str) -> tuple[str, str]:
+    """Keep complete blocks and regenerate the final, possibly cut-off block."""
+    headings = list(re.finditer(r"(?m)^#{1,6}[ \t]+[^\r\n]+", content))
+    if not headings:
+        return "", "Start with Section I."
+    last = headings[-1]
+    return content[:last.start()].rstrip(), f"Start with this heading: {last.group(0)}"
 
 def _format_chapter_map(inventory: list[dict[str, str | int]]) -> str:
     """Render an explicit chapter-to-slide map from the manuscript contract."""
@@ -142,6 +158,8 @@ def _write_strategy_attempt_debug(
     attempt: int,
     response: LLMResponse,
     validation_error: str | None,
+    continuation: int = 0,
+    max_tokens: int | None = None,
 ) -> None:
     if debug_dir is None:
         return
@@ -150,6 +168,8 @@ def _write_strategy_attempt_debug(
         usage = response.usage
         header = [
             f"attempt={attempt}",
+            f"continuation={continuation}",
+            f"max_tokens={max_tokens}",
             f"chars={len(response.content or '')}",
             f"finish_reason={_response_finish_reason(response)}",
         ]
@@ -163,7 +183,8 @@ def _write_strategy_attempt_debug(
             )
         if validation_error:
             header.append(f"validation_error={validation_error}")
-        path = debug_dir / f"strategist_response_attempt_{attempt}.md"
+        suffix = f"_continuation_{continuation}" if continuation else ""
+        path = debug_dir / f"strategist_response_attempt_{attempt}{suffix}.md"
         path.write_text(
             "<!-- " + "; ".join(header) + " -->\n\n" + (response.content or ""),
             encoding="utf-8",
@@ -213,7 +234,6 @@ def _design_spec_validation_error(
     expected_page_count: int | None = None,
     expected_inventory: list[dict[str, str | int]] | None = None,
 ) -> str | None:
-    del expected_page_count, expected_inventory
     text = content.strip()
     if len(text) < 1200:
         return f"design_spec.md is too short ({len(text)} characters)"
@@ -228,6 +248,31 @@ def _design_spec_validation_error(
     for roman, title in required.items():
         if not _has_required_design_spec_section(text, roman, title):
             return f"design_spec.md is missing section {roman}. {title}"
+
+    section_numbers = re.findall(r"(?im)^#+[ \t]*([IVXLCDM]+)\.[ \t]+", text)
+    if len(section_numbers) != len(set(section_numbers)):
+        return "design_spec.md contains duplicate numbered sections"
+
+    if expected_inventory is not None:
+        expected_pages = {int(item["page"]) for item in expected_inventory}
+    elif expected_page_count is not None:
+        expected_pages = set(range(1, expected_page_count + 1))
+    else:
+        return None
+
+    outline = _extract_design_spec_section(text, "IX")
+    page_numbers = [
+        int(number) for number in re.findall(
+            r"(?im)^#+[ \t]*(?:page|slide)[ \t]+0*(\d+)\b", outline,
+        )
+    ]
+    actual_pages = set(page_numbers)
+    if missing := sorted(expected_pages - actual_pages):
+        return f"design_spec.md Section IX is missing slide headings for pages {missing}"
+    if extra := sorted(actual_pages - expected_pages):
+        return f"design_spec.md Section IX contains unexpected pages {extra}"
+    if len(page_numbers) != len(actual_pages):
+        return "design_spec.md Section IX contains duplicate slide headings"
 
     return None
 
@@ -512,7 +557,11 @@ async def create_design_spec(
 
     user_parts.append(
         "\n\nGenerate the complete design_spec.md following the template structure. "
-        "All 11 sections (I through XI) must be present. In Section IX, list each page once with its page type."
+        "All 11 sections (I through XI) must be present. In Section IX, list each page once with its page type, "
+        "using a `#### Slide NN - Title` heading for every page. "
+        "Define shared design rules once in Sections I-VIII; reference them briefly in each page plan "
+        "instead of repeating the manuscript, palette, typography, or full SVG markup. "
+        "Reserve output space for the final pages and Sections X-XI."
     )
 
     base_messages = [
@@ -534,39 +583,76 @@ async def create_design_spec(
 
     last_error = ""
     last_nonempty_error = ""
+    max_tokens = _design_spec_max_tokens(model)
     for attempt in range(1, MAX_DESIGN_SPEC_ATTEMPTS + 1):
-        messages = list(base_messages)
+        attempt_messages = list(base_messages)
         if last_error:
-            messages.append(
+            attempt_messages.append(
                 LLMMessage.user(
                     "The previous design_spec.md response was invalid: "
                     f"{last_error}. Regenerate the complete design_spec.md now. "
-                    "Do not return an empty response. Include all required sections I through XI."
+                    "Do not return an empty response. Include all required sections I through XI. "
+                    "Keep shared rules and per-page plans concise so the entire deck fits."
                 )
             )
 
-        response: LLMResponse = await llm.chat(
-            messages,
-            model,
-            temperature=0.25 if attempt > 1 else 0.4,
-            max_tokens=DESIGN_SPEC_MAX_TOKENS,
-        )
-        content = response.content.strip()
-        if enforce_page_types:
-            content = _align_content_outline_page_types(content, inventory)
-        error = _design_spec_validation_error(
-            content,
-            expected_page_count=page_count,
-            expected_inventory=inventory if enforce_page_types else None,
-        )
-        _write_strategy_attempt_debug(
-            debug_dir,
-            attempt=attempt,
-            response=response,
-            validation_error=error,
-        )
-        if error is None:
-            return content
+        messages = list(attempt_messages)
+        content = ""
+        prefix = ""
+        for continuation in range(MAX_DESIGN_SPEC_CONTINUATIONS + 1):
+            response: LLMResponse = await llm.chat(
+                messages,
+                model,
+                temperature=0.25 if attempt > 1 or continuation else 0.4,
+                max_tokens=max_tokens,
+            )
+            chunk = response.content.strip()
+            if chunk:
+                content = f"{prefix}\n\n{chunk}".strip() if prefix else chunk
+            error = _design_spec_validation_error(
+                content,
+                expected_page_count=page_count,
+                expected_inventory=inventory if enforce_page_types else None,
+            )
+            truncated = _response_finish_reason(response) == "length"
+            if truncated:
+                # Even a response containing XI can end halfway through a rule.
+                error = f"design_spec.md was truncated at the output token limit (max_tokens={max_tokens})"
+            elif not chunk:
+                error = "design_spec.md generation returned an empty response"
+            _write_strategy_attempt_debug(
+                debug_dir,
+                attempt=attempt,
+                response=response,
+                validation_error=error,
+                continuation=continuation,
+                max_tokens=max_tokens,
+            )
+            if error is None:
+                if enforce_page_types:
+                    content = _align_content_outline_page_types(content, inventory)
+                return content
+            if not truncated or not chunk or continuation == MAX_DESIGN_SPEC_CONTINUATIONS:
+                break
+
+            prefix, restart = _design_spec_continuation(content)
+            logger.info(
+                "Design spec attempt %s reached its token limit; continuing from the final block (%s/%s)",
+                attempt, continuation + 1, MAX_DESIGN_SPEC_CONTINUATIONS,
+            )
+            messages = [
+                *attempt_messages,
+                LLMMessage.assistant(content),
+                LLMMessage.user(
+                    "The response was cut off at the output token limit. "
+                    "The application has kept all complete blocks before your final Markdown heading. "
+                    f"{restart}\n"
+                    "Rewrite that final block in full, then finish every remaining page and section through XI. "
+                    "Return only this replacement tail, without repeating earlier blocks, a preamble, or code fences. "
+                    "Use the authoritative manuscript page inventory; do not skip pages to reach Sections X-XI. "
+                    "Keep page plans concise and refer to the shared design rules."
+                ),
+            ]
         last_error = error
         if content:
             last_nonempty_error = error
