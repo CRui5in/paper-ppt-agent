@@ -116,6 +116,10 @@ class Settings(BaseSettings):
     # while leaving headroom for slow reasoning calls (strategy ~227s seen,
     # may run longer for dense papers on slower models like Opus).
     llm_request_timeout: float = 420.0
+    # Design specs include the whole deck. DeepSeek's output budget also
+    # includes thinking tokens, so it needs more room than visible text alone.
+    design_spec_max_tokens: int = 32768
+    deepseek_design_spec_max_tokens: int = 131072
     # SVG generation often needs more than 8k output tokens for dense,
     # editable slides. Keep this configurable because provider-compatible
     # endpoints expose different per-model output caps.
