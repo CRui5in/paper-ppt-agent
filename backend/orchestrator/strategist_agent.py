@@ -8,6 +8,7 @@ from pathlib import Path
 
 from backend.config import CANVAS_FORMATS, DESIGN_STYLES, settings
 from backend.llm import LLMMessage, LLMProvider, LLMResponse
+from backend.orchestrator.source_records import manuscript_records, records_context
 from backend.orchestrator.manuscript import (
     count_manuscript_pages,
     format_page_inventory,
@@ -396,6 +397,7 @@ async def create_design_spec(
 
     user_parts = [
         f"## Manuscript\n\n{manuscript}",
+        records_context(manuscript_records(manuscript)),
         f"\n## Manuscript Page Inventory\n\n{inventory_block}",
         f"\n## Manuscript Chapter Map (authoritative)\n\n{chapter_map_block}",
         f"\n## Canvas Format: {fmt['name']} ({fmt['ratio']}), viewBox: `{fmt['viewbox']}`",

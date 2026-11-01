@@ -16,7 +16,7 @@ Build the visible page from the brief's `Content` and assigned assets, preservin
 
 Use unlabeled abstract geometry for ornament. Draw structural relationships from the named components and operations. Plot the selected observation records with their conditions and units, and present qualitative changes through labeled relationships or stated milestones. Preserve scientific spatial geometry from its source figure.
 
-Calculate chart coordinates from the selected values. Bar lengths share a zero baseline; dot plots can use a labeled narrow range. Use consistent scales and precise data labels.
+Quantitative chart groups identify their selected table and rows with `data-source-records="p2.t1.r1 p2.t1.r2"`. Calculate mark coordinates from those records' columns and units. Bar lengths share a zero baseline; dot plots can use a labeled narrow range. Use consistent scales and precise data labels. Assigned source figures retain their recorded geometry.
 
 Fit assigned paper figures completely at their natural aspect ratios. Arrange captions and direct annotations around the visible image. Reuse colors for the same meanings across the deck, with distinguishable series colors where useful.
 

@@ -30,6 +30,7 @@ from backend.orchestrator.manuscript import (
     split_manuscript_pages,
     strip_page_type_metadata,
 )
+from backend.orchestrator.source_records import page_records, records_context
 from backend.usage.tracker import reset_usage_context, set_usage_context
 
 # `[[FIG:fig_007_p9_page]]` style tokens emitted by the research agent.
@@ -2596,6 +2597,7 @@ async def generate_svg_pages(
                 f"{page_design_section}"
                 f"## Page {page_num}/{len(pages)}: {page_name}\n\n"
                 f"{rewritten_content}\n\n"
+                f"{records_context([page_records(page_content, page_num)])}\n\n"
                 f"## Runtime Reminders\n"
                 f"- Style preset: {style}\n"
                 f"- Language: {language}\n"
@@ -3694,6 +3696,7 @@ async def _generate_parallel_page(
             f"{previous_layout_section}\n\n"
             f"## Page {page_num}/{total_pages}: {page_name}\n\n"
             f"{rewritten_content}\n\n"
+            f"{records_context([page_records(str(page_input['page_content']), page_num)])}\n\n"
             f"## Runtime Reminders\n"
             f"- Style preset: {style}\n"
             f"- Language: {language}\n"

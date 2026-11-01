@@ -48,9 +48,7 @@ Identify the relationships worth visualizing: a flow, dependency, feedback loop,
 
 Use quantitative scales that accurately encode the supplied values, with precise data labels and units. Use labeled geometry to explain qualitative relationships.
 
-For a data visualization, specify the supplied values or source asset. For a structural schematic, specify components, dimensions, and operations; these define the drawing.
-
-Choose the encoding from the available material. A quantitative plot uses explicit observation records or an assigned source figure. A qualitative account uses named relationships, comparisons, or a timeline of the stated milestones.
+For a quantitative plot, select table and row IDs from the Source record catalog, with their columns and units, or an assigned source figure. These records define the plotted marks. A qualitative account becomes named relationships, comparisons, or a timeline of stated milestones. A structural schematic uses the supplied components, dimensions, and operations.
 
 ### VIII. Image Resource List
 
@@ -65,7 +63,7 @@ For every counted page, use a heading `#### Slide NN - Title` and include:
 - `Layout Family`: a short descriptive name for the proposed composition. Choose a name that describes this page's composition.
 - `Density`: based on this page's material and visual share.
 - `Visual relationship`: what the audience should understand from placement and visual encoding.
-- `Visual material`: the actual observation records or assigned source figure for a plot; named components, relationships, and dimensions for a schematic; or the title and metadata for a structural page.
+- `Visual material`: table/row IDs and columns from the Source record catalog, or an assigned source figure, for a quantitative plot; named components, relationships, and dimensions for a schematic; title and metadata for a structural page.
 - `Design brief`: the main visual, reading order, supporting details, and relevant source assets. Describe the main geometry and relationships for the designer to develop.
 - `Content`: ready-to-draw visible copy grouped by the planned regions, with the selected table cells, diagram labels, values, and notation. Use the available region sizes and readable typography to choose the amount of material.
 - `Speaker notes`: supporting explanations and source detail for oral delivery.

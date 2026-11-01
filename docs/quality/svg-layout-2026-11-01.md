@@ -153,3 +153,11 @@ Removed the separate Agent-mode contract-repair session as well. Agent mode now 
 The first-generation run covers the same nine manuscript fixtures, with new design specifications and three SVGs per paper. All 27 pages used exactly one SVG-generation call and exported natively; no SVG repair calls or raster slide fallbacks occurred. Seven pages still have geometry findings (28 total). A separate audit of the prior raw first responses found eight affected pages (33 findings). The sample is one stochastic run, so this difference does not establish a reliable quality improvement.
 
 Visual inspection also found an unsupported annual time series generated from qualitative bloom-trend prose. That factual defect remains a generation-stage issue. The tested change therefore establishes the requested first-generation workflow, not a claim that layout or factual quality is solved. Artifacts are under `.test-runtime/paper-corpus/v13-first-generation/`; original raw model responses are in `svg_initial/`. Existing user decks were not edited.
+
+## Named records before planning
+
+The first-generation inputs mixed qualitative accounts, scalar facts, and numeric tables in prose. A fresh plan converted qualitative trends into a full annual plot and specified additional series without observation records.
+
+A deterministic source-record catalog now exposes the manuscript's actual Markdown tables to both planning and drawing, with page/table/row IDs and unchanged labels, values, precision, and units. Qualitative prose produces no table records. Quantitative visual briefs select catalog rows or an assigned source figure; SVG chart groups can retain those references as `data-source-records`. This supplies material before the first generation and adds no rewrite or fallback path.
+
+Validation before corpus evaluation: 87 tests passed, including page-scoped identity, cell fidelity, mathematical/code pipes, fenced examples, and qualitative prose without fabricated observations. The next corpus pass measures the first outputs across all nine papers.
