@@ -29,3 +29,13 @@ The first pass produced 27 SVG pages. Eight three-page exports passed; one page 
 A Chinese formula also exposed missing glyphs in the default mathematical font. CJK formula labels now select an installed font with distinct glyph coverage. The math renderer signature was versioned so previously prepared equations regenerate with the corrected font.
 
 Validation after these fixes: 66 tests passed. The corpus script is `scripts/evaluate_svg_layout.py`; credentials are read from an environment variable or password prompt and are not stored in artifacts. Model-assisted fidelity findings require review: the first reports included both demonstrated invented chart points and incorrectly categorized supported values.
+
+## Second pass changes
+
+- Repair includes text collisions and opaque shapes covering text, in addition to capacity, canvas, container, and native-conversion failures.
+- Each design brief names its actual visual material: observation records, an assigned figure, or the components and relationships of a schematic. Qualitative descriptions use labeled relationships or stated milestones.
+- Structural-page information is scoped to the page role; detailed explanatory prose accompanies the speaker notes.
+- Inline emphasis and scripts share their parent text chunk's anchor. A reproduced end-aligned line previously measured past its x=400 anchor; it now ends at x=400. Native script fragments use the same chunk offset.
+- 69 unit tests passed, and the original 41-slide native export passed again after the anchor change.
+
+The second corpus pass reuses the first pass's manuscript fixtures (`--reuse-fixtures`) to separate SVG changes from new source summarization.

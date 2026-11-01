@@ -21,6 +21,21 @@ NS = '{http://www.w3.org/2000/svg}'
 
 
 class SvgTextGeometryTests(unittest.TestCase):
+    def test_native_script_fragments_share_the_parent_end_anchor(self):
+        from backend.generator.svg_text_layout import text_anchor_offsets
+        self.write('<text x="400" y="200" text-anchor="end" font-size="20">x<tspan baseline-shift="sub" font-size="14">i</tspan> tail</text>')
+        runs = text_runs(next(ET.parse(self.path).getroot().iter(NS+'text')))
+        offset = text_anchor_offsets(runs)[0]
+        xml, media, _ = convert_svg_to_slide_shapes(self.path)
+        drawing = '{http://schemas.openxmlformats.org/drawingml/2006/main}'
+        offsets = ET.fromstring(xml).findall('.//p:sp/p:spPr/a:xfrm/a:off', {
+            'p': 'http://schemas.openxmlformats.org/presentationml/2006/main',
+            'a': drawing[1:-1],
+        })
+        self.assertAlmostEqual(int(offsets[0].get('x')) / 9525, 400-offset, places=3)
+        self.assertGreater(int(offsets[1].get('x')), int(offsets[0].get('x')))
+        self.assertFalse(media)
+
     def test_html_scripts_survive_preview_and_native_export_with_scoped_baselines(self):
         self.write('<text x="100" y="200" font-size="20" fill="#123456">x<sub>i</sub> + y<sup>2</sup> end</text>')
         prepared = prepare_svg_file_content_for_render(self.path)

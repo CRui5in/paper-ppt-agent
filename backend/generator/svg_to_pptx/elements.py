@@ -249,7 +249,7 @@ def convert_text(elem: Any, ctx: ConvertContext) -> str:
     font_size = parse_svg_length(font_size_str, 16)
     effect = build_effect_xml(elem, ctx)
 
-    from backend.generator.svg_text_layout import text_runs
+    from backend.generator.svg_text_layout import text_runs, text_anchor_offsets
 
     defaults = dict(ctx.inherited_styles)
     defaults.setdefault("font-size", str(font_size))
@@ -266,13 +266,21 @@ def convert_text(elem: Any, ctx: ConvertContext) -> str:
         else:
             segments.append({
                 "line": fragment.line,
+                "chunk": fragment.chunk,
                 "x": fragment.x,
                 "y": fragment.y,
                 "anchor": anchor,
                 "runs": [run],
             })
     parts = []
+    offsets = text_anchor_offsets(positioned)
+    chunk_segments: dict[int, int] = {}
     for segment in segments:
+        chunk_segments[segment['chunk']] = chunk_segments.get(segment['chunk'], 0) + 1
+    for segment in segments:
+        if chunk_segments[segment['chunk']] > 1:
+            segment['x'] -= offsets[segment['chunk']]
+            segment['anchor'] = 'start'
         segment["runs"][0]["text"] = segment["runs"][0]["text"].lstrip()
         segment["runs"][-1]["text"] = segment["runs"][-1]["text"].rstrip()
         if any(run["text"] for run in segment["runs"]):

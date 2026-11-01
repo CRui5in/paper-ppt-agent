@@ -48,6 +48,8 @@ Use quantitative scales that accurately encode the supplied values, with precise
 
 For a data visualization, specify the supplied values or source asset. For a structural schematic, specify components, dimensions, and operations; these define the drawing.
 
+Choose the encoding from the available material. A quantitative plot uses explicit observation records or an assigned source figure. A qualitative account uses named relationships, comparisons, or a timeline of the stated milestones.
+
 ### VIII. Image Resource List
 
 List assigned source images, their exact paths, captions, natural dimensions, and aspect ratios. Explain what each image contributes. Keep paper figures complete. For pending external imagery, supply a concise English search query only when such imagery serves the page.
@@ -61,8 +63,9 @@ For every counted page, use a heading `#### Slide NN - Title` and include:
 - `Layout Family`: a short descriptive name for the proposed composition. Choose a name that describes this page's composition.
 - `Density`: based on this page's material and visual share.
 - `Visual relationship`: what the audience should understand from placement and visual encoding.
+- `Visual material`: the actual observation records or assigned source figure for a plot; named components, relationships, and dimensions for a schematic; or the title and metadata for a structural page.
 - `Design brief`: the main visual, reading order, supporting details, and relevant source assets. Describe the main geometry and relationships for the designer to develop.
-- `Content`: the page's substantive facts, exact values, and notation that must survive rendering.
+- `Content`: the visible material for the page's role, including the substantive facts, exact values, and notation on content pages. Detailed explanations accompanying a cover's title and metadata go in its speaker notes.
 
 The designer may improve the proposed composition while preserving the page's material and explicit template boundaries. Briefs should expose why a diagram, chart, figure, or typographic treatment suits the content.
 

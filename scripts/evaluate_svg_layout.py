@@ -118,16 +118,20 @@ async def evaluate_one(item: dict, args, client, semaphore) -> dict:
         (directory / 'source.md').write_text(source, encoding='utf8')
         (directory / 'source.json').write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding='utf8')
         provider = EvaluationProvider(client, semaphore, directory)
-        response = await provider.chat([
+        if args.reuse_fixtures:
+            fixture = json.loads((args.reuse_fixtures / item['id'] / 'fixture.json').read_text(encoding='utf8'))
+        else:
+            response = await provider.chat([
             LLMMessage.system('Create a source-grounded three-page research slide manuscript in Simplified Chinese. '
                 'Return JSON with a pages array, each item containing role, title, body (Markdown), and source_pages. '
-                'Page roles are cover, content, content. The first content page explains the method; the second explains evidence or results. '
+                'Page roles are cover, content, content. Cover content consists of the source title and supplied author/venue metadata. '
+                'The first content page explains the method; the second explains evidence or results. '
                 'Use the source title and author metadata. Include an equation or a compact numeric table when the excerpts provide one. '
                 'Keep values, units, comparison conditions, and mathematical notation faithful to the cited source pages. '
                 'Make each page coherent and concise, with enough information to test the rendering of real research material.'),
             LLMMessage.user(source),
-        ], args.model, max_tokens=5000)
-        fixture = json_response(response.content)
+            ], args.model, max_tokens=5000)
+            fixture = json_response(response.content)
         if len(fixture['pages']) != 3:
             raise ValueError('Expected three manuscript pages')
         manuscript = '\n\n---\n\n'.join(
@@ -192,4 +196,5 @@ if __name__ == '__main__':
     parser.add_argument('--base-url', default='https://api.deepseek.com')
     parser.add_argument('--concurrency', type=int, default=3)
     parser.add_argument('--limit', type=int)
+    parser.add_argument('--reuse-fixtures', type=Path, help='Reuse prior manuscripts for a controlled SVG comparison')
     asyncio.run(main(parser.parse_args()))

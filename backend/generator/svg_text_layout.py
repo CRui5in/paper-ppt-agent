@@ -59,13 +59,13 @@ def _glyph_vertical_bounds(text: str, attrs: dict[str, str]) -> tuple[float, flo
 
 def _bounds(element: ET.Element, inherited: dict[str, str] | None = None) -> tuple[float, float, float, float] | None:
     runs = text_runs(element, inherited)
+    offsets = text_anchor_offsets(runs)
     boxes = []
     for run in runs:
         if not run.text.strip():
             continue
         width = measure_text(run.text, run.attrs)
-        anchor = run.attrs.get("text-anchor", "start")
-        left = run.x - (width / 2 if anchor == "middle" else width if anchor == "end" else 0)
+        left = run.x - offsets[run.chunk]
         top, bottom = _glyph_vertical_bounds(run.text, run.attrs)
         boxes.append((left, run.y + top, left + width, run.y + bottom))
     if not boxes:
@@ -155,6 +155,21 @@ class TextRun:
     x: float
     y: float
     line: int
+    chunk: int = 0
+
+
+def text_anchor_offsets(runs: list[TextRun]) -> dict[int, float]:
+    """SVG anchors apply to a whole text chunk, including inline scripts."""
+    chunks: dict[int, list[TextRun]] = {}
+    for run in runs:
+        chunks.setdefault(run.chunk, []).append(run)
+    offsets = {}
+    for chunk, fragments in chunks.items():
+        first = fragments[0]
+        width = max(run.x + measure_text(run.text, run.attrs) for run in fragments) - first.x
+        anchor = first.attrs.get('text-anchor', 'start')
+        offsets[chunk] = width / 2 if anchor == 'middle' else width if anchor == 'end' else 0.0
+    return offsets
 
 
 def normalize_inline_scripts(root: ET.Element) -> int:
@@ -180,6 +195,7 @@ def text_runs(element: ET.Element, inherited: dict[str, str] | None = None) -> l
     x = number(element.get("x"))
     y = number(element.get("y"))
     line = 0
+    chunk = 0
 
     def emit(raw: str | None, attrs: dict[str, str]) -> None:
         nonlocal x
@@ -187,11 +203,11 @@ def text_runs(element: ET.Element, inherited: dict[str, str] | None = None) -> l
             return
         text = re.sub(r"[\t\r\n ]+", " ", raw)
         if text:
-            runs.append(TextRun(text, dict(attrs), x, y, line))
+            runs.append(TextRun(text, dict(attrs), x, y, line, chunk))
             x += measure_text(text, attrs)
 
     def visit(node: ET.Element, styles: dict[str, str], is_root: bool = False) -> None:
-        nonlocal x, y, line
+        nonlocal x, y, line, chunk
         attrs = dict(styles)
         attrs.update({key: value for key, value in node.attrib.items() if key in TEXT_ATTRIBUTES})
         parent_size = number(styles.get('font-size'), 16)
@@ -201,6 +217,8 @@ def text_runs(element: ET.Element, inherited: dict[str, str] | None = None) -> l
         elif raw_size.endswith('em'):
             attrs['font-size'] = f'{parent_size * number(raw_size):g}'
         if not is_root and any(key in node.attrib for key in ("x", "y", "dx", "dy")):
+            if node.get('x') is not None or node.get('y') is not None:
+                chunk += 1
             line += 1
             x = number(node.get("x"), x) + number(node.get("dx"))
             y = number(node.get("y"), y) + number(node.get("dy"))

@@ -2007,6 +2007,7 @@ def _generation_static_report(
         violations = [v for v in report.violations if v.rule in {
             "paragraph_capacity", "out_of_bounds", "text_overflow_in_container",
             "filter_requires_raster_fallback", "forbidden_element", "xml_parse",
+            "text_line_overlap", "text_overlap", "shape_covers_text",
         }]
         return CriticReport(passed=not violations, violations=violations)
     reports = [

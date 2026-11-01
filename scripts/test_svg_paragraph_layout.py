@@ -67,6 +67,16 @@ class NestedTextTests(unittest.TestCase):
 
 
 class ParagraphLayoutTests(unittest.TestCase):
+    def test_inline_emphasis_shares_the_complete_text_anchor(self):
+        for anchor in ('middle', 'end'):
+            with self.subTest(anchor=anchor):
+                el = ET.fromstring(f'<text x="400" y="200" text-anchor="{anchor}" font-size="20">Before <tspan font-weight="bold">bold</tspan> after</text>')
+                left, _, right, _ = _bounds(el)
+                if anchor == 'end':
+                    self.assertAlmostEqual(right, 400, places=5)
+                else:
+                    self.assertAlmostEqual((left+right)/2, 400, places=5)
+
     def test_real_overflow_is_retained_when_many_style_warnings_fill_the_report(self):
         labels = ''.join(f'<text x="40" y="{110+i*16}" font-size="8">Label {i}</text>' for i in range(25))
         bad_line = '<text x="1250" y="590" font-size="18">This full sentence exceeds the canvas.</text>'

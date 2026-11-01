@@ -12,13 +12,17 @@ Choose region sizes and spacing from the content. Alignment, whitespace, shared 
 
 ## Information
 
-Render the page's information accurately and completely, preserving values, units, notation, and comparison conditions. Use the page's supplied quantitative values in readable charts or tables and explain qualitative relationships through labeled geometry.
+Render the information called for by the page's role, preserving values, units, notation, and comparison conditions. Content pages retain their substantive explanation and evidence. Structural pages organize the supplied title, metadata, agenda, or closing message, with detailed explanations reserved for speaker notes.
+
+Use the page's supplied quantitative values in readable charts or tables and explain qualitative relationships through labeled geometry.
 
 Use unlabeled abstract geometry for ornament. Build explanatory content from the page manuscript and source figures; use the design brief for visual treatment. Preserve scientific spatial geometry from its source figure.
 
 Use consistent visual scales and precise data labels. Calculate chart coordinates from the supplied values. Bar lengths share a zero baseline; dot plots can use a labeled narrow range. Distinguish measured values, scale guides, and schematic illustrations.
 
 Data-bearing marks encode supplied values or reproduce a source asset. Structural schematics use components, dimensions, and operation labels to explain how the parts relate.
+
+Use the brief's visual material to choose the encoding. Plot explicit observation records with their conditions and units. Present qualitative changes through labeled relationships or a timeline of the stated milestones.
 
 Fit assigned paper figures completely at their natural aspect ratios. Arrange captions and direct annotations around the visible image. Reuse colors for the same meanings across the deck, with distinguishable series colors where useful.
 
