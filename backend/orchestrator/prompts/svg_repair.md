@@ -12,11 +12,13 @@ Each editable element has a `data-editor-id`. Return JSON with an `edits` array.
 Example:
 
 ```json
-{"edits":[{"target":"e12","attributes":{"y":"320","height":"180"}},{"target":"e18","replace":"<text x=\"80\" y=\"350\" font-size=\"18\">Complete explanation</text>"}]}
+{"edits":[{"target":"e12","attributes":{"y":"320","height":"180"}},{"target":"e18","replace":"<text x='80' y='350' font-size='18'>Complete explanation</text>"}]}
 ```
 
 Use coordinated edits when several regions need new bounds. Retain the assigned viewBox, source facts, values, notation, and comparison conditions. Complete the selected table records with their labels. Structural pages keep their title, metadata, agenda, or closing role.
 
 Equations use their existing `data-latex` and `data-math-box`; the renderer creates their vector paths. Paragraphs use `data-textbox` and continuous text with inline emphasis; the renderer measures and wraps them. Keep the supported native SVG vocabulary and the supplied local figure paths.
+
+Tables and diagram labels use independently positioned cells or labels. Keep their groups distinct from paragraph-flow groups.
 
 Return the JSON edits directly.

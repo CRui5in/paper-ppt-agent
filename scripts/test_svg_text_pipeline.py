@@ -22,6 +22,20 @@ NS = '{http://www.w3.org/2000/svg}'
 
 
 class SvgTextGeometryTests(unittest.TestCase):
+    def test_overescaped_xml_fragments_are_decoded_without_touching_latex(self):
+        source = _identify_svg_elements(SVG.format('<g id="panel"/>'))
+        target = next(ET.fromstring(source).iter(NS+'g')).get('data-editor-id')
+        reply = json.dumps({'edits':[{'target':target,'append':r'<text x=\"80\" y=\"200\">Label</text>'}]})
+        result = ET.fromstring(_apply_svg_repair_response(reply, source))
+        self.assertEqual(next(result.iter(NS+'text')).get('x'), '80')
+
+    def test_invalid_equation_patch_keeps_the_last_valid_authoring_tree(self):
+        source = _identify_svg_elements(SVG.format(r'<g data-latex="x^2" data-math-box="100 180 200 60"/>'))
+        target = next(ET.fromstring(source).iter(NS+'g')).get('data-editor-id')
+        reply = json.dumps({'edits':[{'target':target,'attributes':{'data-math-box':'100 180 200 0'}}]})
+        self.assertIsNone(_apply_svg_repair_response(reply, source))
+        self.assertIn('100 180 200 60', source)
+
     def test_identified_xml_edits_preserve_other_geometry_and_canvas(self):
         source = _identify_svg_elements(SVG.format('<text x="100" y="200">Keep me</text><rect x="80" y="180" width="300" height="60"/>'))
         root = ET.fromstring(source)

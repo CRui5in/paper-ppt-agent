@@ -949,7 +949,10 @@ def _apply_svg_repair_response(response: str, svg: str) -> str | None:
         namespace = root.tag.split('}',1)[0]+'}' if root.tag.startswith('{') else ''
 
         def fragment(markup):
-            element = ET.fromstring(markup)
+            try:
+                element = ET.fromstring(markup)
+            except ET.ParseError:
+                element = ET.fromstring(markup.replace('\\"', '"').replace("\\'", "'"))
             for child in element.iter():
                 if '}' not in child.tag:
                     child.tag = namespace + child.tag
@@ -987,6 +990,8 @@ def _apply_svg_repair_response(response: str, svg: str) -> str | None:
                 target.extend(list(wrapper))
         if _local_tag(root.tag) != 'svg' or root.get('viewBox') != original_viewbox:
             raise ValueError('The assigned canvas must be preserved')
+        from backend.generator.svg_finalize.render_math import render_math_in_tree
+        render_math_in_tree(root)
         return ET.tostring(root, encoding='unicode')
     except (KeyError, TypeError, ValueError, ET.ParseError):
         return None

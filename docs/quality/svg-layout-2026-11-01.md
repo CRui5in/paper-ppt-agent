@@ -73,3 +73,9 @@ Compact context reduced the reproduced repair request from 64,508 to 12,410 inpu
 Repair now uses a separate layout-editor request and an identified XML edit list. Coordinates, region replacements, and appended table rows can change without copying the rest of the page. Edits apply atomically to the current authoring tree, preserve its assigned viewBox, and then pass through normal rendering and checks. Existing full-SVG repair responses remain accepted for compatibility. Critic findings identify both the affected text and an occluding shape by editable element ID.
 
 Equation/text collisions now use the actual typeset glyph bounds, rather than assuming the whole reserved math box is occupied. Validation before the focused replay: 83 tests passed, including unknown targets, atomic failure, namespace preservation, canvas preservation, appended records, and an end-to-end JSON repair.
+
+## Repair response validation
+
+The first XML-edit replay reduced the three repair completions to 554–1,276 tokens (2.5–4.5 seconds), but exposed overescaped XML attributes and a proposed zero-height math box. Fragment decoding now recovers escaped quotes after an XML parse failure. Equation edits are rendered on the candidate tree before acceptance; invalid patches are rejected atomically, preserving the last valid slide. The repair example uses single-quoted XML attributes.
+
+Validation: 85 tests passed, including escaped fragments, preserved LaTeX, and invalid equation edits. The replay still has unresolved layout and source-table omissions; response validity is measured separately from successful composition.
