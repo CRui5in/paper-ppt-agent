@@ -56,6 +56,12 @@ class ManuscriptEntryPointTests(unittest.IsolatedAsyncioTestCase):
 
 
 class SvgGenerationEntryPointTests(unittest.IsolatedAsyncioTestCase):
+    def test_repair_cannot_trade_capacity_for_a_new_overlap(self):
+        from backend.generator.svg_critic import CriticReport, Violation
+        before = CriticReport(False, [Violation('paragraph_capacity', 'error', 'Measured space required: 200px wide and 100px high', bbox=(100,180,200,50))])
+        after = CriticReport(False, [Violation('text_overlap', 'error', 'Two labels intersect')])
+        self.assertTrue(svg_executor._repair_regressed(before, after))
+
     async def test_partial_progress_gets_a_followup_and_regressions_keep_the_previous_page(self):
         source = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720"><g data-textbox="100 180 200 10"><text x="100" y="200" font-size="18">This complete paragraph needs enough vertical space to wrap across several lines.</text></g></svg>'
         partial = source.replace('200 10', '200 40')
@@ -110,7 +116,7 @@ class SvgGenerationEntryPointTests(unittest.IsolatedAsyncioTestCase):
                 saved = ET.parse(Path(directory)/'svg_output/slide_001.svg').getroot()
                 self.assertTrue(list(saved.iter(NS+'path')))
 
-    async def test_missing_table_records_trigger_a_targeted_repair_in_both_modes(self):
+    async def test_table_membership_diagnostics_do_not_force_the_entire_manuscript_onto_a_page(self):
         manuscript = '<!-- page_type: content -->\n# Counts\n|Year|Count|\n|---|---|\n|2020|1234.5|\n|2021|0.625|'
         omitted = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720"><text x="100" y="200">2020 1234.5</text></svg>'
         complete = omitted.replace('</svg>', '<text x="100" y="240">2021 0.625</text></svg>')
@@ -121,9 +127,9 @@ class SvgGenerationEntryPointTests(unittest.IsolatedAsyncioTestCase):
                 kwargs = {} if mode == 'sequential' else {'mode': mode}
                 results = [result async for result in generator('', manuscript, Path(directory), provider, 'test-model', max_critic_attempts=0, enable_visual_critic=False, **kwargs)]
                 self.assertEqual(len(results), 1)
-                self.assertEqual(provider.chat.await_count, 2)
+                self.assertEqual(provider.chat.await_count, 1)
                 messages = provider.chat.call_args.args[0]
-                self.assertIn('source_table_values_missing', '\n'.join(message.content for message in messages if message.role=='user'))
+                self.assertNotIn('source_table_values_missing', '\n'.join(message.content for message in messages if message.role=='user'))
 
     def test_selected_table_values_are_checked_as_visible_content(self):
         source = '| Year | Count |\n|---|---|\n|2020|1,234.50|\n|2021|0.625|'

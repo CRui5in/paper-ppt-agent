@@ -329,6 +329,9 @@ def _paragraph_layouts(root: ET.Element):
         while owner is not None:
             if owner.get("data-textbox") and owner.get("data-role", "body") in {"body", "caption", "callout"}:
                 break
+            if owner is not element and owner.get('data-role') in {'table', 'diagram', 'figure', 'chart', 'label'}:
+                owner = None
+                break
             owner = parents.get(owner)
         if owner is None:
             continue
@@ -343,6 +346,11 @@ def _paragraph_layouts(root: ET.Element):
         groups.setdefault(owner, []).append((element, inherited))
 
     for owner, elements in groups.items():
+        anchors = [runs[0] for element, inherited in elements if (runs := text_runs(element, inherited))]
+        if any(abs(first.y-second.y) < .5 and abs(first.x-second.x) > 1
+               for index, first in enumerate(anchors) for second in anchors[index+1:]):
+            # Independently positioned columns belong to a grid, not a paragraph flow.
+            continue
         values = owner.get("data-textbox", "").split()
         if len(values) != 4:
             continue

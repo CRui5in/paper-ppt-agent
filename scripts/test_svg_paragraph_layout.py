@@ -67,6 +67,14 @@ class NestedTextTests(unittest.TestCase):
 
 
 class ParagraphLayoutTests(unittest.TestCase):
+    def test_table_cells_keep_their_grid_inside_an_outer_textbox(self):
+        cells = '<text x="100" y="200">Label</text><text x="300" y="200">Value</text><text x="100" y="230">Example</text><text x="300" y="230">0.812</text>'
+        for body in (cells, '<g data-role="table">'+cells+'</g>'):
+            root = ET.fromstring(SVG.format('<g data-role="body" data-textbox="100 180 400 180">'+body+'</g>'))
+            original = ET.tostring(root)
+            self.assertEqual(reflow_declared_paragraphs(root), 0)
+            self.assertEqual(ET.tostring(root), original)
+
     def test_wrapping_keeps_an_inline_script_with_its_base(self):
         width = measure_text('Long x', {'font-size':'18'}) + .1
         root = ET.fromstring(SVG.format(f'<g data-role="body" data-textbox="100 180 {width} 180">'

@@ -97,3 +97,13 @@ Validation: 88 tests passed. New regressions cover translated occluders, transfo
 Inspecting the replay PNGs found a relocated footer drawn through a diagram, despite a zero-error report. The check now includes content beginning below the footer boundary and excludes the footer's own elements. Footer occupancy is part of basic geometry repair. Changed candidates with equal defect counts can receive another bounded edit, since one repaired region can expose another at the same count. Repeated identical candidates still stop.
 
 Both edit-list and complete-SVG repairs retain existing mathematical expressions and validate their renderability before acceptance. Validation: 89 tests passed, including content entirely below the footer and equation deletion in both response formats.
+
+## Regression correction: source-table forcing and grid flow
+
+The v9 replay demonstrated a regression introduced by the numeric-membership gate. One three-page fixture supplied roughly fifty Markdown table lines on its results page. The gate treated every source number as mandatory visible content, and the repair score allowed added numbers to compensate for new overlap and canvas errors. The resulting oversized table was worse than the initial composition.
+
+Removed that gate from production repair. Numeric membership remains an evaluation diagnostic, separate from decisions about selected slide content. Repair acceptance now compares each geometry error category and paragraph capacity independently: correcting capacity cannot pay for a new overlap or footer violation.
+
+Paragraph flow also leaves independently positioned table columns intact, including tables nested inside an outer text box. Explicit diagram, chart, figure, and table groups establish a separate positioning scope. This prevents the paragraph engine from stacking independently authored cells.
+
+Validation: 91 tests passed. Added regressions preserve table-cell coordinates and reject a capacity-to-overlap trade. The earlier v9 native-export success did not establish layout quality; its rendered pages exposed the regression described here.

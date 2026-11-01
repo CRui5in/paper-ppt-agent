@@ -2140,7 +2140,6 @@ def _generation_static_report(
     include_general_svg_checks: bool,
     page_content: str = "",
 ) -> CriticReport:
-    source_report = _validate_source_table_values(svg_content, page_content)
     if not include_general_svg_checks:
         report = check_svg(svg_content, critic_config)
         violations = [v for v in report.violations if v.rule in {
@@ -2149,9 +2148,8 @@ def _generation_static_report(
             "text_line_overlap", "text_overlap", "shape_covers_text",
             "equation_overlaps_text", "content_area_overflow",
         }]
-        return _merge_reports(CriticReport(passed=not violations, violations=violations), source_report)
+        return CriticReport(passed=not violations, violations=violations)
     reports = [
-        source_report,
         _validate_paper_figure_refs(
             svg_content,
             allowed_figures=allowed_figures,
@@ -2225,17 +2223,13 @@ def _static_attempt_limit_for_report(
 
 
 def _repair_quality(report: CriticReport) -> tuple[float, float]:
-    """Count outstanding records and defects; measure remaining capacity pressure."""
+    """Compare geometry defects and capacity pressure independently."""
     defects = 0
     pressure = 0.0
     for violation in report.violations:
         if violation.severity != 'error':
             continue
-        if violation.rule == 'source_table_values_missing':
-            values = violation.detail.partition(': ')[2].partition('. Recompose')[0]
-            defects += max(1, len(values.split(', ')))
-        else:
-            defects += 1
+        defects += 1
         if violation.rule == 'paragraph_capacity' and violation.bbox:
             match = re.search(r'required: ([\d.]+)px wide and ([\d.]+)px high', violation.detail)
             if match:
@@ -2243,6 +2237,12 @@ def _repair_quality(report: CriticReport) -> tuple[float, float]:
                 pressure += max(0, float(match[1]) / max(width, 1) - 1)
                 pressure += max(0, float(match[2]) / max(height, 1) - 1)
     return defects, round(pressure, 3)
+
+
+def _repair_regressed(before: CriticReport, after: CriticReport) -> bool:
+    old = Counter(v.rule for v in before.violations if v.severity == 'error')
+    new = Counter(v.rule for v in after.violations if v.severity == 'error')
+    return any(new[rule] > old[rule] for rule in new) or _repair_quality(after)[1] > _repair_quality(before)[1]
 
 
 def _pseudo_icon_badge_violations(svg_content: str) -> list[Violation]:
@@ -2988,7 +2988,7 @@ async def generate_svg_pages(
                             used_paper_figures=used_paper_figures, required_icon=required_icon,
                             include_general_svg_checks=max_critic_attempts > 0, page_content=page_content)
                         before_quality, after_quality = _repair_quality(report), _repair_quality(candidate_report)
-                        if after_quality > before_quality:
+                        if _repair_regressed(report, candidate_report):
                             repair_errors.append('The proposed edits increased outstanding defects. Recompose the current page using these candidate findings:\n' + candidate_report.to_prompt_block(output_format='edits'))
                             repaired = None
                         elif (after_quality <= before_quality and not candidate_report.passed
@@ -4327,7 +4327,7 @@ async def _generate_parallel_page(
                     used_paper_figures={}, required_icon=required_icon,
                     include_general_svg_checks=max_critic_attempts > 0, page_content=str(page_input["page_content"]))
                 before_quality, after_quality = _repair_quality(report), _repair_quality(candidate_report)
-                if after_quality > before_quality:
+                if _repair_regressed(report, candidate_report):
                     repair_errors.append('The proposed edits increased outstanding defects. Recompose the current page using these candidate findings:\n' + candidate_report.to_prompt_block(output_format='edits'))
                     repaired = None
                 elif (after_quality <= before_quality and not candidate_report.passed
