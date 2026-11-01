@@ -335,62 +335,13 @@ def _font_size_of(el: ET.Element, inherited: float) -> float:
 
 
 def _text_bbox(el: ET.Element, font_size: float) -> tuple[float, float, float, float]:
-    """Estimate text bbox, including direct tspan line positioning."""
-    x = _float_attr(el, "x", 0.0)
-    y = _float_attr(el, "y", 0.0)
-    anchor = (el.get("text-anchor") or "").strip().lower()
-    tspans = [child for child in list(el) if _strip_ns(child.tag) == "tspan"]
-    if not tspans:
-        text = _text_of(el)
-        w = _text_width_estimate(text, font_size)
-        h = font_size * 1.25
-        if anchor == "middle":
-            x = x - w / 2
-        elif anchor == "end":
-            x = x - w
-        return x, y - font_size, w, h
+    """Measure every styled run, including parent text and descendant tails."""
+    from .svg_text_layout import _bounds
 
-    current_x = x
-    current_y = y
-    line_boxes: list[tuple[float, float, float, float]] = []
-    for tspan in tspans:
-        if tspan.get("x") is not None:
-            current_x = _float_attr(tspan, "x", current_x)
-        elif tspan.get("dx") is not None:
-            current_x += _float_attr(tspan, "dx", 0.0)
-        if tspan.get("y") is not None:
-            current_y = _float_attr(tspan, "y", current_y)
-        elif tspan.get("dy") is not None:
-            current_y += _float_attr(tspan, "dy", 0.0)
-
-        child_font_size = _font_size_of(tspan, font_size)
-        text = _text_of(tspan)
-        if not text:
-            continue
-        width = _text_width_estimate(text, child_font_size)
-        child_anchor = (tspan.get("text-anchor") or anchor).strip().lower()
-        left = current_x
-        if child_anchor == "middle":
-            left -= width / 2
-        elif child_anchor == "end":
-            left -= width
-        line_boxes.append(
-            (
-                left,
-                current_y - child_font_size,
-                width,
-                child_font_size * 1.25,
-            )
-        )
-        if tspan.get("x") is None:
-            current_x += width
-
-    if not line_boxes:
-        return x, y - font_size, 0.0, font_size * 1.25
-    left = min(box[0] for box in line_boxes)
-    top = min(box[1] for box in line_boxes)
-    right = max(box[0] + box[2] for box in line_boxes)
-    bottom = max(box[1] + box[3] for box in line_boxes)
+    box = _bounds(el, {"font-size": str(font_size)})
+    if box is None:
+        return _float_attr(el, "x"), _float_attr(el, "y"), 0.0, 0.0
+    left, top, right, bottom = box
     return left, top, right - left, bottom - top
 
 
@@ -438,6 +389,32 @@ def _normalize_hex(value: str) -> str:
     if len(v) == 3:
         v = "".join(c * 2 for c in v)
     return v
+
+
+def check_paragraph_layout(svg_content: str) -> CriticReport:
+    """Check the measured capacity of explicit paragraph flow boxes."""
+    from .svg_text_layout import paragraph_layout_issues
+
+    try:
+        root = ET.fromstring(svg_content)
+    except ET.ParseError:
+        return CriticReport(passed=True)
+    violations = [
+        Violation(
+            rule="paragraph_capacity",
+            severity="error",
+            detail=(
+                f"Paragraph box {issue['box']} contains {issue['paragraphs']} paragraph(s) "
+                f"wrapping to {issue['lines']} lines. Measured space required: "
+                f"{issue['required_width']:.1f}px wide and {issue['required_height']:.1f}px high. "
+                "Recompose the region or edit the copy to fit the complete text."
+            ),
+            element=issue["element"],
+            bbox=issue["box"],
+        )
+        for issue in paragraph_layout_issues(root)
+    ]
+    return CriticReport(passed=not violations, violations=violations)
 
 
 def check_svg(svg_content: str, config: CriticConfig | None = None) -> CriticReport:
@@ -871,6 +848,8 @@ def check_svg(svg_content: str, config: CriticConfig | None = None) -> CriticRep
                 )
                 break  # one palette violation per element is enough
 
+    violations[0:0] = check_paragraph_layout(svg_content).violations
+
     # Trim to avoid prompt bloat.
     if len(violations) > cfg.max_violations_in_report:
         violations = violations[: cfg.max_violations_in_report]
@@ -1267,15 +1246,33 @@ def _check_default_content_area_overflow(
     canvas: tuple[float, float],
     violations: list[Violation],
 ) -> None:
-    """Catch content containers crossing into the default footer band.
-
-    The executor contract reserves y=100..canvas_height-100 for content. Footer
-    text may live below that band, so only elements that start inside the
-    content area and cross its bottom boundary are flagged.
-    """
+    """Catch content crossing the declared footer, with a legacy fallback."""
     cw, ch = canvas
     content_top = 100.0
     content_bottom = ch - 100.0
+    footer_tops = []
+    for group in _iter_all(root):
+        if _strip_ns(group.tag) != "g" or group.get("data-role", group.get("id")) != "footer":
+            continue
+        if group.get("transform"):
+            continue
+        for element in group.iter():
+            tag = _strip_ns(element.tag)
+            if element.get("transform"):
+                continue
+            if tag == "line":
+                top = min(_float_attr(element, "y1"), _float_attr(element, "y2"))
+            elif tag == "text":
+                top = _text_bbox(element, _font_size_of(element, 16))[1]
+            else:
+                box = _shape_bbox(element)
+                if box is None:
+                    continue
+                top = box[1]
+            if ch / 2 < top < ch:
+                footer_tops.append(top)
+    if footer_tops:
+        content_bottom = min(footer_tops)
     slack = 2.0
 
     for _order, text_el, bbox in text_boxes:
@@ -1333,17 +1330,17 @@ def _check_empty_bullets(
     text_boxes: list[tuple[int, ET.Element, tuple[float, float, float, float]]],
     violations: list[Violation],
 ) -> None:
+    parents = {child: parent for parent in root.iter() for child in parent}
     for el in _iter_all(root):
         if _strip_ns(el.tag) != "circle":
+            continue
+        owner = parents.get(el)
+        if el.get('data-role') != 'bullet' and (owner is None or owner.get('data-role') != 'list-item'):
             continue
         cx = _float_attr(el, "cx", 0.0)
         cy = _float_attr(el, "cy", 0.0)
         r = _float_attr(el, "r", 0.0)
-        if r < 3.0 or r > 8.0:
-            continue
-        # Likely list bullets. Larger diagram nodes, scatter points, and icon
-        # circles deeper in charts are ignored.
-        if cx > 120:
+        if r <= 0:
             continue
         has_text = False
         for _order, text_el, bbox in text_boxes:

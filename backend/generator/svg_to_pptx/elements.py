@@ -261,7 +261,7 @@ def convert_text(elem: Any, ctx: ConvertContext) -> str:
         fs = parse_svg_length(fragment.attrs.get("font-size", str(font_size)), font_size)
         run = _make_run(fragment.text, styled, ctx, fs)
         anchor = fragment.attrs.get("text-anchor", "start")
-        if segments and segments[-1]["line"] == fragment.line and segments[-1]["anchor"] == anchor:
+        if segments and segments[-1]["line"] == fragment.line and segments[-1]["anchor"] == anchor and abs(segments[-1]["y"] - fragment.y) < .01:
             segments[-1]["runs"].append(run)
         else:
             segments.append({
@@ -493,7 +493,11 @@ def _build_text_shape(x: float, y: float, runs: list[dict], ctx: ConvertContext,
         f'<p:txBody>'
         f'<a:bodyPr wrap="none" anchor="t" lIns="0" tIns="0" rIns="0" bIns="0"><a:noAutofit/></a:bodyPr>'
         f'<a:lstStyle/>'
-        f'<a:p><a:pPr algn="{algn}"/>{runs_xml}</a:p>'
+        f'<a:p><a:pPr algn="{algn}">'
+        f'<a:lnSpc><a:spcPct val="100000"/></a:lnSpc>'
+        f'<a:spcBef><a:spcPts val="0"/></a:spcBef>'
+        f'<a:spcAft><a:spcPts val="0"/></a:spcAft>'
+        f'</a:pPr>{runs_xml}</a:p>'
         f'</p:txBody>'
         f'</p:sp>'
     )

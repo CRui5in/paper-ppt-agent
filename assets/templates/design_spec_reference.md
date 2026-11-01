@@ -11,8 +11,7 @@
 | **Page Count** | [Filled by Strategist] |
 | **Design Style** | {design_style} |
 | **Target Audience** | [Filled by Strategist] |
-| **Use Case** | [Filled by Strategist] |
-| **Created Date** | {date_str} |
+| **Use Case** | [Supplied presentation context, when provided] |
 
 ---
 
@@ -272,7 +271,7 @@ Icons are optional. Most slides need 0 icons. Only add when it has a clear seman
 
 #### Slide 01 - Cover
 
-- **Layout**: Full-screen background image + centered title
+- **Layout**: [Title and metadata composition with unlabeled abstract ornament]
 - **Title**: [Main title]
 - **Subtitle**: [Subtitle]
 - **Info**: [Author / Date / Organization]

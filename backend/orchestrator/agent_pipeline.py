@@ -1173,7 +1173,7 @@ Repair the existing workspace without changing the requested narrative or slide 
 - Re-evaluate each slide's claim, evidence, paper figure, layout, whitespace, and Chinese wrapping independently.
 - Fix every listed out-of-bounds, card overflow, line collision, or text-capacity violation by changing the layout, container size, line breaks, table columns, or wording. Do not merely shrink all text.
 - Remove disallowed SVG constructs such as `<style>`, `class=`, `mask`, `clipPath`, `foreignObject`, scripts, event handlers, or remote URLs. Put fill/stroke/font attributes directly on each SVG element. Preserve supported simple drop shadows attached directly to one shape; remove group filters, text glow, and complex blur effects.
-- Before finishing each slide, verify `text_right <= region_right`, `last_baseline + font_size*0.25 <= region_bottom`, and every table column has enough width for its longest visible cell.
+- Before finishing each slide, verify that complete text bounds fit the region and every table column has enough width for its longest visible cell.
 - Preserve exact source numbers and units; remove K/M/B shorthand unless it appears verbatim in the paper.
 - Ensure every content slide has a well-designed layout.
 - Update `agent_report.json.slide_authoring` to:
@@ -4009,7 +4009,7 @@ Workspace contract:
 - Per-slide authoring contract: author every `svg_output/slide_###.svg` directly as a separate file. Do not create or run a Python/JavaScript/TypeScript/shell/PowerShell/batch/Ruby program that generates multiple slides. Do not use loops, a `SLIDES`/maker registry, shared `base_svg`/`title`/card rendering functions, or template expansion to emit the deck. Shared palette, typography, margins, and recurring chrome may be documented, but each slide must have an explicit layout and SVG markup chosen from that slide's claim and evidence. Read-only validation/render/export scripts remain allowed.
 - Layout contract: design each slide's spatial layout from its text and visual material. Use aligned regions and consistent spacing. Declare each paragraph's text box and write continuous text with inline emphasis; the renderer wraps it using font metrics. Reserve separate space for paragraphs, figures, captions, header labels, and titles. Keep content inside its assigned boxes and size table columns from their cells.
 - Continuity contract: before writing a chapter slide, read at most the two most recent earlier chapter-slide SVGs. Before writing a content slide, read at most the two most recent earlier content-slide SVGs, skipping cover, TOC, chapter, and ending slides. Use them for style continuity only; the current manuscript remains authoritative.
-- Factual rendering contract: preserve exact source numbers, notation, precision, and units. Do not abbreviate, invent, or round metrics, chart axes, ticks, dates, sample sizes, or settings. Mark derived values explicitly and show their source inputs/calculation nearby. Evidence-card ids and retrieval snippets are private grounding, not visible slide copy.
+- Factual rendering contract: preserve exact source numbers, notation, precision, and units. Preserve metrics, dates, sample sizes, settings, and their precision. Charts may derive plot positions and readable scale ticks from supplied values, keeping scale guides distinct from observations. Mark derived values explicitly and show their source inputs/calculation nearby. Evidence-card ids and retrieval snippets are private grounding, not visible slide copy.
 - Icon contract: icons are optional decorative/semantic visual aids. Add them only when they make the slide clearer or more polished, such as repeated semantic labels, process steps, comparison dimensions, legends, or diagram nodes. Before using icons, define a small vocabulary in `design_spec.md` (concept -> existing local SVG file -> size/style/color). Use filesystem commands against `agent_task.json.paths.icons` to list and match available `.svg` files directly; do not use icon search scripts, icon metadata files, `index_meta.json`, or vector indexes. Reuse the same icon for the same concept, keep to one icon family/style, and color icons with the template/deck palette. Avoid scattering one-off icons or multi-color icon accents across unrelated slides. Never use letters, initials, ASCII/Unicode symbols, emoji, dingbats, or decorative characters as icon substitutes; omit the icon or use a non-icon shape if no matching asset exists.
 - SubAgent contract: do not split work just to satisfy ordinary slide count or budget selection. When deep research is enabled, launch focused research SubAgents if the Task tool is available; use separate readers for background/related work, method, experiments, and critique when the paper is complex. When Agent review is enabled, run one focused review SubAgent after the first full deck is drafted; it should review the whole deck for layout overflow, missing assets, icon-policy violations, and narrative gaps instead of checking pages one by one. If you skip a required deep-research or review SubAgent, write a concrete reason in `agent_report.json.subagents`; the main Agent must merge results and keep final narrative/design consistency.
 - External research contract: if external research is enabled, use the `{_RESEARCH_SKILL_NAME}` skill after reading the paper. You, not the backend, must choose search queries from paper understanding before calling its script/API helpers. It is mandatory to produce `research/raw_external_results.json`, `research/sources.json`, and `research/brief.md` before writing any manuscript, design specification, notes, report, or slide SVG. Read `research/external_search_summary.json` before sampling raw results. Sparse or zero directly relevant external results are acceptable when `research/sources.json` records a concrete limitation; do not repeat searches merely to satisfy the gate or increase counts. For web results, open/read relevant pages deeply enough to understand the source; do not cite titles/snippets alone.
@@ -4197,28 +4197,20 @@ def _agent_layout_policy() -> dict[str, Any]:
         },
         "occupancy_target": {
             "content_slides": "Size regions from their text and figures; use whitespace for separation and hierarchy",
-            "structural_slides": "sparse by design; do not force content density",
+            "structural_slides": "Text follows the page role; visual density follows the selected composition",
         },
-        "layout_families": [
-            "figure-left-text-right",
-            "text-left-figure-right",
-            "full-bleed-image-overlay",
-            "kpi-dashboard",
-            "full-width-chart-with-notes",
-            "comparison-table-callout",
-            "two-column-evidence",
-            "three-card-grid",
-            "four-quadrant-matrix",
-            "process-flow-with-evidence",
-            "hero-title-plus-callouts",
-            "timeline-horizontal",
-            "numbered-steps",
+        "layout_family_authority": "Open vocabulary of composition suggestions; the executor chooses geometry within explicit template boundaries.",
+        "composition_tools": [
+            "position, scale, and typography for hierarchy and comparison",
+            "native paths, curves, shapes, and connectors for relationships",
+            "direct labels and annotations for figures, plots, and equations",
+            "alignment, whitespace, shared axes, and containers for grouping",
         ],
         "balance_rules": [
-            "Use a shared grid and 24-40px gutters between major regions.",
-            "Avoid empty quadrants, floating short bullet lists, and bottom callouts detached from the main grid.",
-            "For sparse content, enlarge the supported figure, convert bullets into grouped callouts, or draw a simple paper-supported mechanism diagram.",
-            "For image+text pages, reserve the figure frame first, preserve aspect ratio inside that frame, and make the text column use comparable vertical rhythm.",
+            "Align related elements; choose regions and spacing from the page's reading order and content.",
+            "Use native paths, curves, connectors, spatial grouping, and direct labels to reveal the relationship in the material. Open whitespace can separate ideas.",
+            "Choose a main visual or typographic composition from the material; containers are optional grouping tools.",
+            "Fit the complete figure at a readable size and its natural aspect ratio, then arrange explanations and direct annotations around it.",
             "Establish hierarchy through typography, contrast, alignment, and spacing. Use shadows, gradients, or accent bars when they serve the selected style or clarify grouping; flat layouts are valid. Optional shadows must be simple convertible drop shadows attached directly to one shape. Group filters, text glow, complex blur effects, and offset duplicate rectangles used as shadows are prohibited.",
             "Give each card/panel clear grouping and proper inner padding; use accent elements when they clarify the content.",
             "Use emphasis, labels, and grouping where they clarify the current page's evidence or explanation. Choose the layout from its material.",
@@ -4256,7 +4248,7 @@ def _agent_layout_policy() -> dict[str, Any]:
             ),
         },
         "forbidden": [
-            "invented chart axes or ticks used only to fill empty space",
+            "invented observations, missing series, or numeric scales on qualitative diagrams",
             "paper figure stretching instead of fit-inside-frame aspect preservation",
             "paragraph text placed in a narrow right-edge region without a width budget",
             "bottom cards whose final text baseline falls below the card",
@@ -4307,7 +4299,8 @@ def _agent_factual_rendering_policy() -> dict[str, Any]:
     return {
         "source_precision_required": True,
         "rules": [
-            "Do not invent metrics, chart ticks, axes, sample sizes, dates, model settings, or causal claims.",
+            "Use unlabeled abstract geometry for ornament. Build explanatory content from the page manuscript and source figures, and use the design brief for visual treatment. Preserve scientific spatial geometry from its source figure.",
+            "Preserve supplied metrics, sample sizes, dates, model settings, and supported claims. Charts may derive plot positions and readable scale ticks from supplied values, keeping scale guides distinct from observations.",
             "Preserve the source number and unit exactly unless the slide explicitly shows a transparent derivation.",
             "Do not compress exact counts into shorthand unless that exact notation appears in the source.",
             "Derived values must be marked as derived and show the source inputs or calculation nearby.",

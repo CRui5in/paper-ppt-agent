@@ -58,6 +58,8 @@ def convert_svg_to_slide_shapes(
     """
     tree = ET.parse(svg_path)
     root = tree.getroot()
+    from ..svg_text_layout import normalize_inline_scripts
+    normalize_inline_scripts(root)
 
     # Collect <defs>
     defs = _collect_defs(root)

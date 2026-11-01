@@ -84,57 +84,29 @@ def _maybe_to_jpeg(png_bytes: bytes, quality: int = 80) -> tuple[bytes, str]:
         return png_bytes, "image/png"
 
 
-_VLM_SYSTEM = """You are a visual QA reviewer for presentation slides.
+_VLM_SYSTEM = """Review the rendered presentation slide at normal slideshow size.
 
-You will be shown a single rendered slide. Inspect it as a discerning designer would.
-Report only visible, actionable problems.
+Evaluate:
+- Legibility: text size, contrast, line length, and complete visible labels.
+- Geometry: text collisions, clipping, container overflow, and alignment of related elements.
+- Reading order: grouping, hierarchy, and the association between labels and visuals.
+- Figures and charts: readable detail, complete content, accurate visual scales, and correspondence with the title and caption.
 
-Look for:
-- Overlapping elements (text through shapes, icons covering words, stacked items)
-- Text or diagrams escaping their intended container, card, panel, or slide bounds
-- Text overflow or cut-off at edges or inside cards
-- A decorative horizontal LINE directly under the slide title (this is a forbidden AI-slide pattern; flag it)
-- Cramped spacing (< 0.3" / ~24px gaps), uneven gaps, or insufficient slide-edge margins (< 0.5" / ~40px)
-- Text, badges, buttons, or chips pressed against a card/panel edge with little or no padding (< ~16px)
-- Misalignment between columns or grid items
-- Paper figures, charts, or screenshots that are visibly too small to read, detached from their caption, misplaced, or floating in an unrelated blank area
-- Paper figures, charts, screenshots, or images that do not match the page title, surrounding text, or caption
-- Excessive or redundant capsule tags/badges/chips that repeat nearby headings or make the slide feel fragmented
-- Text-only slides with zero visual elements
-- Body text or bullet lists that are CENTER-aligned (only titles may be centered)
-- Decorative clutter that doesn't carry information
-- Generic / off-topic visual styling
+Report concrete visible defects with their location and a useful correction.
+Use error for defects that impair reading or make a figure/chart misleading.
+Use warning for visible problems that weaken comprehension while leaving the page usable.
+Return an empty issues array when the page reads clearly.
 
-Do NOT over-correct:
-- Do not flag intentional decorative motifs, small page numbers, footers, or icons that do not harm reading.
-- Do not flag a paper figure as too small when it is clearly a citation thumbnail and the slide has already redrawn the important information in readable form.
-- Do not flag tags when they form a real legend, taxonomy, filter set, or process map and remain limited/readable.
-- Do not flag minor preference issues. Only report problems a presenter would likely notice at normal slideshow size.
-
-If the slide is clean, return an empty issues array. Do NOT invent problems.
-
-You MUST respond with strict JSON in this exact shape:
-
+Return strict JSON:
 {
   "issues": [
     {
       "rule": "short_snake_case_id",
       "severity": "error" | "warning",
-      "detail": "one-sentence description, including a concrete fix instruction"
+      "detail": "visible defect, location, and correction"
     }
   ]
 }
-
-Allowed rule ids: text_overlap, text_overflow, element_out_of_container,
-container_padding_too_small, accent_line_under_title,
-edge_margin_too_small, uneven_spacing, misalignment, figure_too_small,
-figure_misplaced, figure_caption_mismatch, text_only_slide, centered_body_text,
-image_content_mismatch, decorative_clutter, tag_clutter, off_topic_styling, other.
-
-Use "error" only for issues that materially harm legibility, break the layout,
-or make a figure/chart misleading or unreadable. Use "warning" for aesthetic
-issues that should be improved but do not break the slide. Prefer no issue over
-speculative issues.
 """
 
 

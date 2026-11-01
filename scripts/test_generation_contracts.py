@@ -56,6 +56,53 @@ class ManuscriptEntryPointTests(unittest.IsolatedAsyncioTestCase):
 
 
 class SvgGenerationEntryPointTests(unittest.IsolatedAsyncioTestCase):
+    async def test_measured_capacity_feedback_regenerates_in_both_modes_without_review(self):
+        overfull = '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720">
+        <g data-role="body" data-textbox="100 180 100 30">
+        <text x="100" y="200" font-size="18">A complete paragraph needs enough room to wrap.</text>
+        <text x="100" y="228" font-size="18">A second paragraph.</text></g></svg>'''
+        for mode in ('sequential', 'page_parallel'):
+            with self.subTest(mode=mode), TemporaryDirectory() as directory:
+                provider = SimpleNamespace(chat=AsyncMock(side_effect=[LLMResponse(content=overfull), LLMResponse(content=MODEL_SVG)]))
+                generator = svg_executor.generate_svg_pages if mode == 'sequential' else svg_executor.generate_svg_pages_parallel
+                kwargs = {} if mode == 'sequential' else {'mode': mode}
+                results = [result async for result in generator(
+                    '', '<!-- page_type: content -->\n# Method\nTwo paragraphs.', Path(directory), provider, 'test-model',
+                    max_critic_attempts=0, enable_visual_critic=False, **kwargs,
+                )]
+                self.assertEqual(len(results), 1)
+                self.assertEqual(provider.chat.await_count, 2)
+                messages = provider.chat.call_args.args[0]
+                feedback = '\n'.join(str(message.content) for message in messages if message.role == 'user')
+                self.assertIn('paragraph_capacity', feedback)
+                self.assertIn('Measured space required', feedback)
+
+    async def test_remaining_capacity_findings_are_reported_without_aborting_the_deck(self):
+        overfull = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720"><g data-role="body" data-textbox="100 180 50 20"><text x="100" y="200" font-size="18">This paragraph needs several lines of space.</text></g></svg>'
+        manuscript = '<!-- page_type: content -->\n# First\n\n---\n\n<!-- page_type: content -->\n# Second'
+        for mode in ('sequential', 'page_parallel'):
+            with self.subTest(mode=mode), TemporaryDirectory() as directory:
+                provider = SimpleNamespace(chat=AsyncMock(return_value=LLMResponse(content=overfull)))
+                critic = AsyncMock()
+                generator = svg_executor.generate_svg_pages if mode == 'sequential' else svg_executor.generate_svg_pages_parallel
+                kwargs = {} if mode == 'sequential' else {'mode': mode}
+                results = [result async for result in generator('', manuscript, Path(directory), provider, 'test-model', max_critic_attempts=0, enable_visual_critic=False, on_critic=critic, **kwargs)]
+                self.assertEqual(len(results), 2)
+                self.assertEqual(provider.chat.await_count, 4)
+                self.assertTrue((Path(directory) / 'svg_output/slide_002.svg').exists())
+                self.assertTrue(any(any(v.rule == 'paragraph_capacity' for v in call.args[2].violations) for call in critic.call_args_list))
+
+    async def test_structural_design_brief_reaches_designer_intact(self):
+        design = '#### Slide 01 - Opening\n- Type: cover\n- Design brief: Distinctive layered vector composition.\n  Preserve the planner\'s nested design explanation.'
+        with TemporaryDirectory() as directory:
+            provider = SimpleNamespace(chat=AsyncMock(return_value=LLMResponse(content=MODEL_SVG)))
+            async for _ in svg_executor.generate_svg_pages_parallel(design, '<!-- page_type: cover -->\n# A Study', Path(directory), provider, 'test-model', mode='page_parallel', max_critic_attempts=0, enable_visual_critic=False):
+                pass
+            messages = provider.chat.call_args.args[0]
+            user_content = '\n'.join(str(message.content) for message in messages if message.role == 'user')
+            self.assertIn('Distinctive layered vector composition.', user_content)
+            self.assertIn("Preserve the planner's nested design explanation.", user_content)
+
     async def exercise_mode(self, mode):
         with TemporaryDirectory() as directory:
             project = Path(directory)

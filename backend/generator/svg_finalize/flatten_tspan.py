@@ -67,7 +67,7 @@ def _flatten_text_with_tspans(root: ET.Element) -> int:
             continue
         # Relative offsets encode inline geometry, including mathematical
         # scripts. They are not paragraph line breaks.
-        if any(span.get("dx") is not None or span.get("dy") is not None for span in tspans):
+        if any(span.get("dx") is not None or span.get("dy") is not None or span.get('baseline-shift') is not None for span in tspans):
             continue
         if any(len(span) for span in tspans):
             continue

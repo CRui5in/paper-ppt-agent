@@ -78,7 +78,7 @@ CLIP_RECT_RE = re.compile(
 PROMPT_PATH = Path(__file__).parent / "prompts" / "executor.md"
 
 # Default number of static critic checks per page, including the first
-# post-generation check. 0 disables review entirely.
+# post-generation check. Paragraph capacity is checked independently of review.
 DEFAULT_MAX_CRITIC_ATTEMPTS = 0
 
 # Maximum number of prior same-type SVGs used as continuity references.
@@ -173,184 +173,56 @@ def _drop_paper_figure_tokens_for_structural_page(page_content: str) -> str:
 
 
 def _page_role_guidance(page_type: str) -> str:
-    if page_type in STRUCTURAL_PAGE_TYPES:
-        if page_type == "toc":
-            return (
-                "- Page role boundary: render this as a table-of-contents page. "
-                "Use the title and the planned chapter/list items in order; do "
-                "not replace the list with a decorative title-only page.\n"
-                "- Content boundary: do not introduce template/example diagrams, "
-                "workflow charts, model architecture blocks, or non-TOC explanatory "
-                "visuals. Decoration is fine only when it does not become content.\n"
-                "- Chrome rule: if page numbering is visible, place it in the "
-                "footer only. Do not add top-left section/chapter/page counter labels."
-            )
-        guidance = (
-            "- Page role boundary: render this as a minimal structural page. "
-            "Use the title, an optional short subtitle/key phrase, and sparse "
-            "native SVG decoration only. Do not add paper figures, charts, "
-            "multi-column evidence blocks, or detailed bullet grids.\n"
-            "- Chrome rule: if page numbering is visible, place it in the "
-            "footer only. Do not add top-left section/chapter/page counter "
-            "labels."
-        )
-        if page_type == "chapter":
-            guidance += (
-                "\n- Chapter consistency: reuse the same chapter-divider layout "
-                "for every chapter page in this deck; only change the chapter "
-                "number, title, and optional subtitle/key phrase."
-            )
-        return guidance
-    return (
-        "- Page role boundary: render this as a content page. Do not use a "
-        "chapter-divider layout, oversized chapter numerals, or transition "
-        "slide treatment.\n"
-        "- Chrome rule: if page numbering is visible, place it in the footer "
-        "only. Do not add top-left section/chapter/page counter labels."
-    )
-
-
-def _structural_page_override_block(page_type: str) -> str:
-    if page_type not in STRUCTURAL_PAGE_TYPES:
-        return ""
-    if page_type == "cover":
-        return (
-            "\n## Structural Page Override\n"
-            "- This override is stronger than any design-spec content-elements list for this page.\n"
-            "- Render the cover as a lightweight title/meta slide: title, optional subtitle, "
-            "available authors/source/venue/date, a few short context/thesis lines, "
-            "template chrome, and sparse background decoration.\n"
-            "- Do not render extracted paper figures or turn the cover into a detailed "
-            "background, contribution, metric, result, or evidence slide.\n"
-        )
-    if page_type == "toc":
-        return (
-            "\n## Structural Page Override\n"
-            "- This override is stronger than decorative structural defaults for this page.\n"
-            "- Render the table of contents as title plus ordered chapter/list items from "
-            "the current manuscript or Page Design Contract.\n"
-            "- Only render the TOC title, list items, and restrained decorative chrome; "
-            "do not render template/sample diagrams or process-flow illustrations.\n"
-            "- Do not add paper figures, metrics, evidence cards, charts, KPI strips, or "
-            "dense article-content sections.\n"
-        )
-    consistency = (
-        "\n- For chapter pages, keep the same divider layout across all chapter "
-        "slides. Vary only the section number, title, and optional subtitle/key phrase."
-        if page_type == "chapter"
-        else ""
-    )
-    return (
-        "\n## Structural Page Override\n"
-        "- This override is stronger than any manuscript body text or design-spec "
-        "content-elements list for this page.\n"
-        "- Render only the structural role: title, optional short subtitle/key phrase, "
-        "template chrome, and sparse background decoration.\n"
-        "- Do not render content sections named `核心问题`, `本章看点`, `主要结果`, "
-        "question lists, KPI strips, cards/panels, figures, charts, or mini-agendas "
-        "on chapter/ending pages."
-        f"{consistency}\n"
-    )
+    descriptions = {
+        "cover": "Compose the opening page from the supplied title, metadata, and unlabeled abstract ornament, with a focal point and typography suited to the deck's visual identity.",
+        "toc": "Present the complete ordered chapter/list items as the table of contents.",
+        "chapter": "Use the common chapter-divider identity with the planned chapter index, title, and subtitle.",
+        "ending": "Compose the planned closing message in the deck's visual identity.",
+    }
+    return descriptions.get(page_type, "Develop the page's explanation and evidence into a readable visual composition.")
 
 
 def _factual_rendering_guardrails(page_type: str) -> str:
     if page_type in STRUCTURAL_PAGE_TYPES:
-        if page_type == "toc":
-            return (
-                "\n## Factual Rendering Guardrails\n"
-                "- TOC pages may render only the planned chapter/list item titles and optional "
-                "short descriptors. Do not add metrics, evidence snippets, figures, charts, "
-                "workflow diagrams, model architecture blocks, or template example graphics.\n"
-            )
-        return (
-            "\n## Factual Rendering Guardrails\n"
-            "- Structural pages must not add metrics, charts, evidence cards, source snippets, "
-            "or retrieved-memory text. Render only title/meta/subtitle-level content.\n"
-        )
+        return ""
     return (
-        "\n## Factual Rendering Guardrails\n"
-        "- Visible facts must come from the current page manuscript or Page Design Contract.\n"
-        "- Use Slide Context only to clarify this page's claim; do not introduce extra facts from it.\n"
-        "- Slide Context and evidence anchors are private grounding. Do not print card IDs, "
-        "section headings, raw snippets, or evidence-memory blocks as visible slide cards.\n"
-        "- Do not introduce new visible numbers, dates, percentages, sample sizes, ranks, "
-        "or axis tick values while drawing native SVG visuals.\n"
-        "- Preserve exact numeric precision from the page inputs. Do not round values "
-        "or invent chart scales unless they appear in the current page manuscript or Page Design Contract.\n"
-        "- If an exact chart would need invented ticks or interpolated values, draw a "
-        "qualitative diagram, ranked list, or bar comparison without numeric scale ticks.\n"
+        "\n## Information Fidelity\n"
+        "- Render the current page's information completely, with exact values, "
+        "units, notation, and comparison conditions.\n"
+        "- Encode quantitative comparisons with consistent scales and precise data "
+        "labels. Keep retrieval and provenance metadata in speaker notes.\n"
     )
 
 
 def _layout_generation_guardrails(page_type: str, has_paper_figure: bool) -> str:
     if page_type in STRUCTURAL_PAGE_TYPES:
         return (
-            "\n## Layout Generation Guardrails\n"
-            "- Structural pages use centered or lightly asymmetric title composition only. "
-            "Do not create dense grids, figure/text splits, or bottom evidence callouts.\n"
+            "\n## Page Composition\n"
+            "- Compose the planned title, metadata, agenda, or closing message using "
+            "the deck's structural-page visual identity.\n"
         )
-
     figure_note = (
-        "- This page has a paper figure assignment: reserve the figure box first, then "
-        "calculate the final visible image rectangle from the actual aspect ratio before "
-        "allocating any text. Fit text/caption/callout regions around that rectangle. "
-        "Use a balanced image/text split "
-        "such as figure-left/text-right or figure-top/notes-bottom. Keep the figure "
-        "and text regions visually comparable in height; avoid a large blank quadrant.\n"
-        "- Do not center a small ratio-preserving image inside an oversized frame. "
-        "The visible image should occupy most of the reserved frame and normally fill "
-        "one inner dimension. If it would not, revise the region composition first.\n"
-        "- The assigned figure box height is a hard cap. The rendered image, its "
-        "caption, and any nearby callout text must fit inside the reserved region; "
-        "do not let a tall image push the next text block downward.\n"
-        if has_paper_figure
-        else "- If no paper figure is assigned, use a balanced text/diagram/card layout "
-        "rather than a sparse bullet list floating in empty space.\n"
+        "- Fit the complete assigned figure at its natural aspect ratio and a readable "
+        "visible size. Arrange direct annotations, captions, and explanation around it; "
+        "choose placement from its role in the argument.\n"
+        if has_paper_figure else
+        "- Build the explanation from native SVG geometry and type where useful. "
+        "A diagram, chart, comparison, or open text composition can carry the page.\n"
     )
     return (
-        "\n## Layout Generation Guardrails\n"
-        "- Design the page layout from explicit rectangular regions before drawing details. "
-        "Choose one stable family from the Slide Plan's layout family, or pick the most "
-        "suitable: figure-left-text-right, text-left-figure-right, two-column-evidence, "
-        "three-card-grid, kpi-dashboard, process-flow-with-evidence, "
-        "comparison-table-callout, full-width-chart-with-notes, hero-title-plus-callouts, "
-        "four-quadrant-matrix, timeline-horizontal, or full-bleed-image-overlay.\n"
-        "- Use consistent gutters and align related region edges. Size regions from "
-        "their text and visual material; use whitespace for separation and hierarchy.\n"
-        "- Keep content boxes inside the content area; the footer band is not layout space.\n"
-        "- Avoid free-floating bullets, detached bottom callouts, and large blank bands. "
-        "A callout should align with the same column or span a clear full-width grid row.\n"
+        "\n## Page Composition\n"
+        "- Choose a visual relationship and reading order for this material. Treat the "
+        "planned layout family as a starting idea, with freedom inside explicit template "
+        "boundaries. Use paths, connectors, spatial grouping, and direct labels when "
+        "they make the relationship visible.\n"
+        "- Match the deck's palette, typography, and recurring chrome. Size regions "
+        "from their content, align related elements, and use whitespace deliberately.\n"
         f"{figure_note}"
-        "- Establish hierarchy through typography, contrast, alignment, and spacing. "
-        "Use shadows, gradients, and accent bars when they serve the design_spec or "
-        "clarify grouping; flat layouts are valid. Optional shadows must be simple "
-        "convertible drop shadows attached directly to one shape. Group filters, "
-        "text glow, complex blur effects, and offset duplicate rectangles used as "
-        "shadows are prohibited.\n"
-        "- **Card design**: give cards/panels clear grouping and proper inner padding. "
-        "Use an accent element or simple per-shape shadow when it clarifies the content.\n"
-        "- Use emphasis, labels, and grouping where they clarify the current page's "
-        "evidence or explanation. Choose these elements from its material.\n"
-        "- **Color rules**: 60-30-10 rule (primary 60%, secondary 30%, accent 10%). "
-        "Maximum 4 colors per page. Use monochromatic opacity variations for chart series, "
-        "not rainbow colors.\n"
-        "- Wrap text dynamically from each actual region width, font size, and visual "
-        "share. Let ordinary non-final lines use most of their box width; avoid "
-        "conservative early breaks. Use semantic breaks and allow light raggedness.\n"
-        "- Text-box contract: place visible body/caption/callout text in an explicit "
-        "rectangle and keep every line inside it. Prefer wrapping related "
-        "text in `<g data-textbox=\"x y w h\" data-role=\"body|caption|callout|heading\">`; "
-        "keep headings and body paragraphs in separate groups. `data-*` attributes "
-        "are invisible and help post-processing preserve your intended boxes.\n"
-        "- Inline emphasis is allowed inside a sentence with `<tspan fill=\"...\">`, "
-        "but the complete sentence still belongs to one text box and must wrap as "
-        "a paragraph. Do not split an emphasized keyword into an isolated floating "
-        "line unless the phrase genuinely wraps there.\n"
-        "- While drawing text, keep baselines, descenders, padding, and right edges "
-        "inside the final region boxes.\n"
-        "- For tables, determine column widths from the longest visible label/cell first, "
-        "then place rows. Keep method names separate from numeric columns and right-align "
-        "numbers; never rely on guessed x positions that can overlap.\n"
+        "- Put each continuous body paragraph with inline tspan emphasis in a "
+        "`<g data-role=\"body\" data-textbox=\"x y w h\">` for measured wrapping. "
+        "Diagram labels, headings, and data labels may use directly positioned text.\n"
+        "- Check text capacity, label collisions, connector endpoints, and table column "
+        "widths before returning the SVG. Keep essential content clear of the footer.\n"
     )
 
 
@@ -811,91 +683,25 @@ def _figure_guidance_block(
     *,
     source: str = "manuscript",
 ) -> str:
-    """Constrain real paper-figure hrefs without limiting native SVG visuals."""
-    rejected = rejected or []
+    """Expose assigned assets with their actual captions and dimensions."""
+    lines = ["## Paper Figure Assets"]
     if not used:
-        lines = [
-            "## Paper Figure Guidance\n"
-            "- This slide does not contain an explicit paper-figure token. "
-            "Do not invent a paper-figure `<image href>` path. This restriction "
-            "applies only to extracted paper figures; native SVG diagrams, charts, "
-            "and visual treatments remain available."
-        ]
-        for item in rejected:
-            lines.append(
-                f"- Rejected paper figure token: {item}. Do not use its href; "
-                "summarize the idea with native SVG or omit the image."
-            )
-        return "\n".join(lines)
-
-    lines = ["## Paper Figure Guidance"]
-    if source == "design_spec":
-        lines.append(
-            "- The design spec explicitly assigns the following paper figure(s) to this slide. "
-            "Include them unless the slide would become unreadable; preserve the listed aspect ratio."
-        )
-    if len(used) > 2:
-        lines.append(
-            "- This slide has more paper-figure candidates than can fit cleanly. "
-            "Render at most 2 paper figures, choose the most central ones, and "
-            "summarize the rest as native SVG text or omit them."
-        )
+        lines.append("- Assigned paper figures: none.")
     for fig in used:
-        path = fig.get("path") or ""
-        cap = (fig.get("caption") or "").strip().replace("\n", " ")
-        if len(cap) > 160:
-            cap = cap[:157] + "..."
-
-        dim_info = ""
-        w = int(fig.get("natural_width") or 0)
-        h = int(fig.get("natural_height") or 0)
-        if w > 0 and h > 0:
-            dim_info = f" actual dimensions: {w}x{h} (ratio {w / h:.2f});"
-        else:
+        path = str(fig.get("path") or "")
+        caption = str(fig.get("caption") or "").strip().replace("\n", " ")
+        width, height = int(fig.get("natural_width") or 0), int(fig.get("natural_height") or 0)
+        if not (width and height):
             try:
-                img_path = Path(path)
-                if img_path.exists():
-                    with Image.open(img_path) as img:
-                        w, h = img.size
-                        ratio = w / h
-                        dim_info = f" actual dimensions: {w}x{h} (ratio {ratio:.2f});"
-            except Exception:
+                with Image.open(path) as image:
+                    width, height = image.size
+            except (OSError, ValueError):
                 pass
-
-        lines.append(
-            f"- Allowed paper figure href: \"{path}\";{dim_info} caption: {cap}"
-        )
-    lines.append(
-        "Use only the listed hrefs for extracted paper figures. Never substitute "
-        "a different paper-figure href, reuse one from another slide, or invent "
-        "a paper-figure path. This does not restrict native SVG visuals."
-    )
-    lines.append(
-        "- Generation-time figure safety: place each paper figure as a complete, "
-        "scaled image inside the slide canvas. Do not oversize it and hide parts "
-        "off-canvas. Avoid `clip-path` for paper figures unless the image box and "
-        "the visible clip are nearly the same size. If only one panel of a "
-        "composite source figure is needed, redraw that panel as native SVG "
-        "instead of cropping a huge source image."
-    )
-    lines.append(
-        "- Caption safety: if multiple paper images are shown, caption them "
-        "separately or use a topic caption without combining figure/table "
-        "numbers. If the visible number inside the image may differ from the "
-        "inventory caption, omit the number in the slide caption."
-    )
+        dimensions = f"; {width}x{height}px; ratio {width / height:.4f}" if width and height else ""
+        lines.append(f'- Assigned href: "{path}"{dimensions}; caption: {caption}')
+    if rejected:
+        lines.append("- Unavailable references: " + "; ".join(rejected))
     return "\n".join(lines)
-
-
-# -- Dynamic text layout & image layout helpers -------------------------------
-
-# Content area defaults for PPT 16:9 (may be overridden by design_spec)
-_DEFAULT_CONTENT_AREA = {"x": 40, "y": 100, "width": 1200, "height": 520}
-
-
-# Regex to identify structural elements in manuscript Markdown
-_HEADING_RE = re.compile(r"^(#{1,3})\s+(.+)$", re.MULTILINE)
-_BULLET_RE = re.compile(r"^[\s]*[-*•]\s+(.+)$", re.MULTILINE)
 
 
 def _dynamic_text_layout_block(
@@ -904,47 +710,12 @@ def _dynamic_text_layout_block(
     *,
     has_paper_figure: bool,
 ) -> str:
-    """Describe page-local wrapping without fixed character-capacity heuristics."""
-    text = manuscript_page.strip()
-    headings = _HEADING_RE.findall(text)
-    bullets = _BULLET_RE.findall(text)
-    region_widths = [
-        int(float(value))
-        for value in re.findall(r"(?i)\bw\s*=\s*(\d+(?:\.\d+)?)", page_design_block)
-        if float(value) > 0
-    ]
-    width_note = (
-        f"The page contract exposes region widths from {min(region_widths)}px to "
-        f"{max(region_widths)}px; wrap each region independently."
-        if region_widths
-        else "No reliable text width is precomputed; choose final regions first, then wrap against them."
-    )
-    visual_note = (
-        "A paper figure is assigned, so reserve its final frame before sizing the remaining text regions."
-        if has_paper_figure
-        else "No paper figure is assigned, so text and native SVG visuals may share the content area according to the page argument."
-    )
+    """Keep paragraph measurement local to the designer's chosen regions."""
     return (
-        "## Dynamic Text Layout\n"
-        f"- Page structure: {len(headings)} heading(s), {len(bullets)} bullet(s), "
-        f"about {len(text)} source characters.\n"
-        f"- {width_note}\n"
-        f"- {visual_note}\n"
-        "- Do not use a fixed characters-per-line target. Let ordinary non-final "
-        "lines occupy roughly 65-90% of their actual text-box width.\n"
-        "- Sparse pages may use larger type and wider measures. Text-heavy pages may "
-        "use smaller type, tighter spacing, or more columns when readable.\n"
-        "- Preserve sentence-level colored emphasis for important keywords; do not "
-        "isolate a colored word onto its own line unless the phrase naturally wraps.\n"
-        "- Use explicit invisible text boxes for body, caption, and callout paragraphs: "
-        "`<g data-textbox=\"x y w h\" data-role=\"body\">...text lines...</g>`. "
-        "Heading/subheading text must use its own `data-role=\"heading\"` box, not "
-        "the body paragraph box.\n"
-        "- For each text box, choose line breaks after the final x/y/w/h are known. "
-        "A line is invalid if its estimated right edge exceeds `x + w`, even if the "
-        "slide otherwise looks spacious.\n"
-        "- Break at semantic punctuation or phrase boundaries. Light raggedness is "
-        "acceptable; repair only real clipping, overlap, or clearly wasteful wrapping."
+        "## Paragraph Layout\n"
+        "Size paragraph boxes with their neighboring visuals. Write continuous "
+        "text with inline emphasis; font metrics and the declared box width "
+        "determine wrapping. Reserve line-height, padding, and caption space."
     )
 
 
@@ -1093,9 +864,9 @@ def _normalize_obvious_short_text_lines(svg: str, page_design_block: str) -> str
     if namespace:
         ET.register_namespace("", namespace)
     from backend.generator.svg_finalize.render_math import render_math_in_tree
-    from backend.generator.svg_text_layout import reflow_declared_paragraphs, layout_text_groups
+    from backend.generator.svg_text_layout import reflow_declared_paragraphs, layout_text_groups, normalize_inline_scripts
 
-    math_rendered = render_math_in_tree(root)
+    math_rendered = render_math_in_tree(root) + normalize_inline_scripts(root)
     paragraphs_reflowed = reflow_declared_paragraphs(root) + layout_text_groups(root)
     regions = _merged_text_regions(root, page_design_block)
     if not regions:
@@ -1244,7 +1015,7 @@ def _has_positioned_text_children(element: ET.Element) -> bool:
     for child in element.iter():
         if child is element:
             continue
-        if any(attr in child.attrib for attr in ("x", "y", "dx", "dy")):
+        if any(attr in child.attrib for attr in ("x", "y", "dx", "dy", "baseline-shift")):
             return True
     return False
 
@@ -1528,7 +1299,7 @@ def _is_reflowable_inline_text(element: ET.Element) -> bool:
     for child in element.iter():
         if child is element:
             continue
-        if any(attr in child.attrib for attr in ("x", "y", "dx", "dy")):
+        if any(attr in child.attrib for attr in ("x", "y", "dx", "dy", "baseline-shift")):
             return False
     return True
 
@@ -1876,126 +1647,19 @@ def _format_svg_number(value: float) -> str:
 
 
 def _figure_layout_guidance(used_figures: list[dict]) -> str:
-    """For each paper figure, recommend layout based on its aspect ratio.
-
-    When multiple images share a page, compute a height budget so the total
-    stays within the content area.
-    """
+    """Supply image geometry; the designer decides composition."""
     if not used_figures:
         return ""
-    ca_y = _DEFAULT_CONTENT_AREA["y"]
-    ca_w = _DEFAULT_CONTENT_AREA["width"]
-    ca_h = _DEFAULT_CONTENT_AREA["height"]
-    ca_bottom = ca_y + ca_h
-
-    lines = ["## Image Layout Recommendations"]
-    lines.append(
-        "Hard bounds for paper figures: keep the visible image box within "
-        "x=0..1260 and y=80..640; preferred content area is x=40..1240, "
-        "y=100..620. The image's rendered width/height must be the actual "
-        "visible size, not a larger off-canvas source hidden by clipping."
-    )
-
-    # Collect image metadata
-    fig_meta: list[dict] = []
+    lines = ["## Assigned Image Geometry"]
     for fig in used_figures:
-        path = fig.get("path") or ""
-        meta: dict = {"stem": Path(path).stem if path else "unknown"}
+        path = Path(str(fig.get("path") or ""))
         try:
-            img_path = Path(path)
-            if img_path.exists():
-                with Image.open(img_path) as img:
-                    w, h = img.size
-                    meta["w"], meta["h"], meta["ratio"] = w, h, w / h
-        except Exception:
-            pass
-        fig_meta.append(meta)
-
-    # Single image: original logic, capped to content area
-    if len(fig_meta) == 1:
-        m = fig_meta[0]
-        r = m.get("ratio")
-        if r is not None:
-            img_h_at_full_w = int(ca_w / r)
-            if r > 1.2 and img_h_at_full_w <= ca_h:
-                # Top-bottom: image fits at full width
-                img_w, img_h = ca_w, img_h_at_full_w
-                txt_h = ca_h - img_h - 20
-                lines.append(
-                    f"- {m['stem']}: ratio={r:.2f}, "
-                    f"recommended=top-bottom, "
-                    f"image={img_w}x{img_h}, text_area={ca_w}x{txt_h}, "
-                    f"safe_box=(40,{ca_y},{img_w},{img_h})"
-                )
-            else:
-                # Left-right: either ratio <= 1.2, or image too tall at full width
-                img_h, img_w = ca_h, int(ca_h * r)
-                txt_w = ca_w - img_w - 20
-                # If text area too narrow (<280px), cap image to 70% height
-                if txt_w < 280:
-                    img_h = int(ca_h * 0.7)
-                    img_w = int(img_h * r)
-                    txt_w = ca_w - img_w - 20
-                if r > 1.2:
-                    lines.append(
-                        f"- {m['stem']}: ratio={r:.2f}, "
-                        f"recommended=left-right (image too tall for top-bottom), "
-                        f"image={img_w}x{img_h}, text_area={txt_w}x{ca_h}, "
-                        f"safe_box=({40 + txt_w + 20},{ca_y},{img_w},{img_h})"
-                    )
-                else:
-                    lines.append(
-                        f"- {m['stem']}: ratio={r:.2f}, "
-                        f"recommended=left-right, "
-                        f"image={img_w}x{img_h}, text_area={txt_w}x{ca_h}, "
-                        f"safe_box=({40 + txt_w + 20},{ca_y},{img_w},{img_h})"
-                    )
-        else:
-            lines.append(f"- {m['stem']}: unable to read dimensions")
-
-    # Multiple images: compute shared height budget
-    else:
-        n = len(fig_meta)
-        text_reserve = 150
-        available = ca_h - text_reserve - 20 * n
-        per_img_max = max(80, available // n) if n > 0 else ca_h
-
-        lines.append(
-            f"Multi-image page ({n} images): "
-            f"each image max {per_img_max}px height, "
-            f"content area bottom = y{ca_bottom}. "
-            f"After images, reserve at least {text_reserve}px for text."
-        )
-
-        running_y = ca_y
-        for m in fig_meta:
-            r = m.get("ratio")
-            if r is not None:
-                if r > 1.2:
-                    img_w = ca_w
-                    img_h = min(int(ca_w / r), per_img_max)
-                else:
-                    img_h = min(ca_h, per_img_max)
-                    img_w = int(img_h * r)
-                lines.append(
-                    f"- {m['stem']}: ratio={r:.2f}, "
-                    f"image={img_w}x{img_h}, "
-                    f"y_start={running_y}, y_end={running_y + img_h}. "
-                    "Do not crop; if it cannot fit at this size, use a native "
-                    "summary visual instead."
-                )
-                running_y += img_h + 20
-            else:
-                lines.append(f"- {m['stem']}: unable to read dimensions")
-                running_y += per_img_max + 20
-
-        remaining = ca_bottom - running_y
-        lines.append(
-            f"Text starts at y={running_y}, "
-            f"max height={remaining}px, "
-            f"must not exceed y={ca_bottom}"
-        )
-
+            with Image.open(path) as image:
+                width, height = image.size
+            lines.append(f"- {path.stem}: {width}x{height}px; aspect ratio {width / height:.4f}.")
+        except (OSError, ValueError):
+            lines.append(f"- {path.stem}: dimensions unavailable.")
+    lines.append("Fit complete figures at readable sizes within the page's assigned regions.")
     return "\n".join(lines)
 
 
@@ -2338,6 +2002,12 @@ def _generation_static_report(
     required_icon: str | None,
     include_general_svg_checks: bool,
 ) -> CriticReport:
+    if not include_general_svg_checks:
+        report = check_svg(svg_content, critic_config)
+        violations = [v for v in report.violations if v.rule in {
+            "paragraph_capacity", "out_of_bounds", "text_overflow_in_container",
+        }]
+        return CriticReport(passed=not violations, violations=violations)
     reports = [
         _validate_paper_figure_refs(
             svg_content,
@@ -2359,7 +2029,9 @@ def _static_attempt_limit_for_report(
     max_critic_attempts: int,
     report: CriticReport | None,
 ) -> int:
-    return max(0, int(max_critic_attempts))
+    # Basic geometry gets one repair pass; remaining findings are reported
+    # on the page without aborting generation of the rest of the deck.
+    return max(1, int(max_critic_attempts))
 
 
 def _pseudo_icon_badge_violations(svg_content: str) -> list[Violation]:
@@ -2816,7 +2488,6 @@ async def generate_svg_pages(
         icon_guidance = _icon_guidance_block(icon_assignment)
         img_layout = _figure_layout_guidance(used_figures)
         page_role_guidance = _page_role_guidance(page_type)
-        structural_override = _structural_page_override_block(page_type)
         factual_guardrails = _factual_rendering_guardrails(page_type)
         layout_guardrails = _layout_generation_guardrails(
             page_type,
@@ -2850,11 +2521,6 @@ async def generate_svg_pages(
 
         slide_plan_block = slide_plan_markdown(deck_plan, page_num)
         page_design_block = _extract_page_design_block(design_spec, page_num)
-        if is_structural_page:
-            page_design_block = _sanitize_structural_page_design_block(
-                page_design_block,
-                page_type,
-            )
         text_layout = _dynamic_text_layout_block(
             rewritten_content,
             page_design_block,
@@ -2884,7 +2550,6 @@ async def generate_svg_pages(
                 f"- Page type: {page_type}. Use this type only for template selection; do not render metadata comments.\n"
                 f"- Keep all visible text in the requested language.\n"
                 f"{page_role_guidance}\n"
-                f"{structural_override}"
                 f"{factual_guardrails}"
                 f"{layout_guardrails}"
                 f"{text_layout}\n"
@@ -2896,9 +2561,8 @@ async def generate_svg_pages(
                 f"- Keep the SVG compact and editable; target under {SVG_GENERATION_MAX_TOKENS} output tokens.\n"
                 f"- Prefer grouped primitives, reusable styles, and concise text. Avoid huge decorative path dumps or duplicate off-canvas elements.\n\n"
                 f"## Layout Budget\n"
-                f"- Fit content before drawing elements; preferred content area is y=100..620.\n"
-                f"- Paper figures must stay fully visible inside x=0..1260 and y=80..640.\n"
-                f"- If content does not fit, change regions, spacing, or wording before drawing; do not use the footer as content space.\n\n"
+                f"- Follow the design specification's canvas, content boundaries, and footer clearance.\n"
+                f"- Resolve fit through composition, region sizes, and concise wording while preserving substantive content.\n\n"
                 f"Generate the complete SVG code for this page. "
                 f"Output ONLY the SVG code, wrapped in ```svg code block."
                 f"{skeleton_block}"
@@ -3442,110 +3106,6 @@ def _minimal_structural_page_content(page_content: str, page_type: str) -> str:
             lines.append(phrase)
     return "\n\n".join(lines)
 
-
-def _sanitize_structural_page_design_block(
-    block: str,
-    page_type: str,
-) -> str:
-    if page_type not in STRUCTURAL_PAGE_TYPES or not block.strip():
-        return block
-
-    first_line = next((line.strip() for line in block.splitlines() if line.strip()), "")
-    if not first_line.startswith("#"):
-        first_line = f"#### Structural {page_type.title()} Page"
-
-    preserved: list[str] = []
-    if page_type == "toc":
-        forbidden = re.compile(
-            r"(?i)(\[\[FIG:|paper figure|extracted figure|dense article|"
-            r"detailed evidence|detailed result|chart|table|metric|kpi|"
-            r"question list|evidence|bullet grid|template example|sample diagram|"
-            r"workflow diagram|process[-\s]*flow|architecture block|"
-            r"single llm call|autonomous agents)"
-        )
-    elif page_type == "cover":
-        forbidden = re.compile(
-            r"(?i)(\[\[FIG:|paper figure|extracted figure|dense article|"
-            r"detailed evidence|detailed result|multi-column evidence)"
-        )
-    else:
-        forbidden = re.compile(
-            r"(?i)(\[\[FIG:|paper figure|chart|table|metric|kpi|核心问题|本章看点|"
-            r"question list|mini-agenda|agenda grid|evidence|bullet grid)"
-        )
-    allowed_label = re.compile(
-        r"(?i)^\s*[-*]\s*(?:\*\*)?"
-        r"(page type|type|title|subtitle|layout|layout family|style family|"
-        r"visual family|visual treatment|background|composition|typography|"
-        r"color|palette|accent|motif|chrome|footer|spacing|template|"
-        r"metadata|authors|source|venue|date|context|ornament|"
-        r"content|text strategy|region plan)"
-        r"(?:\*\*)?\s*[:：]"
-    )
-    keep_toc_content_lines = False
-    for raw_line in block.splitlines()[1:]:
-        line = raw_line.rstrip()
-        stripped = line.strip()
-        if not stripped:
-            keep_toc_content_lines = False
-            continue
-        if page_type == "toc" and keep_toc_content_lines and STRUCTURAL_LIST_LINE_RE.match(stripped):
-            preserved.append(line)
-            continue
-        if forbidden.search(stripped):
-            continue
-        if allowed_label.search(stripped):
-            preserved.append(line)
-            keep_toc_content_lines = page_type == "toc" and bool(
-                re.match(r"(?i)^\s*[-*]\s*(?:\*\*)?content(?:\*\*)?\s*[:：]", stripped)
-            )
-        else:
-            keep_toc_content_lines = False
-
-    if page_type == "chapter":
-        layout = (
-            "Consistent minimal chapter divider; same layout across all chapter pages; "
-            "only chapter number, title, and optional subtitle/key phrase may change."
-        )
-    elif page_type == "cover":
-        layout = (
-            "Lightweight cover page; title, optional subtitle, available metadata, "
-            "and a modest context/accent treatment."
-        )
-    elif page_type == "toc":
-        layout = (
-            "Table-of-contents page; render the title plus the planned chapter/list "
-            "items in order. Do not introduce evidence, metrics, paper figures, or charts."
-        )
-    else:
-        layout = f"Minimal structural {page_type} page; title plus optional short subtitle/key phrase only."
-    lines = [
-        first_line,
-        "",
-        f"- **Page Type**: {page_type}",
-        f"- **Structural Role**: {layout}",
-    ]
-    if preserved:
-        lines.extend(["", "### Preserved Planner Style Fields", *preserved])
-    if page_type == "cover":
-        boundary = (
-            "- **Content Boundary**: title, optional subtitle, paper metadata, and "
-            "a few short context/thesis lines. No extracted paper figures or dense "
-            "article-content sections."
-        )
-    elif page_type == "toc":
-        boundary = (
-            "- **Content Boundary**: title plus ordered chapter/list items only. "
-            "No paper figures, metrics, evidence cards, charts, or dense article sections."
-        )
-    else:
-        boundary = (
-            "- **Content Boundary**: title and at most one short subtitle/key phrase. "
-            "No cards, KPI strips, question lists, mini-agendas, paper figures, charts, "
-            "or labeled blocks such as `核心问题` / `本章看点`."
-        )
-    lines.extend(["", boundary])
-    return "\n".join(lines)
 
 
 def _template_vars_by_page(pages: list[str]) -> dict[int, dict[str, str]]:
@@ -4153,11 +3713,6 @@ def _prepare_parallel_page_inputs(
     claimed_paper_figures.update(_paper_figure_keys(used_figures))
 
     page_design_block = _extract_page_design_block(design_spec, page_num)
-    if is_structural_page:
-        page_design_block = _sanitize_structural_page_design_block(
-            page_design_block,
-            page_type,
-        )
 
     return {
         "page_num": page_num,
@@ -4231,7 +3786,6 @@ async def _generate_parallel_page(
     icon_guidance = _icon_guidance_block(icon_assignment)
     img_layout = _figure_layout_guidance(used_figures)
     page_role_guidance = _page_role_guidance(page_type)
-    structural_override = _structural_page_override_block(page_type)
     factual_guardrails = _factual_rendering_guardrails(page_type)
     layout_guardrails = _layout_generation_guardrails(
         page_type,
@@ -4316,7 +3870,6 @@ async def _generate_parallel_page(
             f"- Page type: {page_type}. Use this type only for template selection; do not render metadata comments.\n"
             f"- Keep all visible text in the requested language.\n"
             f"{page_role_guidance}\n"
-            f"{structural_override}"
             f"{factual_guardrails}"
             f"{layout_guardrails}"
             f"{text_layout}\n"
@@ -4328,9 +3881,8 @@ async def _generate_parallel_page(
             f"- Keep the SVG compact and editable; target under {SVG_GENERATION_MAX_TOKENS} output tokens.\n"
             f"- Prefer grouped primitives, reusable styles, and concise text. Avoid huge decorative path dumps or duplicate off-canvas elements.\n\n"
             f"## Layout Budget\n"
-            f"- Fit content before drawing elements; content area is y=100..620.\n"
-            f"- If content does not fit, change regions, spacing, or wording before drawing.\n"
-            f"- Footer (y=660+) is reserved for page number only.\n\n"
+            f"- Follow the design specification's canvas, content boundaries, and footer clearance.\n"
+            f"- Resolve fit through composition, region sizes, and concise wording while preserving substantive content.\n\n"
             f"Generate the complete SVG code for this page. "
             f"Output ONLY the SVG code, wrapped in ```svg code block."
             f"{skeleton_block}"

@@ -410,78 +410,35 @@ async def create_design_spec(
     ]
 
     if template_context:
-        # When a template is active, the template's color scheme and
-        # typography take precedence.  Only inject the style name for
-        # content-strategy guidance (academic vs consulting vs tech),
-        # but skip primary/accent color so they don't conflict.
         user_parts.extend([
-            "- Color scheme & Typography: defined by the selected template (see Template Reference below)",
-            "\n## Hard Constraints",
-            "- The template's color scheme, typography, and page structure MUST take precedence over any style defaults.",
-            f"- Page contract: exactly {page_count} pages; page N in Section IX must match manuscript page N.",
-            "- For decks over 30 pages, keep Section IX concise but list every page exactly once; never stop before the final manuscript page.",
-            "- Do not add, remove, or reorder cover, chapter/transition, content, or ending pages.",
-            "- Treat the Manuscript Chapter Map as authoritative: do not invent, rename, split, merge, or move chapter divider slides in Section IX.",
-            "- Keep cover/chapter/ending pages distinct from content pages: cover pages may include title metadata and a modest context/accent treatment, while chapter/ending pages stay minimal dividers/closers.",
-            "- Do not assign paper figures, dense article-content blocks, multi-column evidence layouts, or detailed result sections to cover/chapter/ending pages.",
-            "- If a chapter/ending manuscript page contains extra body text, summarize it into at most one subtitle/key phrase in Section IX; do not create cards, KPI strips, question lists, mini-agendas, or `核心问题` / `本章看点` blocks on those pages.",
-            "- Keep every chapter page on the same divider layout; only chapter number, title, and optional subtitle/key phrase may change.",
-            "- Keep content pages as content pages: do not style them as chapter dividers or add oversized chapter/section counters.",
-            "- Put any page number in the footer only; do not create top-left administrative labels or mixed section/page counters.",
-            "- In Section IX, every page must include `Style Family:`, `Layout Family:`, and `Density:` fields. All chapter pages must share the same Style Family.",
-            "- Use reusable content layout families such as `figure-left-text-right`, `text-left-figure-right`, `two-column-evidence`, `three-card-grid`, `process-flow-with-evidence`, `comparison-table-callout`, or `full-width-chart-with-notes` unless the manuscript truly requires another.",
-            "- TOC pages are title plus the full ordered chapter/list items only; do not plan side summaries, stats, charts, or process blocks.",
-            "- Derive each page's `Density:` from that page's manuscript, visual share, and argument structure. Do not infer density from any global detail setting.",
-            "- In Section IX, separate footer page numbering from chapter index. Chapter labels use the planned chapter index, never the slide page number.",
-            f"- The visible slide language must be `{language}`.",
-            f"- {_language_constraint(language)}",
+            "- Palette, typography, fixed chrome, and content boundaries: use the selected template.",
+            f"\n{template_context}",
         ])
-        user_parts.append(f"\n{template_context}")
     else:
         user_parts.extend([
             f"- Primary Color: {style_info['primary']}",
             f"- Accent Color: {style_info['accent']}",
-            "- Typography: use a CJK-compatible sans-serif stack by default: "
-            "`Source Han Sans SC`, `Noto Sans CJK SC`, `Noto Sans SC`, "
-            "`PingFang SC`, `Microsoft YaHei`, `Arial`, `sans-serif`; "
-            "use heavier weights for headings.",
-            "\n## Hard Constraints",
-            "- Respect the selected design style. Do not silently fall back to a default academic theme when another style is selected.",
-            f"- Page contract: exactly {page_count} pages; page N in Section IX must match manuscript page N.",
-            "- For decks over 30 pages, keep Section IX concise but list every page exactly once; never stop before the final manuscript page.",
-            "- Do not add, remove, or reorder cover, chapter/transition, content, or ending pages.",
-            "- Treat the Manuscript Chapter Map as authoritative: do not invent, rename, split, merge, or move chapter divider slides in Section IX.",
-            "- Keep cover/chapter/ending pages distinct from content pages: cover pages may include title metadata and a modest context/accent treatment, while chapter/ending pages stay minimal dividers/closers.",
-            "- Do not assign paper figures, dense article-content blocks, multi-column evidence layouts, or detailed result sections to cover/chapter/ending pages.",
-            "- If a chapter/ending manuscript page contains extra body text, summarize it into at most one subtitle/key phrase in Section IX; do not create cards, KPI strips, question lists, mini-agendas, or `核心问题` / `本章看点` blocks on those pages.",
-            "- Keep every chapter page on the same divider layout; only chapter number, title, and optional subtitle/key phrase may change.",
-            "- Keep content pages as content pages: do not style them as chapter dividers or add oversized chapter/section counters.",
-            "- Put any page number in the footer only; do not create top-left administrative labels or mixed section/page counters.",
-            "- In Section IX, every page must include `Style Family:`, `Layout Family:`, and `Density:` fields. All chapter pages must share the same Style Family.",
-            "- Use reusable content layout families such as `figure-left-text-right`, `text-left-figure-right`, `two-column-evidence`, `three-card-grid`, `process-flow-with-evidence`, `comparison-table-callout`, or `full-width-chart-with-notes` unless the manuscript truly requires another.",
-            "- TOC pages are title plus the full ordered chapter/list items only; do not plan side summaries, stats, charts, or process blocks.",
-            "- Derive each page's `Density:` from that page's manuscript, visual share, and argument structure. Do not infer density from any global detail setting.",
-            "- In Section IX, separate footer page numbering from chapter index. Chapter labels use the planned chapter index, never the slide page number.",
-            f"- The visible slide language must be `{language}`.",
-            f"- {_language_constraint(language)}",
+            "- Typography: Source Han Sans SC, Noto Sans CJK SC, Noto Sans SC, "
+            "PingFang SC, Microsoft YaHei, Arial, sans-serif; stronger heading weights.",
         ])
-
-    user_parts.append(
-        "\n## Icon Usage: DISABLED\n"
-        "Provider generation does not add icon decoration. Do NOT use any "
-        "`<use data-icon=\"...\"/>` elements in any slide. Use plain SVG "
-        "shapes, charts, diagrams, text, and local image assets instead. "
-        "Never use emoji, colored emoji glyphs, Unicode symbols, dingbats, "
-        "stars, checkmarks, arrows, warning marks, punctuation, letters, or "
-        "initials as icon substitutes."
-    )
+    user_parts.extend([
+        "\n## Page Plan Parameters",
+        f"- Count: {page_count}; preserve manuscript page order, titles, roles, and chapter map.",
+        "- Section IX: one entry per page, with Style Family, Layout Family, and Density fields.",
+        "- Layout Family: describe the proposed composition for that page's material.",
+        "- Density: derive from the page's material and visual share.",
+        "- Chapter dividers: use a common visual identity with the planned chapter indices.",
+        "- Pagination: use slide numbers in the footer.",
+        f"- Visible language: {language}. {_language_constraint(language)}",
+        "- Visual assets: native SVG geometry, labels, and assigned paper figures.",
+    ])
 
     # Inject actual image dimensions so the design spec has correct ratios
     if figure_inventory:
         fig_lines = ["\n## Available Paper Figures (actual dimensions)"]
         fig_lines.append("")
         fig_lines.append("Use these EXACT dimensions and ratios in Section VIII Image Resource List.")
-        fig_lines.append("Do NOT fabricate dimensions — use the actual values below.")
+
         fig_lines.append("")
         fig_lines.append("| Filename | Actual Dimensions | Ratio | Page | Caption |")
         fig_lines.append("|----------|-------------------|-------|------|---------|")

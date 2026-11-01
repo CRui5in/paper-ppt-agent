@@ -10,6 +10,9 @@ from backend.generator.svg_finalize.merge_adjacent_text import merge_adjacent_te
 from backend.generator.svg_finalize.render_math import render_math_in_tree
 from backend.generator.svg_finalize.render_ready import prepare_svg_file_content_for_render
 from backend.generator.svg_to_pptx.converter import convert_svg_to_slide_shapes
+from backend.generator.svg_text_layout import text_runs
+from backend.generator.svg_to_pptx.builder import create_pptx
+import json
 from backend.orchestrator.deck_plan import _extract_page_title_parts
 from backend.orchestrator.svg_executor import _normalize_obvious_short_text_lines
 
@@ -18,6 +21,69 @@ NS = '{http://www.w3.org/2000/svg}'
 
 
 class SvgTextGeometryTests(unittest.TestCase):
+    def test_html_scripts_survive_preview_and_native_export_with_scoped_baselines(self):
+        self.write('<text x="100" y="200" font-size="20" fill="#123456">x<sub>i</sub> + y<sup>2</sup> end</text>')
+        prepared = prepare_svg_file_content_for_render(self.path)
+        root = ET.fromstring(prepared)
+        self.assertFalse([e for e in root.iter() if e.tag.rsplit('}', 1)[-1] in {'sub','sup'}])
+        runs = text_runs(next(root.iter(NS+'text')))
+        self.assertEqual(''.join(r.text for r in runs), 'xi + y2 end')
+        by_text = {r.text: r for r in runs}
+        self.assertGreater(by_text['i'].y, by_text['x'].y)
+        self.assertLess(by_text['2'].y, by_text['x'].y)
+        self.assertEqual(by_text[' end'].y, by_text['x'].y)
+        self.assertEqual(float(by_text['i'].attrs['font-size']), 14)
+        self.path.write_text(prepared, encoding='utf-8')
+        xml, media, _ = convert_svg_to_slide_shapes(self.path)
+        drawing = '{http://schemas.openxmlformats.org/drawingml/2006/main}'
+        self.assertEqual(''.join(ET.fromstring(xml).itertext()).replace(' ', ''), 'xi+y2end')
+        self.assertFalse(media)
+        self.assertEqual(len(list(ET.fromstring(xml).iter(drawing+'t'))), 5)
+
+    def test_nested_script_styles_and_descendant_tails_keep_their_geometry(self):
+        self.write('<text x="100" y="200" font-size="20">A<sub fill="#FF0000">i<sup>2</sup>j</sub> + B</text>')
+        prepared = prepare_svg_file_content_for_render(self.path)
+        runs = text_runs(next(ET.fromstring(prepared).iter(NS+'text')))
+        self.assertEqual(''.join(r.text for r in runs), 'Ai2j + B')
+        by_text = {r.text:r for r in runs}
+        self.assertEqual(by_text['i'].y, by_text['j'].y)
+        self.assertEqual(by_text['A'].y, by_text[' + B'].y)
+        self.assertLess(by_text['2'].y, by_text['i'].y)
+        self.assertEqual(by_text['2'].attrs['fill'], '#FF0000')
+        self.assertAlmostEqual(float(by_text['2'].attrs['font-size']), 9.8)
+
+    def test_script_preparation_is_idempotent_and_keeps_native_editability(self):
+        self.write('<text x="100" y="200" font-size="18">z<sub>t+1</sub> = x<sup>2</sup></text>')
+        first = prepare_svg_file_content_for_render(self.path)
+        self.path.write_text(first, encoding='utf-8')
+        second = prepare_svg_file_content_for_render(self.path)
+        self.assertEqual(ET.tostring(ET.fromstring(first)), ET.tostring(ET.fromstring(second)))
+        output = create_pptx([self.path], Path(self.directory.name)/'scripts.pptx')
+        conversion = json.loads(output.with_suffix('.conversion_report.json').read_text(encoding='utf-8'))
+        audit = json.loads(output.with_suffix('.export_audit.json').read_text(encoding='utf-8'))
+        self.assertEqual(conversion[0]['mode'], 'native')
+        self.assertEqual(audit['summary']['status'], 'passed')
+        self.assertGreater(audit['slides'][0]['output_metrics']['text_boxes'], 1)
+
+    def test_text_integrity_still_rejects_unhandled_inline_content(self):
+        self.write('<text x="100" y="200">Before<unknown>keep this</unknown>after</text>')
+        with self.assertRaisesRegex(ValueError, 'text content changed'):
+            convert_svg_to_slide_shapes(self.path)
+
+    def test_native_line_boxes_define_spacing_independent_of_slide_master(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / 'slide.svg'
+            path.write_text(SVG.format('<text x="80" y="180" font-size="12">Label</text>'
+                '<text x="80" y="204" font-size="24">12.345</text>'), encoding='utf-8')
+            xml = ET.fromstring(convert_svg_to_slide_shapes(path)[0])
+            drawing = '{http://schemas.openxmlformats.org/drawingml/2006/main}'
+            properties = list(xml.iter(drawing+'pPr'))
+            self.assertEqual(len(properties), 2)
+            for properties in properties:
+                self.assertEqual(properties.find(drawing+'lnSpc/'+drawing+'spcPct').get('val'), '100000')
+                self.assertEqual(properties.find(drawing+'spcBef/'+drawing+'spcPts').get('val'), '0')
+                self.assertEqual(properties.find(drawing+'spcAft/'+drawing+'spcPts').get('val'), '0')
+
     def setUp(self):
         self.directory = TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)

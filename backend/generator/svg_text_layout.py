@@ -57,8 +57,8 @@ def _glyph_vertical_bounds(text: str, attrs: dict[str, str]) -> tuple[float, flo
         return -size, size * .25
 
 
-def _bounds(element: ET.Element) -> tuple[float, float, float, float] | None:
-    runs = text_runs(element)
+def _bounds(element: ET.Element, inherited: dict[str, str] | None = None) -> tuple[float, float, float, float] | None:
+    runs = text_runs(element, inherited)
     boxes = []
     for run in runs:
         if not run.text.strip():
@@ -81,7 +81,11 @@ def _move_baseline(element: ET.Element, delta: float) -> None:
 
 
 def layout_text_groups(root: ET.Element) -> int:
-    """Keep header rows separate and centered labels inside their shape boxes."""
+    """Space semantic headers and explicitly opted-in shape-label groups.
+
+    Centered text can be an external data label or annotation. Its anchor alone
+    does not establish ownership by a nearby rectangle.
+    """
     count = 0
     ns = root.tag.split("}", 1)[0] + "}" if root.tag.startswith("{") else ""
     for group in root.iter(ns + "g"):
@@ -111,7 +115,11 @@ def layout_text_groups(root: ET.Element) -> int:
                             shape.set("y", f"{target:g}")
                             count += 1
 
+        if group.get("data-layout") != "center-label":
+            continue
         rects = [e for e in group if e.tag == ns + "rect" and number(e.get("width")) > 0 and number(e.get("height")) > 0]
+        if len(rects) != 1:
+            continue
         owners: dict[ET.Element, list[ET.Element]] = {}
         for text in group:
             if text.tag != ns + "text" or text.get("text-anchor") != "middle" or list(text) or text.get("transform"):
@@ -149,6 +157,23 @@ class TextRun:
     line: int
 
 
+def normalize_inline_scripts(root: ET.Element) -> int:
+    """Translate HTML script runs in SVG text to SVG text semantics."""
+    count = 0
+    for text in root.iter():
+        if text.tag.rsplit('}', 1)[-1] != 'text':
+            continue
+        namespace = text.tag.split('}', 1)[0] + '}' if text.tag.startswith('{') else ''
+        for child in text.iter():
+            tag = child.tag.rsplit('}', 1)[-1]
+            if tag in {'sub', 'sup'}:
+                child.tag = namespace + 'tspan'
+                child.attrib.setdefault('baseline-shift', 'sub' if tag == 'sub' else 'super')
+                child.attrib.setdefault('font-size', '70%')
+                count += 1
+    return count
+
+
 def text_runs(element: ET.Element, inherited: dict[str, str] | None = None) -> list[TextRun]:
     """Walk nested tspans in document order, including every descendant tail."""
     runs: list[TextRun] = []
@@ -169,15 +194,37 @@ def text_runs(element: ET.Element, inherited: dict[str, str] | None = None) -> l
         nonlocal x, y, line
         attrs = dict(styles)
         attrs.update({key: value for key, value in node.attrib.items() if key in TEXT_ATTRIBUTES})
+        parent_size = number(styles.get('font-size'), 16)
+        raw_size = node.get('font-size', styles.get('font-size', '16')).strip()
+        if raw_size.endswith('%'):
+            attrs['font-size'] = f'{parent_size * number(raw_size) / 100:g}'
+        elif raw_size.endswith('em'):
+            attrs['font-size'] = f'{parent_size * number(raw_size):g}'
         if not is_root and any(key in node.attrib for key in ("x", "y", "dx", "dy")):
             line += 1
             x = number(node.get("x"), x) + number(node.get("dx"))
             y = number(node.get("y"), y) + number(node.get("dy"))
+        shift_value = node.get('baseline-shift', '')
+        shift = 0.0
+        if shift_value == 'sub':
+            shift = parent_size * .2
+        elif shift_value == 'super':
+            shift = -parent_size * .4
+        elif shift_value.endswith('%'):
+            shift = -number(attrs.get('font-size'), parent_size) * number(shift_value) / 100
+        elif shift_value:
+            shift = -number(shift_value)
+        if shift:
+            y += shift
+            line += 1
         emit(node.text, attrs)
         for child in node:
             if child.tag.rsplit("}", 1)[-1] == "tspan":
                 visit(child, attrs)
             emit(child.tail, attrs)
+        if shift:
+            y -= shift
+            line += 1
 
     visit(element, inherited or {}, True)
     return runs
@@ -241,73 +288,115 @@ def wrap_fragments(fragments: list[tuple[str, dict[str, str]]], width: float, ba
     return lines
 
 
-def reflow_declared_paragraphs(root: ET.Element) -> int:
-    """Lay out body paragraphs only inside explicitly declared text boxes."""
-    parent_map = {child: parent for parent in root.iter() for child in parent}
-    count = 0
+def _paragraph_layouts(root: ET.Element):
+    """Plan all paragraphs sharing a declared flow box together."""
+    parents = {child: parent for parent in root.iter() for child in parent}
     namespace = root.tag.split("}", 1)[0] + "}" if root.tag.startswith("{") else ""
-    for element in list(root.iter(namespace + "text")):
-        current = element
-        box = None
-        while current is not None:
-            if current.get("data-textbox") and current.get("data-role", "body") in {"body", "caption", "callout"}:
-                values = current.get("data-textbox", "").split()
-                if len(values) == 4:
-                    box = [number(v) for v in values]
+    groups: dict[ET.Element, list[tuple[ET.Element, dict[str, str]]]] = {}
+    for element in root.iter(namespace + "text"):
+        owner = element
+        while owner is not None:
+            if owner.get("data-textbox") and owner.get("data-role", "body") in {"body", "caption", "callout"}:
                 break
-            current = parent_map.get(current)
-        if box is None or element.get("text-anchor", "start") != "start" or element.get("transform"):
-            continue
-        descendants = list(element.iter())[1:]
-        # Mathematical scripts and explicit horizontal diagrams keep their geometry.
-        if any(child.get("baseline-shift") or child.get("transform") or number(child.get("dy")) < 0 for child in descendants):
+            owner = parents.get(owner)
+        if owner is None:
             continue
         ancestors = []
-        ancestor = parent_map.get(element)
+        ancestor = parents.get(element)
         while ancestor is not None:
             ancestors.append(ancestor)
-            ancestor = parent_map.get(ancestor)
+            ancestor = parents.get(ancestor)
         inherited = {}
         for ancestor in reversed(ancestors):
             inherited.update({k: v for k, v in ancestor.attrib.items() if k in TEXT_ATTRIBUTES})
-        runs = text_runs(element, inherited)
-        if not runs:
+        groups.setdefault(owner, []).append((element, inherited))
+
+    for owner, elements in groups.items():
+        values = owner.get("data-textbox", "").split()
+        if len(values) != 4:
             continue
-        first = runs[0]
-        size = number(first.attrs.get("font-size"), 16)
-        if any(abs(number(run.attrs.get("font-size"), size) - size) > 0.01 for run in runs):
+        x, y, width, height = [number(v) for v in values]
+        if width <= 0 or height <= 0:
             continue
-        if any(abs(run.x - first.x) > 1 and run.line != first.line and run.y == first.y for run in runs):
+        plans = []
+        cursor = None
+        for element, inherited in elements:
+            descendants = list(element.iter())[1:]
+            if element.get("text-anchor", inherited.get("text-anchor", "start")) != "start" or element.get("transform"):
+                break
+            if any(child.get("baseline-shift") or child.get("transform") or number(child.get("dy")) < 0 for child in descendants):
+                break
+            runs = text_runs(element, inherited)
+            if not runs:
+                continue
+            first = runs[0]
+            size = number(first.attrs.get("font-size"), 16)
+            if any(abs(number(run.attrs.get("font-size"), size) - size) > 0.01 for run in runs):
+                break
+            available = x + width - first.x
+            if available <= 0:
+                break
+            lines = wrap_fragments(paragraph_fragments(element, inherited), available, first.attrs)
+            if not lines:
+                continue
+            line_height = number(element.get("data-line-height"), size * 1.5)
+            baselines = sorted({run.y for run in runs})
+            if len(baselines) > 1 and element.get("data-line-height") is None:
+                line_height = min(max(size * 1.2, baselines[1] - baselines[0]), size * 1.6)
+            baseline = max(first.y, cursor) if cursor is not None else first.y
+            last_baseline = baseline + (len(lines) - 1) * line_height
+            cursor = last_baseline + line_height + number(owner.get("data-paragraph-gap"))
+            glyph_bottom = max(
+                baseline + index * line_height + _glyph_vertical_bounds(text, attrs)[1]
+                for index, line in enumerate(lines) for text, attrs in line if text.strip()
+            )
+            plans.append({"element": element, "first": first, "lines": lines, "baseline": baseline,
+                          "line_height": line_height, "bottom": glyph_bottom,
+                          "right": first.x + max(sum(measure_text(t, a) for t, a in line) for line in lines)})
+        else:
+            if plans:
+                yield owner, (x, y, width, height), plans
+
+
+def paragraph_layout_issues(root: ET.Element) -> list[dict]:
+    """Report measured capacity failures in declared paragraph boxes."""
+    issues = []
+    for owner, (x, y, width, height), plans in _paragraph_layouts(root):
+        required_height = max(plan["bottom"] for plan in plans) - y
+        required_width = max(plan["right"] for plan in plans) - x
+        if required_height > height + .1 or required_width > width + .1:
+            issues.append({"box": (x, y, width, height), "required_height": required_height,
+                           "required_width": required_width, "paragraphs": len(plans),
+                           "lines": sum(len(plan["lines"]) for plan in plans),
+                           "element": owner.get("id", owner.get("data-role", "paragraph box"))})
+    return issues
+
+
+def reflow_declared_paragraphs(root: ET.Element) -> int:
+    """Wrap and stack paragraphs atomically within each declared flow box."""
+    namespace = root.tag.split("}", 1)[0] + "}" if root.tag.startswith("{") else ""
+    count = 0
+    for _owner, (x, y, width, height), plans in _paragraph_layouts(root):
+        if any(plan["bottom"] > y + height + .1 or plan["right"] > x + width + .1 for plan in plans):
+            # Leave the complete authored group intact; generation receives its measured capacity error.
             continue
-        x, y, width, height = box
-        available = x + width - first.x
-        if available <= 0:
-            continue
-        lines = wrap_fragments(paragraph_fragments(element, inherited), available, first.attrs)
-        if not lines:
-            continue
-        line_height = number(element.get("data-line-height"), size * 1.5)
-        baselines = sorted({run.y for run in runs})
-        if len(baselines) > 1 and element.get("data-line-height") is None:
-            line_height = min(max(size * 1.2, baselines[1] - baselines[0]), size * 1.6)
-        if first.y + (len(lines) - 1) * line_height + size * .25 > y + height:
-            # Keep complete content; the layout audit handles an insufficient box.
-            continue
-        before = ET.tostring(element)
-        element.text = None
-        for child in list(element):
-            element.remove(child)
-        element.set("x", f"{first.x:g}")
-        element.set("y", f"{first.y:g}")
-        for index, line in enumerate(lines):
-            span = ET.SubElement(element, namespace + "tspan", {"x": f"{first.x:g}", "y": f"{first.y + index * line_height:g}"})
-            last = None
-            for text, attrs in line:
-                styles = {k: v for k, v in attrs.items() if k in TEXT_ATTRIBUTES and element.get(k) != v}
-                if last is not None and last.attrib == styles:
-                    last.text = (last.text or "") + text
-                else:
-                    last = ET.SubElement(span, namespace + "tspan", styles)
-                    last.text = text
-        count += ET.tostring(element) != before
+        for plan in plans:
+            element, first = plan["element"], plan["first"]
+            before = ET.tostring(element)
+            element.text = None
+            for child in list(element):
+                element.remove(child)
+            element.set("x", f"{first.x:g}")
+            element.set("y", f"{plan['baseline']:g}")
+            for index, line in enumerate(plan["lines"]):
+                span = ET.SubElement(element, namespace + "tspan", {"x": f"{first.x:g}", "y": f"{plan['baseline'] + index * plan['line_height']:g}"})
+                last = None
+                for text, attrs in line:
+                    styles = {k: v for k, v in attrs.items() if k in TEXT_ATTRIBUTES and element.get(k) != v}
+                    if last is not None and last.attrib == styles:
+                        last.text = (last.text or "") + text
+                    else:
+                        last = ET.SubElement(span, namespace + "tspan", styles)
+                        last.text = text
+            count += ET.tostring(element) != before
     return count
