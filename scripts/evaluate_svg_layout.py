@@ -34,6 +34,7 @@ from backend.generator.svg_to_pptx.builder import create_pptx
 from backend.generator.visual_critic import render_svg_to_png
 from backend.llm import LLMMessage, LLMResponse, TokenUsage
 from backend.orchestrator.strategist_agent import create_design_spec
+from backend.orchestrator.deck_plan import _extract_page_design_block
 from backend.orchestrator.svg_executor import generate_svg_pages_parallel, _validate_source_table_values, _svg_for_model
 
 
@@ -162,22 +163,31 @@ async def evaluate_one(item: dict, args, client, semaphore) -> dict:
             pass
         (directory / 'critic_events.json').write_text(json.dumps(critic_events, ensure_ascii=False, indent=2), encoding='utf8')
         reports = await asyncio.to_thread(render_and_audit, directory)
-        provider.stage = 'fidelity'
-        svg_sources = '\n\n'.join(f'## {path.name}\n{_svg_for_model(path.read_text(encoding="utf8"))}' for path in sorted((directory / 'svg_output').glob('*.svg')))
-        review = await provider.chat([
-            LLMMessage.system('Review factual fidelity of research slides against the supplied source excerpts and manuscript. '
-                'Return JSON with unsupported_claims, unsupported_data_marks, and missing_material arrays. '
-                'Each finding includes slide, observation, and source_basis. '
-                'Check values, equations, comparative conditions, and whether visual data marks have supplied values. '
-                'Distinguish abstract unlabeled decoration, structural schematics, scale guides, and data-bearing marks. '
-                'Report demonstrated discrepancies. Return empty arrays for categories with no demonstrated discrepancy.'),
-            LLMMessage.user(f'## Source excerpts\n{source}\n\n## Manuscript\n{manuscript}\n\n## SVGs\n{svg_sources}'),
-        ], args.model, max_tokens=4000, temperature=.1)
-        (directory / 'fidelity.json').write_text(json.dumps(json_response(review.content), ensure_ascii=False, indent=2), encoding='utf8')
         audit = json.loads((directory / 'samples.export_audit.json').read_text(encoding='utf8'))
         summary.update(status='generated', phase='first_generation', generation_calls=sum(call['stage']=='svg' for call in provider.calls), slides=len(reports), export=audit['summary'],
             geometry_errors=sum(report['error_count'] for report in reports),
             source_coverage_errors=sum(report.get('source_coverage',{}).get('error_count',0) for report in reports), calls=len(provider.calls))
+        try:
+            provider.stage = 'fidelity'
+            planned = '\n\n'.join(_extract_page_design_block(design, index) for index in range(1, len(fixture['pages'])+1))
+            svg_sources = '\n\n'.join(f'## {path.name}\n{_svg_for_model(path.read_text(encoding="utf8"))}' for path in sorted((directory / 'svg_output').glob('*.svg')))
+            review = await provider.chat([
+                LLMMessage.system('Review factual fidelity of research slides against the supplied source excerpts and manuscript. '
+                    'Return JSON with unsupported_claims, unsupported_data_marks, and missing_material arrays. '
+                    'Each finding includes slide, observation, and source_basis. '
+                    'Check values, equations, comparative conditions, and whether visual data marks have supplied values. '
+                    'Assess missing visible material against the selected copy in the page design briefs. '
+                    'Distinguish abstract unlabeled decoration, structural schematics, scale guides, and data-bearing marks. '
+                    'Report demonstrated discrepancies. Return empty arrays for categories with no demonstrated discrepancy.'),
+                LLMMessage.user(f'## Source excerpts\n{source}\n\n## Manuscript\n{manuscript}\n\n## Page design briefs\n{planned}\n\n## SVGs\n{svg_sources}'),
+            ], args.model, max_tokens=4000, temperature=.1)
+            (directory / 'fidelity.json').write_text(json.dumps(json_response(review.content), ensure_ascii=False, indent=2), encoding='utf8')
+            summary['fidelity_status'] = 'completed'
+        except Exception as error:
+            summary['fidelity_status'] = 'failed'
+            failure = {'status':'failed', 'error':f'{type(error).__name__}: {error}'}
+            (directory/'fidelity.json').write_text(json.dumps(failure, ensure_ascii=False, indent=2), encoding='utf8')
+        summary['calls'] = len(provider.calls)
     except Exception as error:
         summary.update(status='failed', error=f'{type(error).__name__}: {error}')
     (directory / 'summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding='utf8')

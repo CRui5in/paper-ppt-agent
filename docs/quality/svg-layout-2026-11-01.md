@@ -177,3 +177,7 @@ The runtime still asked the designer to render the current page's information co
 Before the SVG request, selected copy receives measured unwrapped glyph advances using an explicit 18px reference font. Selected Markdown tables receive maximum header/cell advances per column and row counts. The designer can scale these measurements with its chosen typography when allocating regions. The measurements add no paper sections and perform no post-generation text movement, resizing, repair, or fallback. Empty/missing selected copy adds no measurement block.
 
 Validation: 92 tests passed. New cases cover exact values and units, inequalities, literal identifiers, empty copy versus speaker notes, table-column widths, and font-size scaling. Layout conventions and the original reference template remain intact. The next run reuses the same nine manuscript/design pairs to isolate the first SVG request's measurement input.
+
+## Keep audit stages separate
+
+The corpus evaluator now records geometry and native-export outcomes before the advisory model review. An invalid review response is recorded as `fidelity_status=failed`, preserving its error and raw response; it triggers no retry and does not overwrite generation/export evidence. Omission review receives the page briefs and compares visible output with their selected copy, while factual consistency remains checked against the manuscript and source excerpts.
