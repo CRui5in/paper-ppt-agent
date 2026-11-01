@@ -269,7 +269,7 @@ Icons are optional. Most slides need 0 icons. Only add when it has a clear seman
 
 #### Slide 01 - Cover
 
-- **Layout**: [Title and metadata composition with unlabeled abstract ornament]
+- **Layout**: [Title and metadata composition; visual treatment follows the deck's aesthetic]
 - **Title**: [Main title]
 - **Subtitle**: [Subtitle]
 - **Info**: [Author / Date / Organization]

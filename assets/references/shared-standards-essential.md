@@ -2,6 +2,8 @@
 
 Use the exact presentation viewBox and inline SVG attributes.
 
+The generated document uses well-formed XML element markup. Use descriptive group IDs for organization, keep implementation notes outside the SVG, and escape reserved characters in text and attribute values.
+
 ## Drawing vocabulary
 
 - Native shapes: `rect`, `circle`, `ellipse`, `line`, `polyline`, `polygon`, and `path` with line, Bezier, and arc commands. Use them for diagrams, plots, connectors, annotations, and illustrations that explain the source material.

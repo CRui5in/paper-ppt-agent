@@ -85,6 +85,24 @@ class SvgGenerationEntryPointTests(unittest.IsolatedAsyncioTestCase):
                     _results = [result async for result in generator('', '<!-- page_type: content -->\n# Method', Path(directory), provider, 'test-model', enable_visual_critic=False, **kwargs)]
                 self.assertEqual(provider.chat.await_count, 1)
 
+    async def test_invalid_initial_xml_is_reported_with_page_context_and_preserved(self):
+        malformed = (
+            '<svg xmlns="http://www.w3.org/2000/svg">\n<!-- a -- b -->\n</svg>',
+            '<svg xmlns="http://www.w3.org/2000/svg"><text>A & B</text></svg>',
+        )
+        for mode in ('sequential', 'page_parallel'):
+            for svg in malformed:
+                with self.subTest(mode=mode, svg=svg), TemporaryDirectory() as directory:
+                    provider=SimpleNamespace(chat=AsyncMock(return_value=LLMResponse(content=svg)))
+                    generator=svg_executor.generate_svg_pages if mode=='sequential' else svg_executor.generate_svg_pages_parallel
+                    kwargs={} if mode=='sequential' else {'mode':mode}
+                    with self.assertRaisesRegex(RuntimeError, r'Invalid XML.*page 1/1:.*line .*column'):
+                        _pages=[page async for page in generator('', '<!-- page_type: content -->\n# Page', Path(directory),
+                            provider,'test-model',max_critic_attempts=0,enable_visual_critic=False,**kwargs)]
+                    self.assertEqual(provider.chat.await_count,1)
+                    self.assertEqual((Path(directory)/'svg_initial/slide_001.svg').read_text(encoding='utf8'),svg)
+                    self.assertFalse((Path(directory)/'svg_output/slide_001.svg').exists())
+
     async def test_table_membership_diagnostics_do_not_force_the_entire_manuscript_onto_a_page(self):
         manuscript = '<!-- page_type: content -->\n# Counts\n|Year|Count|\n|---|---|\n|2020|1234.5|\n|2021|0.625|'
         omitted = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720"><text x="100" y="200">2020 1234.5</text></svg>'

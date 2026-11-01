@@ -4,7 +4,7 @@ Create one complete, editable SVG page for the supplied manuscript and design sp
 
 ## Composition
 
-Choose the relationship the audience should see: sequence, contrast, hierarchy, spatial structure, change, or a quantitative comparison. Build a clear reading order around that relationship using position, scale, connections, and labels.
+Start from the page's role and reading order. On explanatory pages, use position, scale, connections, and labels to reveal the relationships in the material.
 
 Establish what the audience reads first and how the supporting material follows. Use scale and whitespace to separate levels of information. Draw with paths, curves, polygons, lines, circles, text, and images. Place concise explanations beside the marks, symbols, or components they explain.
 
@@ -14,7 +14,7 @@ Choose region sizes and spacing from the content. Alignment, whitespace, shared 
 
 Build the visible page from the brief's `Content` and assigned assets, preserving values, units, notation, and comparison conditions. The page manuscript supplies the supporting detail. Place explanations beside the figures, equations, and diagram elements they explain; carry oral elaboration in the speaker notes.
 
-Use unlabeled abstract geometry for ornament. Draw structural relationships from the named components and operations. Plot the selected observation records with their conditions and units, and present qualitative changes through labeled relationships or stated milestones. Preserve scientific spatial geometry from its source figure.
+Choose ornament for visual balance, atmosphere, and the deck's aesthetic. Use color, shape, proportion, depth, and negative space to support the composition. Draw explanatory relationships from the named components and operations. Plot the selected observation records with their conditions and units, and present qualitative changes through labeled relationships or stated milestones. Preserve scientific spatial geometry from its source figure.
 
 Calculate quantitative coordinates from the selected observations or stated mathematical relationship. Use consistent scales, units, and precise data labels. Assigned source figures retain their recorded geometry.
 
@@ -28,7 +28,7 @@ Use the deck's type hierarchy. Align related labels, reserve paragraph line-heig
 
 Allocate readable space for data labels beside their marks. Labels placed inside a filled mark use a contrasting text color across the full label.
 
-Allocate the page's regions before drawing details. Size each region for its full content, establish shared edges and gutters, and leave distinct room for captions. Treat a sentence explaining an equation or diagram as a paragraph with wrapping space. Keep short diagram and data labels next to the element they describe.
+Allocate the page's regions before drawing details. Size each region for its full content, establish shared edges and gutters, and leave distinct room for captions. Within a diagram-and-prose region, allocate the diagram's complete bounds, caption, gap, and wrapped prose as one composition. Treat a sentence explaining an equation or diagram as a paragraph with wrapping space. Keep short diagram and data labels next to the element they describe.
 
 Estimate the lines of copy at the chosen font size and reserve their full line-height before positioning the next region. Compose dense material through aligned table cells, concise labels, and visual relationships; arrange supporting prose in the remaining space.
 
@@ -73,10 +73,10 @@ Use the supported drawing and styling vocabulary in the SVG Technical Standards.
 
 When a template skeleton is supplied, preserve its brand assets, transforms, fixed chrome, and content boundaries. Fill its editable regions with the current page's composition and replace its placeholders from the slide plan.
 
-Compose covers from the supplied title, metadata, and unlabeled abstract ornament. Develop a focal point through display typography, shape, color, depth, and spatial rhythm.
+Compose covers from the supplied title and metadata. Develop a focal point through display typography, shape, color, depth, and spatial rhythm. Use ornament where it improves the composition.
 
 Follow the planned page role: title and metadata on covers, ordered items on TOCs, the common divider style on chapter pages, explanations and evidence on content pages, and a focused closing message. Use chapter indices for chapter labels and slide numbers for footer pagination.
 
 ## Output
 
-Return one complete SVG in a single `svg` code fence. Check information coverage, visual scales, reading order, text capacity, figure visibility, and connector endpoints before returning it.
+Return one complete, well-formed XML SVG in a single `svg` code fence. Output drawing elements and inline attributes; use descriptive group IDs for organization and leave XML comments out. Escape XML-reserved characters in text and attribute values. Check information coverage, visual scales, reading order, text capacity, figure visibility, and connector endpoints before returning it.

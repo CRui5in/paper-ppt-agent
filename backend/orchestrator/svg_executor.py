@@ -2652,6 +2652,7 @@ async def generate_svg_pages(
             initial_dir = project_dir / "svg_initial"
             initial_dir.mkdir(parents=True, exist_ok=True)
             _write_generated_svg(initial_dir, page_num, svg_content)
+            _validate_initial_svg_xml(svg_content, page_num, len(pages))
             svg_content = _normalize_obvious_short_text_lines(svg_content, page_design_block)
             conversation.append(LLMMessage.assistant(f"```svg\n{_svg_for_model(svg_content)}\n```"))
 
@@ -3761,6 +3762,7 @@ async def _generate_parallel_page(
     initial_dir = project_dir / "svg_initial"
     initial_dir.mkdir(parents=True, exist_ok=True)
     _write_generated_svg(initial_dir, page_num, svg_content)
+    _validate_initial_svg_xml(svg_content, page_num, total_pages)
     svg_content = _normalize_obvious_short_text_lines(svg_content, page_design_block)
     conversation.append(LLMMessage.assistant(f"```svg\n{_svg_for_model(svg_content)}\n```"))
 
@@ -4001,6 +4003,16 @@ def _make_page_name(num: int, content: str) -> str:
         name = re.sub(r"\s+", "_", name)
         return name[:40].lower()
     return f"page_{num}"
+
+
+def _validate_initial_svg_xml(svg_content: str, page_num: int, total_pages: int) -> None:
+    """Validate the initial artifact before preview preparation, retaining its source."""
+    try:
+        ET.fromstring(svg_content)
+    except ET.ParseError as error:
+        raise RuntimeError(
+            f"Invalid XML in first generation response for page {page_num}/{total_pages}: {error}"
+        ) from error
 
 
 def _extract_svg(text: str) -> str | None:

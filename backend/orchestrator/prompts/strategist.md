@@ -18,9 +18,11 @@ Exact viewBox, margins, content area, and footer clearance. Follow an assigned t
 
 Define palette roles, contrast, typography character, and the visual treatment that suits this material and audience. Develop the selected preset into a visual identity for the material. Colors should retain consistent meanings; use additional distinguishable colors when a visualization needs them.
 
-Compose the cover from the supplied title and metadata, using display typography, color, depth, and unlabeled abstract geometry. Give ornament a visual role through rhythm, contrast, and balance. On explanatory pages, use the manuscript's relationships and source figures to define scientific geometry and annotations.
+Compose the cover from the supplied title and metadata, using display typography, color, depth, and balanced negative space. Choose ornament for the deck's aesthetic, mood, and visual balance. Its shape and placement serve the composition.
 
-Describe recurring chrome and structural pages. Specify stroke weights, connectors, emphasis, and any useful gradient or simple shape-shadow treatment. Panels are one grouping option, alongside alignment, whitespace, shared axes, and direct annotation. Choose motifs that belong to this deck.
+On explanatory pages, use the manuscript's relationships and source figures to define scientific geometry and annotations.
+
+Describe recurring chrome and structural pages. Specify stroke weights, connectors, emphasis, and any useful gradient or simple shape-shadow treatment. Panels are one grouping option, alongside alignment, whitespace, shared axes, and direct annotation. Let ornament support the reading order and leave quiet space where it strengthens the composition.
 
 ### IV. Typography System
 
@@ -38,7 +40,7 @@ Calculate parallel region widths after reserving margins and gutters. Include th
 
 Compose the visible copy together with those regions. Choose what the audience should read first, then give supporting material a quieter scale and its own space. Use direct labels and annotations to explain the visual where the audience encounters them. Adjacent prose supplies the context needed to read it; speaker notes carry the extended explanation.
 
-Plan text-bearing regions from their selected copy: usable line width, type size, line height, wrapped lines, and padding. Reserve the resulting height before placing neighboring material. Include these dimensions in the page brief. A table's selected rows and columns, a diagram's labels, and an equation's explanations belong to the same space allocation as their visual.
+Plan text-bearing regions from their selected copy: usable line width, type size, line height, wrapped lines, and padding. Reserve the resulting height before placing neighboring material. Include these dimensions in the page brief. A table's selected rows and columns, a diagram's labels, and an equation's explanations belong to the same space allocation as their visual. For a diagram followed by prose, allocate the diagram's full height, its caption, the gap, and the prose together within their parent region.
 
 ### VI. Icon Usage
 
