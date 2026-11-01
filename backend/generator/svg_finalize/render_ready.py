@@ -18,11 +18,9 @@ from backend.config import settings
 from .embed_icons import embed_icons_in_file
 from .embed_images import embed_images_in_svg
 from .flatten_tspan import flatten_text_in_svg
-from .merge_adjacent_text import merge_adjacent_text_in_svg
 from .normalize_fonts import normalize_text_fonts_in_svg
-from .repair_svg import repair_svg_file
 from .render_math import render_math_in_svg
-from ..svg_text_layout import reflow_declared_paragraphs, layout_text_groups
+from ..svg_text_layout import reflow_declared_paragraphs, layout_text_groups, normalize_inline_scripts
 
 _PREVIEW_CONTENT_CACHE_LIMIT = 256
 _preview_content_cache: OrderedDict[str, tuple[int, int, str]] = OrderedDict()
@@ -43,7 +41,11 @@ def prepare_svg_file_for_render(svg_path: Path) -> Path:
     temp_path = svg_path.with_name(f".__render_{uuid.uuid4().hex}_{base_name}")
     temp_path.write_text(svg_path.read_text(encoding="utf-8"), encoding="utf-8")
 
-    _prepare_in_place(temp_path)
+    try:
+        _prepare_in_place(temp_path)
+    except Exception:
+        temp_path.unlink(missing_ok=True)
+        raise
     return temp_path
 
 
@@ -98,14 +100,13 @@ def prepare_svg_content_for_render(svg_content: str, svg_dir: Path) -> str:
 
 
 def _prepare_in_place(svg_path: Path) -> None:
-    repair_svg_file(svg_path)
+    ET.parse(svg_path)
     normalize_text_fonts_in_svg(svg_path)
     render_math_in_svg(svg_path)
     tree = ET.parse(svg_path)
-    if reflow_declared_paragraphs(tree.getroot()) + layout_text_groups(tree.getroot()):
+    if normalize_inline_scripts(tree.getroot()) + reflow_declared_paragraphs(tree.getroot()) + layout_text_groups(tree.getroot()):
         tree.write(svg_path, encoding="unicode")
     embed_icons_in_file(svg_path, settings.icons_dir)
     embed_images_in_svg(svg_path)
     flatten_text_in_svg(svg_path)
-    merge_adjacent_text_in_svg(svg_path)
     normalize_text_fonts_in_svg(svg_path)
