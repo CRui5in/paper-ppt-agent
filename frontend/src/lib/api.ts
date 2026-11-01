@@ -59,7 +59,11 @@ export function fetchGenerationRecovery(jobId: string): Promise<GenerationRecove
 }
 
 export function resumeGeneration(jobId: string, mode: "resume" | "retry_failed", feedback: string): Promise<GenerateResponse> {
-  return request(`/api/generate/${jobId}/resume`, { method: "POST", body: JSON.stringify({ mode, feedback }) });
+  return request(`/api/generate/${jobId}/resume`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mode, feedback }),
+  });
 }
 
 export interface UsageSummaryResponse {
