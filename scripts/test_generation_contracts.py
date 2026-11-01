@@ -56,6 +56,24 @@ class ManuscriptEntryPointTests(unittest.IsolatedAsyncioTestCase):
 
 
 class SvgGenerationEntryPointTests(unittest.IsolatedAsyncioTestCase):
+    async def test_partial_progress_gets_a_followup_and_regressions_keep_the_previous_page(self):
+        source = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720"><g data-textbox="100 180 200 10"><text x="100" y="200" font-size="18">This complete paragraph needs enough vertical space to wrap across several lines.</text></g></svg>'
+        partial = source.replace('200 10', '200 40')
+        worse = source.replace('200 10', '200 1')
+        for mode in ('sequential', 'page_parallel'):
+            for candidate in (partial, worse, '{"edits":[{"target":"unknown","remove":true}]}'):
+                with self.subTest(mode=mode, candidate=candidate), TemporaryDirectory() as directory:
+                    provider = SimpleNamespace(chat=AsyncMock(side_effect=[LLMResponse(content=source), LLMResponse(content=candidate), LLMResponse(content=MODEL_SVG)]))
+                    generator = svg_executor.generate_svg_pages if mode == 'sequential' else svg_executor.generate_svg_pages_parallel
+                    kwargs = {} if mode == 'sequential' else {'mode': mode}
+                    results = [result async for result in generator('', '<!-- page_type: content -->\n# Method', Path(directory), provider, 'test-model', max_critic_attempts=0, enable_visual_critic=False, **kwargs)]
+                    self.assertEqual(provider.chat.await_count, 3)
+                    self.assertIn('The input is normalized.', results[0][1])
+                    if candidate != partial:
+                        last_prompt = provider.chat.call_args.args[0][1].content
+                        self.assertIn('current SVG is unchanged', last_prompt)
+                        self.assertIn('200 10', last_prompt)
+
     async def test_json_repair_moves_the_reported_occluding_shape(self):
         import json
         source = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720"><text x="100" y="200" font-size="18">Explanation</text><rect x="80" y="175" width="300" height="50" fill="#FFFFFF"/></svg>'

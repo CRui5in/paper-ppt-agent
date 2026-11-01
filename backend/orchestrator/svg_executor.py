@@ -925,15 +925,17 @@ def _svg_for_model(svg: str) -> str:
 
 
 def _svg_repair_messages(svg: str, page_content: str, report: CriticReport,
-                         figures: list[dict] | None = None) -> list[LLMMessage]:
+                         figures: list[dict] | None = None, feedback: str = '') -> list[LLMMessage]:
     prompt = (Path(__file__).parent/'prompts/svg_repair.md').read_text(encoding='utf8')
     figure_lines = '\n'.join(_paper_figure_reference_line(figure) for figure in figures or [])
     content = (f'## Page manuscript\n{page_content}\n\n## Assigned source figures\n{figure_lines}\n\n## Current authoring SVG\n'
                f'```svg\n{_svg_for_model(svg)}\n```\n\n{report.to_prompt_block(output_format="edits")}')
+    if feedback:
+        content += '\n\n## Previous edit result\n' + feedback
     return [LLMMessage.system(prompt), LLMMessage.user(content)]
 
 
-def _apply_svg_repair_response(response: str, svg: str) -> str | None:
+def _apply_svg_repair_response(response: str, svg: str, errors: list[str] | None = None) -> str | None:
     """Apply a complete set of identified XML edits atomically."""
     try:
         raw = re.sub(r'^\s*```(?:json)?\s*|\s*```\s*$', '', response.strip())
@@ -993,7 +995,9 @@ def _apply_svg_repair_response(response: str, svg: str) -> str | None:
         from backend.generator.svg_finalize.render_math import render_math_in_tree
         render_math_in_tree(root)
         return ET.tostring(root, encoding='unicode')
-    except (KeyError, TypeError, ValueError, ET.ParseError):
+    except (KeyError, TypeError, ValueError, ET.ParseError) as error:
+        if errors is not None:
+            errors.append(str(error))
         return None
 
 
@@ -2205,6 +2209,27 @@ def _static_attempt_limit_for_report(
     return max(1, int(max_critic_attempts))
 
 
+def _repair_quality(report: CriticReport) -> tuple[float, float]:
+    """Count outstanding records and defects; measure remaining capacity pressure."""
+    defects = 0
+    pressure = 0.0
+    for violation in report.violations:
+        if violation.severity != 'error':
+            continue
+        if violation.rule == 'source_table_values_missing':
+            values = violation.detail.partition(': ')[2].partition('. Recompose')[0]
+            defects += max(1, len(values.split(', ')))
+        else:
+            defects += 1
+        if violation.rule == 'paragraph_capacity' and violation.bbox:
+            match = re.search(r'required: ([\d.]+)px wide and ([\d.]+)px high', violation.detail)
+            if match:
+                width, height = violation.bbox[2:]
+                pressure += max(0, float(match[1]) / max(width, 1) - 1)
+                pressure += max(0, float(match[2]) / max(height, 1) - 1)
+    return defects, round(pressure, 3)
+
+
 def _pseudo_icon_badge_violations(svg_content: str) -> list[Violation]:
     try:
         root = ET.fromstring(svg_content)
@@ -2802,6 +2827,8 @@ async def generate_svg_pages(
             best_svg = svg_content
             visual_attempts = 0
             critic_attempt = 1
+            repair_feedback = ''
+            invalid_retry_used = False
             static_attempt_limit = _static_attempt_limit_for_report(
                 max_critic_attempts,
                 None,
@@ -2820,10 +2847,6 @@ async def generate_svg_pages(
                         required_icon=required_icon,
                         include_general_svg_checks=max_critic_attempts > 0,
                         page_content=page_content,
-                    )
-                    static_attempt_limit = _static_attempt_limit_for_report(
-                        max_critic_attempts,
-                        report,
                     )
                     if report.passed and max_critic_attempts <= 0:
                         report = None
@@ -2924,7 +2947,7 @@ async def generate_svg_pages(
                     svg_content=svg_content,
                 )
 
-                repair_messages = _svg_repair_messages(svg_content, page_content, report, used_figures)
+                repair_messages = _svg_repair_messages(svg_content, page_content, report, used_figures, repair_feedback)
                 repair_prompt_text = repair_messages[1].content
                 repair_temp = max(0.1, 0.3 - 0.1 * event_attempt)
                 snapshot = set_usage_context(
@@ -2940,13 +2963,27 @@ async def generate_svg_pages(
                 finally:
                     reset_usage_context(snapshot)
 
-                repaired = _apply_svg_repair_response(response.content, svg_content)
+                repair_errors = []
+                repaired = _apply_svg_repair_response(response.content, svg_content, repair_errors)
+                if repaired:
+                    repaired = _normalize_obvious_short_text_lines(repaired, page_design_block)
+                    if report_metadata.get('source') == 'static':
+                        candidate_report = _generation_static_report(
+                            repaired, critic_config=critic_config, allowed_figures=used_figures,
+                            used_paper_figures=used_paper_figures, required_icon=required_icon,
+                            include_general_svg_checks=max_critic_attempts > 0, page_content=page_content)
+                        before_quality, after_quality = _repair_quality(report), _repair_quality(candidate_report)
+                        if after_quality > before_quality:
+                            repair_errors.append('The proposed edits increased outstanding defects. Recompose the current page using these candidate findings:\n' + candidate_report.to_prompt_block(output_format='edits'))
+                            repaired = None
+                        elif after_quality < before_quality and not candidate_report.passed:
+                            static_attempt_limit = max(static_attempt_limit, min(3, critic_attempt + 1))
+                repair_feedback = ''
                 _write_generation_response_debug(project_dir, prefix="repair", page_num=page_num,
                     attempt=event_attempt, content=response.content, max_tokens=SVG_REPAIR_MAX_TOKENS,
                     note=f"parseable_svg={repaired is not None}")
                 after_archive_rel: str | None = None
                 if repaired:
-                    repaired = _normalize_obvious_short_text_lines(repaired, page_design_block)
                     after_archive_rel = _archive_repair_svg(
                         repair_archive_dir,
                         page_num=page_num,
@@ -2995,6 +3032,13 @@ async def generate_svg_pages(
                         before_archive_rel,
                         event_metadata,
                     )
+                    if (report_metadata.get('source') == 'static' and not invalid_retry_used
+                            and critic_attempt < max(3, max_critic_attempts)):
+                        invalid_retry_used = True
+                        repair_feedback = 'Edits were rejected; the current SVG is unchanged. ' + '; '.join(repair_errors or ['Return a valid identified XML edit list.'])
+                        static_attempt_limit = max(static_attempt_limit, critic_attempt + 1)
+                        critic_attempt += 1
+                        continue
                     conversation.append(LLMMessage.assistant(response.content))
                     break
 
@@ -4129,6 +4173,8 @@ async def _generate_parallel_page(
     best_svg = svg_content
     visual_attempts = 0
     critic_attempt = 1
+    repair_feedback = ''
+    invalid_retry_used = False
     max_critic_attempts = max(0, int(max_critic_attempts))
     visual_qa_max_attempts = max(0, int(visual_qa_max_attempts or 0))
     static_attempt_limit = _static_attempt_limit_for_report(
@@ -4150,10 +4196,6 @@ async def _generate_parallel_page(
                 required_icon=required_icon,
                 include_general_svg_checks=max_critic_attempts > 0,
                 page_content=str(page_input["page_content"]),
-            )
-            static_attempt_limit = _static_attempt_limit_for_report(
-                max_critic_attempts,
-                report,
             )
             if report.passed and max_critic_attempts <= 0:
                 report = None
@@ -4245,7 +4287,7 @@ async def _generate_parallel_page(
             label="before",
             svg_content=svg_content,
         )
-        repair_messages = _svg_repair_messages(svg_content, str(page_input["page_content"]), report, used_figures)
+        repair_messages = _svg_repair_messages(svg_content, str(page_input["page_content"]), report, used_figures, repair_feedback)
         repair_prompt_text = repair_messages[1].content
         repair_temp = max(0.1, 0.3 - 0.1 * event_attempt)
         snapshot = set_usage_context(stage="repair", page=page_num, attempt=event_attempt)
@@ -4259,12 +4301,26 @@ async def _generate_parallel_page(
         finally:
             reset_usage_context(snapshot)
 
-        repaired = _apply_svg_repair_response(response.content, svg_content)
+        repair_errors = []
+        repaired = _apply_svg_repair_response(response.content, svg_content, repair_errors)
+        if repaired:
+            repaired = _normalize_obvious_short_text_lines(repaired, page_design_block)
+            if report_metadata.get('source') == 'static':
+                candidate_report = _generation_static_report(
+                    repaired, critic_config=critic_config, allowed_figures=used_figures,
+                    used_paper_figures={}, required_icon=required_icon,
+                    include_general_svg_checks=max_critic_attempts > 0, page_content=str(page_input["page_content"]))
+                before_quality, after_quality = _repair_quality(report), _repair_quality(candidate_report)
+                if after_quality > before_quality:
+                    repair_errors.append('The proposed edits increased outstanding defects. Recompose the current page using these candidate findings:\n' + candidate_report.to_prompt_block(output_format='edits'))
+                    repaired = None
+                elif after_quality < before_quality and not candidate_report.passed:
+                    static_attempt_limit = max(static_attempt_limit, min(3, critic_attempt + 1))
+        repair_feedback = ''
         _write_generation_response_debug(project_dir, prefix="parallel_repair", page_num=page_num,
             attempt=event_attempt, content=response.content, max_tokens=SVG_REPAIR_MAX_TOKENS,
             note=f"parseable_svg={repaired is not None}")
         if repaired:
-            repaired = _normalize_obvious_short_text_lines(repaired, page_design_block)
             after_archive_rel = _archive_repair_svg(
                 repair_archive_dir,
                 page_num=page_num,
@@ -4306,6 +4362,13 @@ async def _generate_parallel_page(
                 before_archive_rel,
                 event_metadata,
             )
+            if (report_metadata.get('source') == 'static' and not invalid_retry_used
+                    and critic_attempt < max(3, max_critic_attempts)):
+                invalid_retry_used = True
+                repair_feedback = 'Edits were rejected; the current SVG is unchanged. ' + '; '.join(repair_errors or ['Return a valid identified XML edit list.'])
+                static_attempt_limit = max(static_attempt_limit, critic_attempt + 1)
+                critic_attempt += 1
+                continue
             conversation.append(LLMMessage.assistant(response.content))
             break
 

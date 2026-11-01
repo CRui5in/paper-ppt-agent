@@ -79,3 +79,9 @@ Equation/text collisions now use the actual typeset glyph bounds, rather than as
 The first XML-edit replay reduced the three repair completions to 554–1,276 tokens (2.5–4.5 seconds), but exposed overescaped XML attributes and a proposed zero-height math box. Fragment decoding now recovers escaped quotes after an XML parse failure. Equation edits are rendered on the candidate tree before acceptance; invalid patches are rejected atomically, preserving the last valid slide. The repair example uses single-quoted XML attributes.
 
 Validation: 85 tests passed, including escaped fragments, preserved LaTeX, and invalid equation edits. The replay still has unresolved layout and source-table omissions; response validity is measured separately from successful composition.
+
+## Bounded follow-up edits
+
+The replay exposed a repair-control defect: partial fixes were accepted after one attempt, and a valid but worse candidate could replace the previous page. Repair now measures outstanding source records, geometry defects, and paragraph capacity pressure before accepting a candidate. Improvements can receive a follow-up, bounded to three basic repair calls. A rejected edit gets one correction request containing the actual validation error; the original page stays current. Unchanged results retain the existing single-pass bound.
+
+Validation: 86 tests passed. Entry-point tests exercise partial improvement, a capacity regression, invalid edit targets, bounded unchanged results, and continuation of the deck in both sequential and parallel modes.

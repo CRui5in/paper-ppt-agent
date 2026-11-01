@@ -17,7 +17,7 @@ Example:
 
 Use coordinated edits when several regions need new bounds. Retain the assigned viewBox, source facts, values, notation, and comparison conditions. Complete the selected table records with their labels. Structural pages keep their title, metadata, agenda, or closing role.
 
-Equations use their existing `data-latex` and `data-math-box`; the renderer creates their vector paths. Paragraphs use `data-textbox` and continuous text with inline emphasis; the renderer measures and wraps them. Keep the supported native SVG vocabulary and the supplied local figure paths.
+Equations use their existing `data-latex` and `data-math-box="x y width height"`, with positive width and height; the renderer creates their vector paths. Allocate visible space for each expression. Paragraphs use `data-textbox` and continuous text with inline emphasis; the renderer measures and wraps them. Keep the supported native SVG vocabulary and the supplied local figure paths.
 
 Tables and diagram labels use independently positioned cells or labels. Keep their groups distinct from paragraph-flow groups.
 
