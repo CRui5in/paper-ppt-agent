@@ -67,6 +67,8 @@
 
 至少一种模型提供商的 API Key：OpenAI / Anthropic / Gemini / DeepSeek 或自定义 BaseURL 兼容接口。
 
+公式通过本地 MathJax 排版为可编辑矢量图形。后端也需要 Node.js 和 `frontend` 的 npm 依赖，一键启动会检查并安装。
+
 可选：使用工作台的 Agent 生成模式前，需要在本机安装并配置好 Claude Code 或 Codex。模板导入的 Agent 模式当前使用 Claude Code，需要在本机安装并配置好 Claude Code。
 
 ## 🚀 快速开始

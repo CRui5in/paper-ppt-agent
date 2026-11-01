@@ -326,7 +326,7 @@ launch_dev() {
   cd "$ROOT"
   uv sync --locked
 
-  if [ ! -d "$FRONTEND_DIR/node_modules" ]; then
+  if [ ! -d "$FRONTEND_DIR/node_modules" ] || [ ! -f "$FRONTEND_DIR/node_modules/@mathjax/src/package.json" ]; then
     step "$(l installFrontend)"
     cd "$FRONTEND_DIR"
     npm install

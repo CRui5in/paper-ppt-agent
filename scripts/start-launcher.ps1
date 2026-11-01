@@ -487,7 +487,8 @@ function Launch-Dev {
   }
 
   $nodeModules = Join-Path $root "frontend\node_modules"
-  if (-not (Test-Path $nodeModules)) {
+  $mathjaxPackage = Join-Path $nodeModules "@mathjax\src\package.json"
+  if (-not (Test-Path $nodeModules) -or -not (Test-Path $mathjaxPackage)) {
     Write-Step (L installFrontend)
     Push-Location (Join-Path $root "frontend")
     try {

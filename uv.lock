@@ -1158,6 +1158,7 @@ dependencies = [
     { name = "anthropic" },
     { name = "arxiv" },
     { name = "claude-agent-sdk" },
+    { name = "cssselect2" },
     { name = "fastapi", extra = ["standard"] },
     { name = "google-genai" },
     { name = "httpx" },
@@ -1186,6 +1187,7 @@ dependencies = [
     { name = "resvg-py" },
     { name = "semanticscholar" },
     { name = "svglib" },
+    { name = "tinycss2" },
     { name = "uvicorn" },
     { name = "websockets" },
 ]
@@ -1202,6 +1204,7 @@ requires-dist = [
     { name = "anthropic", specifier = ">=0.40.0" },
     { name = "arxiv", specifier = ">=2.1.0" },
     { name = "claude-agent-sdk", specifier = ">=0.1.0" },
+    { name = "cssselect2", specifier = ">=0.8,<1" },
     { name = "fastapi", extras = ["standard"], specifier = ">=0.115.0" },
     { name = "google-genai", specifier = ">=1.0.0" },
     { name = "httpx", specifier = ">=0.27.0" },
@@ -1232,6 +1235,7 @@ requires-dist = [
     { name = "resvg-py", specifier = ">=0.3.0" },
     { name = "semanticscholar", specifier = ">=0.8.0" },
     { name = "svglib", specifier = ">=1.5.0" },
+    { name = "tinycss2", specifier = ">=1.4,<2" },
     { name = "uvicorn", specifier = ">=0.32.0" },
     { name = "websockets", specifier = ">=13.0" },
 ]

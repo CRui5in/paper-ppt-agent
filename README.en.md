@@ -67,6 +67,8 @@ A multi-agent pipeline for automatically generating editable PowerPoint presenta
 
 An API key for at least one model provider: OpenAI / Anthropic / Gemini / DeepSeek or a custom BaseURL-compatible API.
 
+Formula typesetting uses local MathJax to produce editable vector shapes. The backend also requires Node.js and the npm dependencies in `frontend`; the launcher checks and installs them.
+
 Optional: workbench Agent generation requires Claude Code or Codex to be installed and configured locally. Template-import Agent mode currently uses Claude Code and requires it to be installed and configured locally.
 
 ## 🚀 Quick Start

@@ -6,7 +6,7 @@ from tempfile import TemporaryDirectory
 import unittest
 import xml.etree.ElementTree as ET
 
-from backend.generator.svg_finalize.render_math import _math_path, _mathtext_expression, render_math_in_tree
+from backend.generator.svg_finalize.render_math import _math_path, render_math_in_tree
 from backend.generator.svg_finalize.render_ready import prepare_svg_file_content_for_render
 from backend.generator.svg_to_pptx.builder import create_pptx
 
@@ -19,16 +19,6 @@ class MathDelimiterTests(unittest.TestCase):
         expression = r'M^{(t)}=\mathcal T_r\!\left(\mathcal T_c(M^{(t-1)})\right)'
         expected = r'M^{(t)}=\mathcal{T}_r\!\left(\mathcal{T}_c(M^{(t-1)})\right)'
         self.assertEqual(_math_path(expression, 28), _math_path(expected, 28))
-        for source, target in (
-            (r'\mathbb R^n', r'\mathbb{R}^n'),
-            (r'\mathbf x_i + \mathrm d x', r'\mathbf{x}_i + \mathrm{d} x'),
-            (r'\mathcal{AB}', r'\mathcal{AB}'),
-            (r'\text{literal \mathcal T}', r'\text{literal \mathcal T}'),
-            (r'\mathcal\Gamma', r'\mathcal{\Gamma}'),
-            (r'\mathcal TUV', r'\mathcal{T}UV'),
-        ):
-            with self.subTest(source=source):
-                self.assertEqual(_mathtext_expression(source), target)
 
     def test_norm_renders_identically_to_supported_delimiters(self):
         self.assertEqual(_math_path(EXPRESSION,28),_math_path(r'\Vert B_l\Vert_2 \leqslant 1',28))
@@ -40,12 +30,6 @@ class MathDelimiterTests(unittest.TestCase):
             (r'\lVert\lvert x\rvert + y\rVert',r'\Vert\vert x\vert + y\Vert'),
         ):
             with self.subTest(source=source):self.assertEqual(_math_path(source,28),_math_path(expected,28))
-
-    def test_text_and_complete_control_sequences_are_preserved(self):
-        for expression in (r'\text{literal \lVert and {nested} \rVert}',r'\text{escaped \{ \lVert \} }',
-                           r'\\lVert',r'\lVertical',r'\rVertical',r'\leqslant',r'\unknowncommand{x}'):
-            with self.subTest(expression=expression):self.assertEqual(_mathtext_expression(expression),expression)
-        self.assertEqual(_mathtext_expression(r'\text{\lVert} + \lVert x\rVert'),r'\text{\lVert} + \Vert x\Vert')
 
     def test_rendering_retains_source_metadata_and_is_idempotent(self):
         root=ET.Element(NS+'svg',{'viewBox':'0 0 1280 720'})

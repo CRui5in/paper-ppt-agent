@@ -6,64 +6,11 @@ from functools import lru_cache
 import hashlib
 import math
 from pathlib import Path
-import re
 import threading
-import unicodedata
 import xml.etree.ElementTree as ET
 
 _math_lock = threading.Lock()
-_MATH_RENDER_VERSION = 4
-
-# Mathtext accepts the delimiter glyphs but not LaTeX's left/right aliases.
-_DELIMITER_COMMANDS = {
-    r'\lVert': r'\Vert', r'\rVert': r'\Vert',
-    r'\lvert': r'\vert', r'\rvert': r'\vert',
-}
-_CONTROL_SEQUENCE = re.compile(r'\\(?:[A-Za-z]+|.)', re.DOTALL)
-_FONT_COMMANDS = frozenset({
-    r'\mathcal', r'\mathbb', r'\mathfrak', r'\mathrm', r'\mathit',
-    r'\mathbf', r'\mathsf', r'\mathtt', r'\mathregular', r'\mathdefault',
-})
-
-
-def _mathtext_expression(expression: str) -> str:
-    """Express TeX delimiter aliases and single-token font arguments for Mathtext."""
-    parts, position = [], 0
-    for match in _CONTROL_SEQUENCE.finditer(expression):
-        if match.start() < position:
-            continue
-        parts.append(expression[position:match.start()])
-        command = match.group()
-        end = match.end()
-        if command == r'\text':
-            opening = end
-            while opening < len(expression) and expression[opening].isspace():
-                opening += 1
-            if opening < len(expression) and expression[opening] == '{':
-                cursor, depth = opening + 1, 1
-                while cursor < len(expression) and depth:
-                    if expression[cursor] == '\\':
-                        cursor += 2
-                        continue
-                    depth += (expression[cursor] == '{') - (expression[cursor] == '}')
-                    cursor += 1
-                end = cursor
-            parts.append(expression[match.start():end])
-        elif command in _FONT_COMMANDS:
-            opening = end
-            while opening < len(expression) and expression[opening].isspace():
-                opening += 1
-            if opening < len(expression) and expression[opening] not in '{}':
-                token = _CONTROL_SEQUENCE.match(expression, opening)
-                end = token.end() if token else opening + 1
-                parts.append(command + '{' + expression[opening:end] + '}')
-            else:
-                parts.append(command)
-        else:
-            parts.append(_DELIMITER_COMMANDS.get(command, command))
-        position = end
-    parts.append(expression[position:])
-    return ''.join(parts)
+_MATH_RENDER_VERSION = 5
 
 
 @lru_cache(maxsize=32)
@@ -89,39 +36,12 @@ def _cjk_math_font(characters: str) -> str:
 
 @lru_cache(maxsize=256)
 def _math_path(expression: str, font_size: float) -> tuple[str, tuple[float, float, float, float]]:
-    # TextPath shares Matplotlib's font caches across render workers.
+    from .mathjax import math_artwork
     with _math_lock:
-        from matplotlib.font_manager import FontProperties
-        from matplotlib.path import Path as MplPath
-        from matplotlib.textpath import TextPath
-        from matplotlib import rc_context
-
-        cjk = ''.join(sorted({character for character in expression
-            if unicodedata.east_asian_width(character) in {'W', 'F'} and not character.isspace()}))
-        options = {}
-        if cjk:
-            family = _cjk_math_font(cjk)
-            regular = FontProperties(family=[family]).get_fontconfig_pattern()
-            options = {'mathtext.fontset': 'custom', 'mathtext.fallback': 'stix',
-                       'mathtext.rm': regular,
-                       'mathtext.it': FontProperties(family=[family], style='italic').get_fontconfig_pattern(),
-                       'mathtext.bf': FontProperties(family=[family], weight='bold').get_fontconfig_pattern(),
-                       'mathtext.sf': regular, 'mathtext.tt': regular}
-        prop = FontProperties(math_fontfamily="custom" if cjk else "stix")
-        with rc_context(options):
-            path = TextPath((0, 0), f"${_mathtext_expression(expression)}$", size=font_size, prop=prop, usetex=False)
-        box = path.get_extents()
-        bounds = (float(box.x0), float(box.y0), float(box.width), float(box.height))
-        if not all(math.isfinite(v) for v in bounds) or box.width <= 0 or box.height <= 0:
-            raise ValueError("The expression has no drawable mathematical content")
-        commands = []
-        names = {MplPath.MOVETO: "M", MplPath.LINETO: "L", MplPath.CURVE3: "Q", MplPath.CURVE4: "C"}
-        for vertices, code in path.iter_segments(simplify=False):
-            if code == MplPath.CLOSEPOLY:
-                commands.append("Z")
-            elif code in names:
-                commands.append(names[code] + " ".join(f"{float(v):.6g}" for v in vertices))
-        return " ".join(commands), bounds
+        shapes, bounds = math_artwork(expression, font_size)
+    if not all(math.isfinite(value) for value in bounds) or bounds[2] <= 0 or bounds[3] <= 0:
+        raise ValueError("The expression has no drawable mathematical content")
+    return " ".join(shape[0] for shape in shapes), bounds
 
 
 def render_math_in_tree(root: ET.Element) -> int:
@@ -153,7 +73,7 @@ def render_math_in_tree(root: ET.Element) -> int:
             font_size = float(element.get("font-size", "28"))
             if width <= 0 or height <= 0 or not math.isfinite(font_size) or font_size <= 0:
                 raise ValueError("Math box and font size must be positive")
-            d, (left, bottom, natural_width, natural_height) = _math_path(expression, font_size)
+            _, (left, bottom, natural_width, natural_height) = _math_path(expression, font_size)
         except (ValueError, TypeError) as exc:
             raise ValueError(f"Cannot typeset expression {expression!r}: {exc}") from exc
         scale = min(1.0, width / natural_width, height / natural_height)
@@ -164,11 +84,20 @@ def render_math_in_tree(root: ET.Element) -> int:
             element.remove(child)
         title = ET.SubElement(element, namespace + "title")
         title.text = expression
-        ET.SubElement(element, namespace + "path", {
-            "d": d,
-            "fill": element.get("fill", "#1A365D"),
-            "transform": f"matrix({scale:.9g} 0 0 {-scale:.9g} {tx:.9g} {ty:.9g})",
-        })
+        from .mathjax import math_artwork
+        shapes, _ = math_artwork(expression, font_size)
+        ink = element.get("fill", "#1A365D")
+        for geometry, fill, stroke, stroke_width, extras in shapes:
+            attributes = {
+                "d": geometry,
+                "fill": ink if fill == "currentColor" else fill,
+                "transform": f"matrix({scale:.9g} 0 0 {-scale:.9g} {tx:.9g} {ty:.9g})",
+            }
+            if stroke != "none":
+                attributes.update(stroke=ink if stroke == "currentColor" else stroke,
+                                  **{"stroke-width": f"{stroke_width:.9g}"})
+                attributes.update(extras)
+            ET.SubElement(element, namespace + "path", attributes)
         element.set("data-math-rendered", signature)
         count += 1
     return count

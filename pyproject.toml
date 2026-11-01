@@ -46,6 +46,8 @@ dependencies = [
     "peewee>=4.0.6",
     "rank-bm25>=0.2.2",
     "matplotlib>=3.9,<4",
+    "cssselect2>=0.8,<1",
+    "tinycss2>=1.4,<2",
 ]
 
 [project.optional-dependencies]
