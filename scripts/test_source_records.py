@@ -19,6 +19,7 @@ class SourceRecordTests(unittest.TestCase):
     def test_qualitative_trends_do_not_create_observation_rows(self):
         page = page_records('# Trends\nDemand rose during 2010–2015, peaked in 2017, and later declined.\nThe latest reading was about 80 units.', 3)
         self.assertEqual(page['tables'], [])
+        self.assertEqual(records_context([page]), '')
 
     def test_escaped_code_and_mathematical_pipes_stay_inside_cells(self):
         page = page_records('# Symbols\n| Label | Definition |\n|---|---|\n| A\\|B | $|x|$ |\n| C | `left|right` |', 1)

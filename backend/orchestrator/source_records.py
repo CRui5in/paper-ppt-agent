@@ -76,4 +76,10 @@ def manuscript_records(manuscript: str) -> list[dict]:
 
 
 def records_context(records: list[dict]) -> str:
-    return '## Source record catalog\n\n```json\n' + json.dumps(records, ensure_ascii=False, separators=(',', ':')) + '\n```'
+    available = [page for page in records if page['tables']]
+    if not available:
+        return ''
+    return ('## Source table records\n\n'
+            'These entries retain the manuscript table cells and their page scope. '
+            'The listed row IDs identify selected cells when composing a table or quantitative comparison.\n\n'
+            '```json\n' + json.dumps(available, ensure_ascii=False, separators=(',', ':')) + '\n```')

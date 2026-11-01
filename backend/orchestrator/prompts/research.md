@@ -18,30 +18,26 @@ Trace the reasoning behind the main contribution. Distinguish source claims, tra
 
 Read the paper as a critical but fair reviewer. Produce a structured analysis covering these dimensions:
 
-### 1.1 Problem & Motivation
-- What concrete problem does this paper solve? (Not "improves X" — what *failure mode* or *unmet need* drives the work?)
-- Why is this problem hard? What has blocked prior attempts?
-- What is the key insight that unlocks progress?
+### 1.1 Research Purpose
+- Identify the question, problem, or argument that organizes the paper.
+- Explain its significance using the paper's disciplinary and practical context.
 
-### 1.2 Method Mechanism (not just "what" — "how" and "why")
-- What is the core mechanism / architectural move? Describe it as a causal chain or information flow, not a label.
-- What design choices were made, and what alternatives were rejected? (If the paper discusses ablations or comparisons, extract the reasoning.)
-- What are the key assumptions and scope constraints? When would this method *not* work?
+### 1.2 Approach and Reasoning
+- Follow the paper's actual reasoning and organization.
+- Explain how its materials, concepts, procedures, or formal steps lead to its conclusions.
 
-### 1.3 Evidence & Experimental Logic
-- What is the hypothesis → experiment → conclusion chain?
-- Which results are strongest vs. weakest? Are there surprising or counter-intuitive findings?
-- What do the key figures/tables actually prove? (Describe the *argument* each figure makes, not just what it depicts.)
+### 1.3 Evidence and Support
+- Identify the source material supporting each central conclusion.
+- Explain what that material establishes, retaining the conditions needed to interpret it.
 
-### 1.4 Non-Obvious Insights
-- What does the paper imply but not state explicitly?
-- What connections to other work or broader trends can be drawn from the paper's content?
-- Which assumptions, limitations, or validity threats affect the central conclusion? Separate demonstrated problems, questions needing verification, and optional further work in the analysis. Include material qualifications with the relevant slide claim.
+### 1.4 Interpretation and Context
+- Develop useful connections supported by the paper and the supplied context.
+- Distinguish source statements, transparent derivations, interpretations, and open questions in the analysis.
+- Carry qualifications into slide copy where they affect the audience's understanding of a claim.
 
-### 1.5 Contribution Framing
-- In one sentence: what is the *irreducible* contribution that cannot be removed without losing the paper's identity?
-- How does this advance the state of the art? (Concrete delta, not "improves performance.")
-- What are the natural next steps or open questions this work leaves?
+### 1.5 Contribution
+- Explain the paper's contribution through its concrete findings or argument.
+- Connect it to the relevant prior work and questions developed in the source.
 
 **Output of Pass 1**: A structured analysis document (not a manuscript). This is your thinking workspace — it can be dense and detailed.
 

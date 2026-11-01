@@ -161,3 +161,11 @@ The first-generation inputs mixed qualitative accounts, scalar facts, and numeri
 A deterministic source-record catalog now exposes the manuscript's actual Markdown tables to both planning and drawing, with page/table/row IDs and unchanged labels, values, precision, and units. Qualitative prose produces no table records. Quantitative visual briefs select catalog rows or an assigned source figure; SVG chart groups can retain those references as `data-source-records`. This supplies material before the first generation and adds no rewrite or fallback path.
 
 Validation before corpus evaluation: 87 tests passed, including page-scoped identity, cell fidelity, mathematical/code pipes, fenced examples, and qualitative prose without fabricated observations. The next corpus pass measures the first outputs across all nine papers.
+
+## Preserve layout conventions; make material conditional
+
+The user clarified that fixed headers, body/footer regions, component dimensions, and chart-library selection are valid layout conventions. The proposed reference-template rewrite was withdrawn before commit; the original template remains unchanged.
+
+The source catalog is now included only when an actual manuscript table exists. It is optional provenance, not a required paper schema or a mandatory chart format. The analysis prompts organize the paper's actual purpose, reasoning, support, and contribution rather than presuming an architecture/experiment/performance sequence. Evaluation fixture generation selects two coherent source sections rather than requiring method/results sections.
+
+The catalog-only first-generation pass exported all 27 pages natively, but retained geometry defects and unsupported qualitative curves. Its invalid model-assisted review on one paper also obscured that paper's successful geometry/export artifacts in the summary. These results do not establish a quality fix; the source catalog remains a faithful input aid, separate from visual-quality claims.

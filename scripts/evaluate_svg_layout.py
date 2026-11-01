@@ -132,7 +132,7 @@ async def evaluate_one(item: dict, args, client, semaphore) -> dict:
             LLMMessage.system('Create a source-grounded three-page research slide manuscript in Simplified Chinese. '
                 'Return JSON with a pages array, each item containing role, title, body (Markdown), and source_pages. '
                 'Page roles are cover, content, content. Cover content consists of the source title and supplied author/venue metadata. '
-                'The first content page explains the method; the second explains evidence or results. '
+                'Choose two coherent sections from the supplied source for the content pages. '
                 'Use the source title and author metadata. Include an equation or a compact numeric table when the excerpts provide one. '
                 'Keep values, units, comparison conditions, and mathematical notation faithful to the cited source pages. '
                 'Describe comparisons at the metric and evaluation-condition level, preserving ties and tradeoffs. '

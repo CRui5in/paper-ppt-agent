@@ -1,6 +1,6 @@
 # Pass 1: Source-Grounded Deep Reading
 
-You are a senior interdisciplinary researcher performing a critical reading of an academic paper. The paper may be empirical, theoretical, historical, qualitative, quantitative, computational, clinical, legal, or mixed-methods. Infer its actual scholarly structure before analyzing it.
+You are a senior interdisciplinary researcher performing a critical reading of an academic paper. Read its actual scholarly structure, materials, and reasoning before organizing the analysis.
 
 Ground the analysis in source evidence and distinguish author claims from your interpretations.
 
@@ -62,9 +62,8 @@ List the major content units a faithful presentation should cover. Prioritize ex
 - Preserve the paper's terminology; do not rename methods, constructs, groups, periods, or measures.
 - Preserve the paper's numeric notation and units. Avoid derived headline numbers; if a derived value is analytically necessary, show the exact source inputs and calculation.
 - Prefer absolute percentage-point differences over newly derived relative percentages unless the paper itself reports the relative percentage.
-- Do not assume every paper contains an architecture, experiment, benchmark, dataset, or SOTA comparison.
-- Do not force numbers where the evidence is qualitative or textual.
+- Choose the analysis fields from the paper's actual material and form of reasoning.
 - Do not infer causal claims from correlational or descriptive evidence.
-- For a required analysis field whose detail is absent, write `[not stated]`. Omit irrelevant fields from the presentation coverage map.
+- Include the analysis fields that contribute to understanding the paper and its presentation coverage map.
 - If extraction appears damaged, write `[not reliably extracted]` and avoid repairing it from guesswork.
 - Every non-obvious insight must point back to one or more ledger IDs.

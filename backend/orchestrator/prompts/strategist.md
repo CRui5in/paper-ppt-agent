@@ -46,9 +46,9 @@ Provider icon decoration is disabled. Use native SVG geometry, labels, and assig
 
 Identify the relationships worth visualizing: a flow, dependency, feedback loop, hierarchy, spatial arrangement, quantitative comparison, or other structure present in the manuscript. Name the source facts and the encoding that would reveal them. The designer can build these from native paths, curves, shapes, labels, and connectors.
 
-Use quantitative scales that accurately encode the supplied values, with precise data labels and units. Use labeled geometry to explain qualitative relationships.
+Use quantitative positions to encode supplied numeric values and defined mathematical relationships, with precise labels and units. Use labelled components and connectors to express stated qualitative findings and their order or relationships.
 
-For a quantitative plot, select table and row IDs from the Source record catalog, with their columns and units, or an assigned source figure. These records define the plotted marks. A qualitative account becomes named relationships, comparisons, or a timeline of stated milestones. A structural schematic uses the supplied components, dimensions, and operations.
+Choose a visual encoding from the actual material: numeric observations and their conditions, a mathematical relationship, an assigned figure, a stated sequence, or relationships between named components. Identify the material used by the proposed visual and how its positions, connections, and labels express that material.
 
 ### VIII. Image Resource List
 
@@ -63,7 +63,7 @@ For every counted page, use a heading `#### Slide NN - Title` and include:
 - `Layout Family`: a short descriptive name for the proposed composition. Choose a name that describes this page's composition.
 - `Density`: based on this page's material and visual share.
 - `Visual relationship`: what the audience should understand from placement and visual encoding.
-- `Visual material`: table/row IDs and columns from the Source record catalog, or an assigned source figure, for a quantitative plot; named components, relationships, and dimensions for a schematic; title and metadata for a structural page.
+- `Visual material`: the supplied material used by the proposed visual, with its source reference and relevant values, conditions, or relationships.
 - `Design brief`: the main visual, reading order, supporting details, and relevant source assets. Describe the main geometry and relationships for the designer to develop.
 - `Content`: ready-to-draw visible copy grouped by the planned regions, with the selected table cells, diagram labels, values, and notation. Use the available region sizes and readable typography to choose the amount of material.
 - `Speaker notes`: supporting explanations and source detail for oral delivery.
