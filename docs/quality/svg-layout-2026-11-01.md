@@ -111,3 +111,11 @@ Validation: 91 tests passed. Added regressions preserve table-cell coordinates a
 ## Complete acceptance reports
 
 Geometry reports retain all findings for candidate acceptance and saved audits. Only the model-facing repair excerpt is capped at twenty findings. Previously the same cap also truncated the score, allowing different heavily broken candidates to appear equal. Validation: 92 tests passed, including twenty-five simultaneous canvas violations with a bounded model prompt.
+
+## Stop inferred label rewrapping
+
+The preparation pass still inferred text regions from nearby rectangles and design-spec bounds. It then wrapped independently positioned labels and reduced their font size by up to 18%, without recomposing neighboring elements. That is a direct source of new stacking and inconsistent line breaks.
+
+Preparation now applies only the declared paragraph flow, opted-in label/header layout, font resolution, and mathematical rendering. Positioned labels keep their coordinates and font sizes. Geometry findings can request a coordinated model repair rather than mutating labels through inferred ownership.
+
+Validation: 93 tests passed. A long positioned annotation remains a single text element at its authored baseline and size. Existing paragraph, script, table, equation, and export regressions pass.

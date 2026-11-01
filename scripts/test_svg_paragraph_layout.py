@@ -10,7 +10,7 @@ from backend.generator.svg_text_layout import reflow_declared_paragraphs, measur
 from backend.generator.svg_to_pptx.converter import convert_svg_to_slide_shapes
 from backend.generator.svg_finalize.render_ready import prepare_svg_file_content_for_render
 from backend.generator.svg_critic import _text_of, check_svg
-from backend.orchestrator.svg_executor import _styled_text_fragments
+from backend.orchestrator.svg_executor import _styled_text_fragments, _normalize_obvious_short_text_lines
 
 SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720">{}</svg>'
 NS = '{http://www.w3.org/2000/svg}'
@@ -67,6 +67,15 @@ class NestedTextTests(unittest.TestCase):
 
 
 class ParagraphLayoutTests(unittest.TestCase):
+    def test_preparation_preserves_positioned_labels_without_inferred_wrapping_or_shrinking(self):
+        source = SVG.format('<rect x="100" y="180" width="220" height="100" fill="#fff"/>'
+            '<text x="120" y="220" font-size="18">A deliberately positioned long chart annotation</text>')
+        root = ET.fromstring(_normalize_obvious_short_text_lines(source, ''))
+        text = next(root.iter(NS+'text'))
+        self.assertEqual((text.get('x'),text.get('y'),text.get('font-size')), ('120','220','18'))
+        self.assertFalse(list(text))
+        self.assertEqual(text.text, 'A deliberately positioned long chart annotation')
+
     def test_table_cells_keep_their_grid_inside_an_outer_textbox(self):
         cells = '<text x="100" y="200">Label</text><text x="300" y="200">Value</text><text x="100" y="230">Example</text><text x="300" y="230">0.812</text>'
         for body in (cells, '<g data-role="table">'+cells+'</g>'):

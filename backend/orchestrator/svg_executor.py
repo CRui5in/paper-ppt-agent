@@ -856,7 +856,7 @@ async def _chat_svg_generation(
 
 
 def _normalize_obvious_short_text_lines(svg: str, page_design_block: str) -> str:
-    """Wrap overlong text without merging intentional line breaks."""
+    """Prepare fonts, equations, and explicitly declared text layouts."""
     try:
         root = ET.fromstring(svg)
     except ET.ParseError:
@@ -871,13 +871,7 @@ def _normalize_obvious_short_text_lines(svg: str, page_design_block: str) -> str
     fonts_normalized = normalize_text_fonts_in_tree(root)
     math_rendered = render_math_in_tree(root) + normalize_inline_scripts(root)
     paragraphs_reflowed = reflow_declared_paragraphs(root) + layout_text_groups(root)
-    regions = _merged_text_regions(root, page_design_block)
-    if not regions:
-        return _identify_svg_elements(ET.tostring(root, encoding="unicode") if math_rendered or paragraphs_reflowed or fonts_normalized else svg)
-
-    changed = _wrap_overlong_text_elements(root, regions)
-
-    if not changed and not math_rendered and not paragraphs_reflowed and not fonts_normalized:
+    if not math_rendered and not paragraphs_reflowed and not fonts_normalized:
         return _identify_svg_elements(svg)
     return _identify_svg_elements(ET.tostring(root, encoding="unicode"))
 
