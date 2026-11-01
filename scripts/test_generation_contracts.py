@@ -56,6 +56,16 @@ class ManuscriptEntryPointTests(unittest.IsolatedAsyncioTestCase):
 
 
 class SvgGenerationEntryPointTests(unittest.IsolatedAsyncioTestCase):
+    async def test_native_export_incompatibility_is_repaired_without_style_review(self):
+        unsupported = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720"><defs><filter id="shadow"><feDropShadow dx="0" dy="2" stdDeviation="2"/></filter></defs><g filter="url(#shadow)"><rect x="100" y="180" width="300" height="100" fill="#FFFFFF"/><text x="120" y="210">Method</text></g></svg>'
+        with TemporaryDirectory() as directory:
+            provider = SimpleNamespace(chat=AsyncMock(side_effect=[LLMResponse(content=unsupported), LLMResponse(content=MODEL_SVG)]))
+            results = [result async for result in svg_executor.generate_svg_pages_parallel('', '<!-- page_type: content -->\n# Method', Path(directory), provider, 'test-model', mode='page_parallel', max_critic_attempts=0, enable_visual_critic=False)]
+            self.assertEqual(len(results), 1)
+            self.assertEqual(provider.chat.await_count, 2)
+            messages = provider.chat.call_args.args[0]
+            self.assertIn('filter_requires_raster_fallback', '\n'.join(message.content for message in messages if message.role == 'user'))
+
     async def test_measured_capacity_feedback_regenerates_in_both_modes_without_review(self):
         overfull = '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720">
         <g data-role="body" data-textbox="100 180 100 30">

@@ -19,3 +19,13 @@
 Cover ornament uses unlabeled abstract geometry. Data-bearing marks encode supplied values or source assets. Structural schematics explain components, dimensions, and operations. The planner allocates margins and gutters before region widths; the designer sizes paragraphs together with neighboring visuals.
 
 These checks establish specific rendering and export behavior. Cross-paper evaluation tracks visual composition and factual fidelity separately.
+
+## First cross-paper pass
+
+The local corpus contains nine PDFs covering latent augmentation, Chinese remote-sensing research, forest point-cloud models, attention architectures, and a lake-bloom time series. The evaluation generates three-page fixtures from numbered source excerpts, then runs the production design and SVG generators. It saves source hashes, prompts, responses, previews, critic events, native export audits, and a separate model-assisted fidelity review.
+
+The first pass produced 27 SVG pages. Eight three-page exports passed; one page used a group-level filter and fell back to a raster slide. This exposed a missing native-export check when style review was disabled. The repair path now includes native-incompatible filters and elements.
+
+A Chinese formula also exposed missing glyphs in the default mathematical font. CJK formula labels now select an installed font with distinct glyph coverage. The math renderer signature was versioned so previously prepared equations regenerate with the corrected font.
+
+Validation after these fixes: 66 tests passed. The corpus script is `scripts/evaluate_svg_layout.py`; credentials are read from an environment variable or password prompt and are not stored in artifacts. Model-assisted fidelity findings require review: the first reports included both demonstrated invented chart points and incorrectly categorized supported values.

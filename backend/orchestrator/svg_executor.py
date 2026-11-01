@@ -2006,6 +2006,7 @@ def _generation_static_report(
         report = check_svg(svg_content, critic_config)
         violations = [v for v in report.violations if v.rule in {
             "paragraph_capacity", "out_of_bounds", "text_overflow_in_container",
+            "filter_requires_raster_fallback", "forbidden_element", "xml_parse",
         }]
         return CriticReport(passed=not violations, violations=violations)
     reports = [

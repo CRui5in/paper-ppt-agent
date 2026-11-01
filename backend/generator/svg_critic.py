@@ -852,7 +852,7 @@ def check_svg(svg_content: str, config: CriticConfig | None = None) -> CriticRep
 
     # Trim to avoid prompt bloat.
     if len(violations) > cfg.max_violations_in_report:
-        violations = violations[: cfg.max_violations_in_report]
+        violations = sorted(violations, key=lambda v: v.severity != "error")[: cfg.max_violations_in_report]
 
     error_count = sum(1 for v in violations if v.severity == "error")
     warning_count = sum(1 for v in violations if v.severity == "warning")

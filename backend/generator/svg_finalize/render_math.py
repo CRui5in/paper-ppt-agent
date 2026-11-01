@@ -7,9 +7,32 @@ import hashlib
 import math
 from pathlib import Path
 import threading
+import unicodedata
 import xml.etree.ElementTree as ET
 
 _math_lock = threading.Lock()
+_MATH_RENDER_VERSION = 2
+
+
+@lru_cache(maxsize=32)
+def _cjk_math_font(characters: str) -> str:
+    from matplotlib.font_manager import fontManager
+    from matplotlib.ft2font import FT2Font
+    from ..svg_to_pptx.font_mapping import parse_font_family
+
+    # Require the actual glyphs instead of relying on a font's family name.
+    preferred = parse_font_family('Arial')['ea']
+    fonts = sorted(fontManager.ttflist, key=lambda font: (font.name != preferred, font.style != 'normal', font.weight != 400))
+    for font in fonts:
+        try:
+            face = FT2Font(font.fname)
+            probes = set(characters) | {'一', '二'}
+            glyphs = [face.get_char_index(ord(character)) for character in probes]
+            if all(glyphs) and len(set(glyphs)) == len(glyphs):
+                return font.name
+        except (OSError, RuntimeError):
+            continue
+    raise ValueError(f'No installed font contains the mathematical text glyphs: {characters}')
 
 
 @lru_cache(maxsize=256)
@@ -19,9 +42,22 @@ def _math_path(expression: str, font_size: float) -> tuple[str, tuple[float, flo
         from matplotlib.font_manager import FontProperties
         from matplotlib.path import Path as MplPath
         from matplotlib.textpath import TextPath
+        from matplotlib import rc_context
 
-        prop = FontProperties(math_fontfamily="stix")
-        path = TextPath((0, 0), f"${expression}$", size=font_size, prop=prop, usetex=False)
+        cjk = ''.join(sorted({character for character in expression
+            if unicodedata.east_asian_width(character) in {'W', 'F'} and not character.isspace()}))
+        options = {}
+        if cjk:
+            family = _cjk_math_font(cjk)
+            regular = FontProperties(family=[family]).get_fontconfig_pattern()
+            options = {'mathtext.fontset': 'custom', 'mathtext.fallback': 'stix',
+                       'mathtext.rm': regular,
+                       'mathtext.it': FontProperties(family=[family], style='italic').get_fontconfig_pattern(),
+                       'mathtext.bf': FontProperties(family=[family], weight='bold').get_fontconfig_pattern(),
+                       'mathtext.sf': regular, 'mathtext.tt': regular}
+        prop = FontProperties(math_fontfamily="custom" if cjk else "stix")
+        with rc_context(options):
+            path = TextPath((0, 0), f"${expression}$", size=font_size, prop=prop, usetex=False)
         box = path.get_extents()
         bounds = (float(box.x0), float(box.y0), float(box.width), float(box.height))
         if not all(math.isfinite(v) for v in bounds) or box.width <= 0 or box.height <= 0:
@@ -49,6 +85,7 @@ def render_math_in_tree(root: ET.Element) -> int:
         if expression is None:
             continue
         signature = hashlib.sha256(repr((
+            _MATH_RENDER_VERSION,
             expression, element.get("data-math-box"),
             element.get("font-size"), element.get("fill"),
         )).encode()).hexdigest()[:16]

@@ -162,6 +162,17 @@ class SvgTextGeometryTests(unittest.TestCase):
 
 
 class MathematicalLayoutTests(unittest.TestCase):
+    def test_chinese_mathematical_labels_have_distinct_vector_glyphs(self):
+        from backend.generator.svg_finalize.render_math import _math_path, _cjk_math_font
+        try:
+            _cjk_math_font('面积长度')
+        except ValueError:
+            self.skipTest('This host has no CJK font installed')
+        with self.assertNoLogs('matplotlib', level='WARNING'):
+            area = _math_path(r'\text{面积}=a^2', 28)[0]
+            length = _math_path(r'\text{长度}=a^2', 28)[0]
+        self.assertNotEqual(area, length)
+
     def test_math_becomes_vector_geometry_and_exports_as_shapes(self):
         with TemporaryDirectory() as directory:
             path = Path(directory) / 'math.svg'

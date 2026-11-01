@@ -67,6 +67,13 @@ class NestedTextTests(unittest.TestCase):
 
 
 class ParagraphLayoutTests(unittest.TestCase):
+    def test_real_overflow_is_retained_when_many_style_warnings_fill_the_report(self):
+        labels = ''.join(f'<text x="40" y="{110+i*16}" font-size="8">Label {i}</text>' for i in range(25))
+        bad_line = '<text x="1250" y="590" font-size="18">This full sentence exceeds the canvas.</text>'
+        report = check_svg(SVG.format(labels + bad_line))
+        self.assertFalse(report.passed)
+        self.assertIn('out_of_bounds', {v.rule for v in report.violations})
+
     def test_content_boundary_follows_the_explicit_footer(self):
         footer = '<g data-role="footer"><line x1="40" y1="660" x2="1240" y2="660"/><text x="40" y="688" font-size="12">Footer</text></g>'
         fits = '<rect x="40" y="252" width="560" height="380" fill="#FFFFFF"/>'
