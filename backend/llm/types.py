@@ -71,6 +71,8 @@ class LLMResponse:
     content: str
     usage: TokenUsage | None = None
     raw: Any = None  # Provider-specific raw response
+    finish_reason: str | None = None
+    reasoning_tokens: int = 0
 
 
 @dataclass

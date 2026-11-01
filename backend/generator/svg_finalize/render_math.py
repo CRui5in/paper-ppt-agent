@@ -10,7 +10,17 @@ import threading
 import xml.etree.ElementTree as ET
 
 _math_lock = threading.Lock()
-_MATH_RENDER_VERSION = 5
+_MATH_RENDER_VERSION = 6
+
+
+def math_expression(element: ET.Element) -> str | None:
+    """Read existing attribute sources or an explicit LaTeX description child."""
+    expression = element.get("data-latex")
+    sources = [child for child in element
+               if child.tag.rsplit("}", 1)[-1] == "desc" and child.get("data-math") == "latex"]
+    if len(sources) > 1 or (sources and expression is not None):
+        raise ValueError("Each mathematical group requires one LaTeX source")
+    return ''.join(sources[0].itertext()) if sources else expression
 
 
 @lru_cache(maxsize=32)
@@ -45,7 +55,7 @@ def _math_path(expression: str, font_size: float) -> tuple[str, tuple[float, flo
 
 
 def render_math_in_tree(root: ET.Element) -> int:
-    """Replace <g data-latex=... data-math-box='x y w h'> with vector geometry.
+    """Typeset explicit LaTeX description/attribute sources inside math boxes.
 
     Expressions remain attached as metadata. Unsupported notation raises a
     rendering error instead of silently displaying a different expression.
@@ -53,9 +63,10 @@ def render_math_in_tree(root: ET.Element) -> int:
     count = 0
     namespace = root.tag.split("}", 1)[0] + "}" if root.tag.startswith("{") else ""
     for element in list(root.iter()):
-        expression = element.get("data-latex")
+        expression = math_expression(element)
         if expression is None:
             continue
+        element.set("data-latex", expression)
         signature = hashlib.sha256(repr((
             _MATH_RENDER_VERSION,
             expression, element.get("data-math-box"),
@@ -106,7 +117,7 @@ def render_math_in_tree(root: ET.Element) -> int:
 def math_content_bounds(element: ET.Element) -> tuple[float, float, float, float]:
     """Return the occupied equation area, excluding unused math-box space."""
     x, y, width, height = [float(value) for value in element.get('data-math-box', '').split()]
-    _, (_, _, natural_width, natural_height) = _math_path(element.get('data-latex', ''), float(element.get('font-size', '28')))
+    _, (_, _, natural_width, natural_height) = _math_path(math_expression(element) or '', float(element.get('font-size', '28')))
     scale = min(1.0, width/natural_width, height/natural_height)
     return x, y+(height-natural_height*scale)/2, natural_width*scale, natural_height*scale
 

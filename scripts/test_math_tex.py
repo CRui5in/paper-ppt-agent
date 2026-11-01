@@ -6,7 +6,7 @@ from tempfile import TemporaryDirectory
 import unittest
 import xml.etree.ElementTree as ET
 
-from backend.generator.svg_finalize.render_math import _math_path, render_math_in_tree
+from backend.generator.svg_finalize.render_math import _math_path, render_math_in_tree, math_expression
 from backend.generator.svg_to_pptx.builder import create_pptx
 
 NS = '{http://www.w3.org/2000/svg}'
@@ -39,6 +39,26 @@ EXPRESSIONS = {
 
 
 class StandardTexTests(unittest.TestCase):
+    def test_cdata_source_preserves_alignment_and_reserved_xml_characters(self):
+        expression = r'f(x)=\begin{cases}x & x<0\\x^2 & x\ge0\end{cases}'
+        source = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720">' \
+                 '<g data-math-box="100 180 1000 300" font-size="32">' \
+                 f'<desc data-math="latex"><![CDATA[{expression}]]></desc></g></svg>'
+        root = ET.fromstring(source)
+        group = root.find(NS+'g')
+        self.assertEqual(math_expression(group), expression)
+        self.assertEqual(render_math_in_tree(root), 1)
+        self.assertEqual(group.get('data-latex'), expression)
+        self.assertIsNotNone(group.find(NS+'path'))
+        self.assertEqual(render_math_in_tree(root), 0)
+        ET.fromstring(ET.tostring(root, encoding='unicode'))
+        with TemporaryDirectory() as directory:
+            path = Path(directory)/'cdata.svg'
+            path.write_text(source, encoding='utf8')
+            output = create_pptx([path], Path(directory)/'cdata.pptx')
+            audit = json.loads(output.with_suffix('.export_audit.json').read_text(encoding='utf8'))
+            self.assertEqual(audit['summary']['status'], 'passed')
+
     def test_array_rules_keep_engine_stroke_styles(self):
         from backend.generator.svg_finalize.mathjax import math_artwork
         shapes, _ = math_artwork(EXPRESSIONS['array'], 28)

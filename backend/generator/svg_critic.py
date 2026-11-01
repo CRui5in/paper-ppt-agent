@@ -428,10 +428,10 @@ def _element_identifier(el: ET.Element) -> str:
 
 
 def _check_equation_text_overlap(root, text_boxes, violations, geometry=None):
-    from .svg_finalize.render_math import math_content_bounds
+    from .svg_finalize.render_math import math_content_bounds, math_expression
 
     for element in root.iter():
-        if element.get('data-latex') is None:
+        if math_expression(element) is None:
             continue
         try:
             box = math_content_bounds(element)

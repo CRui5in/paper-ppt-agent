@@ -59,13 +59,15 @@ Group footer elements with `data-role="footer"` so their boundary can be checked
 
 ## Equations
 
-Use source LaTeX without dollar delimiters in a layout group. The pipeline typesets it as vector paths:
+Place source LaTeX without dollar delimiters in a `desc` CDATA section within its layout group. The pipeline typesets it as vector paths:
 
 ```xml
-<g data-latex="\frac{a_i}{b_i}" data-math-box="80 180 600 100" font-size="32" fill="#1A365D"/>
+<g data-math-box="80 180 600 100" font-size="32" fill="#1A365D">
+  <desc data-math="latex"><![CDATA[\frac{a_i}{b_i}]]></desc>
+</g>
 ```
 
-`data-math-box` is `x y width height`. Place term explanations beside the corresponding expression where useful.
+`data-math-box` is `x y width height`. CDATA carries the TeX source literally, including alignment separators and comparison symbols. Place term explanations beside the corresponding expression where useful.
 
 ## SVG and template contract
 

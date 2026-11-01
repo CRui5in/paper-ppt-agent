@@ -74,23 +74,22 @@ class ResumePageTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(llm.chat.await_count, 1)
                 self.assertEqual((root / 'svg_output/slide_001.svg').read_bytes(), original)
 
-    async def test_retry_regenerates_only_unfinished_pages_and_retains_failed_source(self):
-        with TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / 'svg_output').mkdir()
-            (root / 'svg_initial').mkdir()
-            output = root / 'svg_output/slide_001.svg'
-            output.write_text(SVG, encoding='utf8')
-            GenerationCheckpoints(root).save_page(1, output)
-            invalid = '<svg><!-- invalid -- comment --></svg>'
-            (root / 'svg_initial/slide_002.svg').write_text(invalid, encoding='utf8')
-            llm = SimpleNamespace(chat=AsyncMock(return_value=LLMResponse(content=SVG)))
-            with self.assertRaisesRegex(RuntimeError, 'Invalid XML'):
-                _ = [item async for item in svg_executor.generate_svg_pages('', MANUSCRIPT, root, llm, 'test', resume=True)]
-            self.assertEqual(llm.chat.await_count, 0)
-            _ = [item async for item in svg_executor.generate_svg_pages('', MANUSCRIPT, root, llm, 'test', resume=True, retry_failed_pages=True)]
-            self.assertEqual(llm.chat.await_count, 2)
-            self.assertEqual(next((root / 'checkpoints/attempts').glob('*.svg')).read_text(encoding='utf8'), invalid)
+    async def test_explicit_continuation_restarts_invalid_unfinished_pages_and_retains_failed_source(self):
+        for retry in (False, True):
+            with self.subTest(retry=retry), TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / 'svg_output').mkdir()
+                (root / 'svg_initial').mkdir()
+                output = root / 'svg_output/slide_001.svg'
+                output.write_text(SVG, encoding='utf8')
+                GenerationCheckpoints(root).save_page(1, output)
+                invalid = '<svg><!-- invalid -- comment --></svg>'
+                (root / 'svg_initial/slide_002.svg').write_text(invalid, encoding='utf8')
+                llm = SimpleNamespace(chat=AsyncMock(return_value=LLMResponse(content=SVG)))
+                _ = [item async for item in svg_executor.generate_svg_pages('', MANUSCRIPT, root, llm, 'test', resume=True, retry_failed_pages=retry)]
+                self.assertEqual(llm.chat.await_count, 2)
+                self.assertEqual(output.read_text(encoding='utf8'), SVG)
+                self.assertEqual(next((root / 'checkpoints/attempts').glob('*.svg')).read_text(encoding='utf8'), invalid)
 
     async def test_full_pipeline_resume_skips_parse_research_strategy_after_failure(self):
         with TemporaryDirectory() as directory:

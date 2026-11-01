@@ -782,8 +782,9 @@ async def _chat_svg_generation(
     debug_prefix: str,
     page_num: int,
     attempt: int,
-) -> tuple[LLMResponse, int]:
-    requested_max_tokens = max_tokens
+) -> tuple[LLMResponse, int | None]:
+    budget = getattr(llm, "artifact_max_tokens", None)
+    requested_max_tokens = budget(model, max_tokens) if callable(budget) else max_tokens
     while True:
         snapshot = set_usage_context(
             stage="generation",
@@ -799,7 +800,7 @@ async def _chat_svg_generation(
             )
         except BaseException as exc:
             reset_usage_context(snapshot)
-            if _is_max_token_limit_error(exc):
+            if requested_max_tokens is not None and _is_max_token_limit_error(exc):
                 lowered = _next_lower_svg_max_tokens(requested_max_tokens)
                 _write_generation_response_debug(
                     project_dir,
@@ -823,7 +824,20 @@ async def _chat_svg_generation(
                 attempt=attempt,
                 content=response.content,
                 max_tokens=requested_max_tokens,
+                note=f"finish_reason={response.finish_reason or 'unknown'}; reasoning_tokens={response.reasoning_tokens}; "
+                     f"completion_tokens={response.usage.completion_tokens if response.usage else 'unknown'}",
             )
+            if response.finish_reason == "length":
+                raise RuntimeError(
+                    f"Page {page_num} generation reached the provider's total output limit "
+                    f"(finish_reason=length, reasoning_tokens={response.reasoning_tokens}, "
+                    f"completion_tokens={response.usage.completion_tokens if response.usage else 'unknown'}, "
+                    f"visible_characters={len(response.content)})."
+                )
+            if not response.content.strip():
+                raise RuntimeError(f"Page {page_num} generation returned an empty final response "
+                                   f"(finish_reason={response.finish_reason or 'unknown'}, "
+                                   f"reasoning_tokens={response.reasoning_tokens}).")
             return response, requested_max_tokens
 
 
@@ -880,13 +894,18 @@ def _svg_for_model(svg: str) -> str:
     except ET.ParseError:
         return svg
     changed = False
+    from backend.generator.svg_finalize.render_math import math_expression
     for element in root.iter():
-        if element.get('data-latex') is None:
+        expression = math_expression(element)
+        if expression is None:
             continue
         element.text = None
         for child in list(element):
             element.remove(child)
         element.attrib.pop('data-math-rendered', None)
+        element.attrib.pop('data-latex', None)
+        namespace = element.tag.split('}', 1)[0] + '}' if element.tag.startswith('{') else ''
+        ET.SubElement(element, namespace + 'desc', {'data-math': 'latex'}).text = expression
         changed = True
     return ET.tostring(root, encoding='unicode') if changed else svg
 
@@ -2371,7 +2390,15 @@ def _saved_initial_svg(project_dir: Path, page: int, resume: bool, retry_failed_
     if not path.is_file():
         return None
     content = path.read_text(encoding="utf-8")
-    if retry_failed_pages:
+    try:
+        ET.fromstring(content)
+        valid_source = True
+    except ET.ParseError:
+        valid_source = False
+    # This function runs only for an explicit continuation request. An
+    # invalid raw response belongs to the previous failed attempt, not to a
+    # completed page checkpoint. Keep its evidence before the new request.
+    if retry_failed_pages or not valid_source:
         archive = project_dir / "checkpoints" / "attempts" / f"slide_{page:03d}_{uuid.uuid4().hex}.svg"
         archive.parent.mkdir(parents=True, exist_ok=True)
         archive.write_text(content, encoding="utf-8")

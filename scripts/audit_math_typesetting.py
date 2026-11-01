@@ -6,7 +6,7 @@ from pathlib import Path
 import time
 import xml.etree.ElementTree as ET
 
-from backend.generator.svg_finalize.render_math import _math_path
+from backend.generator.svg_finalize.render_math import _math_path, math_expression
 
 
 def main():
@@ -23,7 +23,7 @@ def main():
             malformed.append(str(path))
             continue
         for element in root.iter():
-            expression = element.get('data-latex')
+            expression = math_expression(element)
             if expression:
                 expressions.setdefault(expression, []).append(str(path))
     start = time.perf_counter()

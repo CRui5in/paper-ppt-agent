@@ -7,7 +7,7 @@ import xml.etree.ElementTree as ET
 
 from backend.generator.svg_finalize.flatten_tspan import flatten_text_in_svg
 from backend.generator.svg_finalize.merge_adjacent_text import merge_adjacent_text_in_svg
-from backend.generator.svg_finalize.render_math import render_math_in_tree
+from backend.generator.svg_finalize.render_math import render_math_in_tree, math_expression
 from backend.generator.svg_finalize.render_ready import prepare_svg_file_content_for_render
 from backend.generator.svg_to_pptx.converter import convert_svg_to_slide_shapes
 from backend.generator.svg_text_layout import text_runs
@@ -37,8 +37,10 @@ class SvgTextGeometryTests(unittest.TestCase):
         rendered = _normalize_obvious_short_text_lines(source, '')
         compact = _svg_for_model(rendered)
         root = ET.fromstring(compact)
-        math_group = next(e for e in root.iter() if e.get('data-latex'))
-        self.assertFalse(list(math_group))
+        math_group = next(e for e in root.iter() if math_expression(e))
+        self.assertEqual(math_expression(math_group), r'\sum_{i=0}^{n-1}\frac{a_i}{b_i}')
+        self.assertEqual(len(math_group), 1)
+        self.assertEqual(math_group[0].tag, NS+'desc')
         self.assertFalse(math_group.get('data-math-rendered'))
         self.assertIsNotNone(next(e for e in root.iter() if e.get('id') == 'diagram'))
         self.assertLess(len(compact), len(rendered)/3)
