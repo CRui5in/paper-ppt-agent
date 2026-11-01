@@ -93,7 +93,7 @@ validates SVGs, finalizes them, and exports PPTX.
 
 ## Live Preview
 
-The backend watches `svg_output/`. Save each completed or repaired slide SVG
+The backend watches `svg_output/`. Save each first-completed slide SVG
 there immediately. Rewriting an existing `slide_###.svg` updates the app's live
 preview.
 
@@ -109,7 +109,7 @@ preview.
 - Prefer clear academic storytelling over dense paper transcription.
 - Audit writing against `references/writing.md`: lead with supported findings, retain material conditions and uncertainty, and remove repeated disclaimers or vague self-criticism.
 - Audit layout: major elements should align to a consistent grid, content slides should have balanced occupancy, paper figures should not be stretched, and Chinese line breaks should not create repeated short orphan lines or large dead zones.
-- Treat out-of-bounds text, text outside a card, table-column collision, and a last baseline below its assigned region as generation failures that must be repaired before completion.
+- Record first-generation layout findings in `agent_report.json`, with the affected regions and preview images.
 - Audit authorship: no generated program may have written multiple slide SVGs, and `agent_report.json.slide_authoring.direct_files` must list every final slide.
 - End only when all slides are present and `agent_report.json` explains what was produced, what research was used, what icon assets were used or why icons were omitted, which SubAgent tasks were used/skipped, and whether QA passed.
 - Include `paper_figures_used` in `agent_report.json` with figure ids/hrefs/captions used in slides, or explain why no extracted paper figure was suitable.

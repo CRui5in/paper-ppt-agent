@@ -56,14 +56,14 @@ Conditionally required before authoring any deck output:
   "layout_qa": {
     "region_plans_followed": true,
     "text_capacity_preflight": true,
-    "occupancy_or_wrapping_repairs": [3, 7],
+    "initial_layout_findings": [],
     "remaining_limitations": []
   },
   "slide_authoring": {
     "mode": "direct_per_slide",
     "multi_slide_generator_used": false,
     "direct_files": ["slide_001.svg", "slide_002.svg"],
-    "notes": "Each slide was authored from its own claim, evidence, and layout."
+    "notes": "Each slide was authored from its planned content, evidence, and composition."
   },
   "visual_qa": "passed|skipped|failed",
   "notes": ["short summary"]

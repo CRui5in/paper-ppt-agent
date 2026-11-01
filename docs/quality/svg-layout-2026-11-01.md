@@ -145,3 +145,11 @@ Validation: 82 tests passed after replacing deleted repair tests with first-outp
 The strategist now writes the visible copy together with its proposed regions, selected table cells, diagram labels, and explanations. Supporting detail has a speaker-notes field. The SVG designer receives that planned `Content` as the visible copy and allocates line heights before placing neighboring regions. This changes the initial handoff, rather than adding a post-generation correction step.
 
 Condensed repeated information instructions in the SVG prompt. The evaluation script now labels results `first_generation`, records generation-call counts, retains initial SVGs, and removes the prior replay-to-repair mode. Fidelity review uses compact equation source instead of renderer-generated glyph paths. Tests: 82 passed.
+
+## Agent-mode parity and first-generation corpus result
+
+Removed the separate Agent-mode contract-repair session as well. Agent mode now records initial artifact/layout findings without starting another authoring session. Its bundled instructions and report example describe first-generation findings rather than repaired slides. Validation: 83 tests passed, including a check that initial Agent findings never instantiate a second agent session.
+
+The first-generation run covers the same nine manuscript fixtures, with new design specifications and three SVGs per paper. All 27 pages used exactly one SVG-generation call and exported natively; no SVG repair calls or raster slide fallbacks occurred. Seven pages still have geometry findings (28 total). A separate audit of the prior raw first responses found eight affected pages (33 findings). The sample is one stochastic run, so this difference does not establish a reliable quality improvement.
+
+Visual inspection also found an unsupported annual time series generated from qualitative bloom-trend prose. That factual defect remains a generation-stage issue. The tested change therefore establishes the requested first-generation workflow, not a claim that layout or factual quality is solved. Artifacts are under `.test-runtime/paper-corpus/v13-first-generation/`; original raw model responses are in `svg_initial/`. Existing user decks were not edited.

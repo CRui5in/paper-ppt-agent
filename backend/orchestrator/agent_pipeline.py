@@ -1154,44 +1154,11 @@ def _load_agent_session_id(project_dir: Path) -> str | None:
         return None
 
 
-def _build_agent_contract_repair_prompt(
-    project_dir: Path,
-    violations: list[str],
-) -> str:
-    rendered = "\n".join(f"- {item}" for item in violations)
-    return f"""The backend rejected the deck's slide-authoring or SVG contract.
-
-Detected violations:
-{rendered}
-
-Repair the existing workspace without changing the requested narrative or slide count:
-- Read `agent_task.json.agent_policy.slide_authoring_policy`.
-- Delete every multi-slide generator program you created.
-- Rewrite every affected `svg_output/slide_###.svg` directly, one explicitly named file at a time.
-- Do not use a loop, slide list/registry, shared renderer, template expansion, or a program that emits multiple SVGs.
-- Keep only deck-level visual tokens shared: palette, typography, margins, and recurring chrome.
-- Re-evaluate each slide's claim, evidence, paper figure, layout, whitespace, and Chinese wrapping independently.
-- Fix every listed out-of-bounds, card overflow, line collision, or text-capacity violation by changing the layout, container size, line breaks, table columns, or wording. Do not merely shrink all text.
-- Remove disallowed SVG constructs such as `<style>`, `class=`, `mask`, `clipPath`, `foreignObject`, scripts, event handlers, or remote URLs. Put fill/stroke/font attributes directly on each SVG element. Preserve supported simple drop shadows attached directly to one shape; remove group filters, text glow, and complex blur effects.
-- Before finishing each slide, verify that complete text bounds fit the region and every table column has enough width for its longest visible cell.
-- Preserve exact source numbers and units; remove K/M/B shorthand unless it appears verbatim in the paper.
-- Ensure every content slide has a well-designed layout.
-- Update `agent_report.json.slide_authoring` to:
-  - `mode`: `direct_per_slide`
-  - `multi_slide_generator_used`: false
-  - `direct_files`: every final `slide_###.svg`
-  - `notes`: a concise description of how page-specific compositions were chosen.
-
-Validation and rendering scripts may read all slides, but they must not write or regenerate slide SVGs.
-Finish only after the generator files are removed and every final slide is directly authored.
-"""
-
-
 def _write_agent_contract_warnings(project_dir: Path, violations: list[str]) -> None:
     if not violations:
         return
     payload = {
-        "status": "exported_with_contract_warnings",
+        "status": "initial_generation_findings",
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "violations": violations,
     }
@@ -1472,118 +1439,16 @@ def _agent_generation_contract_violations(
     ]
 
 
-async def _repair_agent_generation_contracts_if_needed(
-    project_dir: Path,
-    runtime: str,
-    agent_config: dict[str, Any],
-) -> Any:
+async def _report_agent_initial_contracts(project_dir: Path) -> Any:
+    """Record the initial artifacts without starting another authoring session."""
     svg_files = get_svg_files(project_dir, source="output")
     violations = _agent_generation_contract_violations(project_dir, svg_files)
     if not violations:
         return
-
+    _write_agent_contract_warnings(project_dir, violations)
     yield AgentProgressEvent(
-        "generation",
-        "progress",
-        "Agent generation contract failed; requesting a direct per-slide repair...",
-        0.68,
-        data={
-            "generation_mode": "agent",
-            "contract": "direct_per_slide_authoring",
-            "violations": violations,
-        },
-    )
-    repair_session = PersistentAgentSession(
-        project_dir,
-        runtime,
-        agent_config,
-        resume_session_id=_load_agent_session_id(project_dir),
-    )
-    repair_session.set_bridge_mode()
-    try:
-        await repair_session.start(
-            _build_agent_contract_repair_prompt(project_dir, violations)
-        )
-        async for message in repair_session:
-            if isinstance(message, AgentProgressEvent):
-                yield message
-                continue
-            usage_event = _update_agent_usage_totals(repair_session._usage_totals, message)
-            if usage_event is not None:
-                yield usage_event
-            if runtime == "codex":
-                item_event = _codex_item_progress_event(
-                    message,
-                    str(getattr(message, "method", "") or ""),
-                )
-                if item_event is not None:
-                    yield item_event
-            else:
-                for sdk_event in _agent_sdk_events_from_message(message):
-                    text = str(sdk_event.get("message") or "").strip()
-                    if text:
-                        yield AgentProgressEvent(
-                            "agent",
-                            "progress",
-                            text,
-                            0.68,
-                            data={
-                                "runtime": "claude_code",
-                                "agent_event": sdk_event,
-                            },
-                        )
-                if message.__class__.__name__ == "ResultMessage" and bool(
-                    getattr(message, "is_error", False)
-                ):
-                    if _is_claude_turn_limit_result(message):
-                        continue
-                    result = str(getattr(message, "result", "") or "Agent repair failed.")
-                    raise RuntimeError(result)
-        if repair_session.session_id:
-            _save_agent_session(project_dir, repair_session.session_id)
-    finally:
-        await repair_session.close()
-
-    repaired_svg_files = get_svg_files(project_dir, source="output")
-    remaining_authoring = _agent_slide_authorship_violations(
-        project_dir,
-        svg_files=repaired_svg_files,
-    )
-    if remaining_authoring:
-        rendered = "\n- ".join(remaining_authoring)
-        raise RuntimeError(
-            "Agent still violated the direct-authoring contract after "
-            f"one repair turn:\n- {rendered}"
-        )
-    remaining_layout = _agent_layout_contract_violations(repaired_svg_files)
-    if remaining_layout:
-        _write_agent_contract_warnings(project_dir, remaining_layout)
-        yield AgentProgressEvent(
-            "generation",
-            "progress",
-            (
-                "Agent still has SVG/layout contract warnings after repair; "
-                "continuing export with warnings recorded."
-            ),
-            0.72,
-            data={
-                "generation_mode": "agent",
-                "contract": "svg_layout_quality",
-                "warnings": remaining_layout,
-                "export_will_continue": True,
-            },
-        )
-        return
-    yield AgentProgressEvent(
-        "generation",
-        "progress",
-            "Agent repaired direct authoring and SVG contract violations.",
-        0.72,
-        data={
-            "generation_mode": "agent",
-            "contract": "direct_per_slide_authoring",
-            "repaired": True,
-        },
+        "generation", "progress", "Initial generation checks reported artifact or layout findings.", 0.68,
+        data={"generation_mode": "agent", "phase": "initial_generation", "violations": violations},
     )
 
 
@@ -1804,12 +1669,8 @@ async def run_agent_pipeline(request: Any):
 
         # Session is now in direct mode — feedback turns broadcast via
         # session_manager.record_event directly.  Proceed to finalization.
-        async for repair_event in _repair_agent_generation_contracts_if_needed(
-            project_dir,
-            runtime,
-            agent_config,
-        ):
-            yield repair_event
+        async for diagnostic_event in _report_agent_initial_contracts(project_dir):
+            yield diagnostic_event
 
         svg_files = get_svg_files(project_dir, source="output")
         _validate_agent_artifacts(project_dir, svg_files, total_slides_hint)
@@ -2022,12 +1883,8 @@ async def run_agent_feedback_pipeline(
             yield event
         return
 
-    async for repair_event in _repair_agent_generation_contracts_if_needed(
-        project_dir,
-        runtime,
-        agent_config,
-    ):
-        yield repair_event
+    async for diagnostic_event in _report_agent_initial_contracts(project_dir):
+        yield diagnostic_event
 
     svg_files = get_svg_files(project_dir, source="output")
     _validate_agent_artifacts(project_dir, svg_files, total_hint)
