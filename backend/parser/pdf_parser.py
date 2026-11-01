@@ -488,20 +488,36 @@ class PDFParser(PaperParser):
     def _collect_captions(self, page: fitz.Page) -> dict[str, tuple[str, fitz.Rect]]:
         """Return mapping  label_key → (caption_text, rect)  for this page."""
         result: dict[str, tuple[str, fitz.Rect]] = {}
+        priorities: dict[str, int] = {}
         blocks = page.get_text("dict")["blocks"]
         for block in blocks:
             if block["type"] != 0:
                 continue
-            block_text = " ".join(
-                span["text"]
-                for line in block["lines"]
-                for span in line["spans"]
-            ).strip()
-            m = _CAPTION_RE.search(block_text)
-            if m:
+            lines = block["lines"]
+            for index, line in enumerate(lines):
+                first_text = " ".join(span["text"] for span in line["spans"]).strip()
+                m = _CAPTION_RE.search(first_text)
+                if not m:
+                    continue
+                caption_lines = [line]
+                bold = any(int(span.get("flags", 0)) & 16 for span in line["spans"])
+                for following in lines[index + 1:]:
+                    text = " ".join(span["text"] for span in following["spans"]).strip()
+                    next_bold = any(int(span.get("flags", 0)) & 16 for span in following["spans"])
+                    if _CAPTION_RE.search(text) or next_bold != bold:
+                        break
+                    caption_lines.append(following)
+                block_text = " ".join(span["text"] for item in caption_lines for span in item["spans"])
                 key = re.sub(r"\s+", "", m.group(0).lower())
-                rect = fitz.Rect(block["bbox"])
+                separator = bool(re.match(r"\s*[:：.\-–—]", block_text[m.end():]))
+                priority = int(separator) * 2 + int(bold)
+                if key in result and priority <= priorities[key]:
+                    continue
+                rect = fitz.Rect(caption_lines[0]["bbox"])
+                for item in caption_lines[1:]:
+                    rect.include_rect(fitz.Rect(item["bbox"]))
                 result[key] = (self._normalize_caption_text(block_text), rect)
+                priorities[key] = priority
         return result
 
     @staticmethod
@@ -519,11 +535,16 @@ class PDFParser(PaperParser):
         self,
         img_rect: fitz.Rect,
         caption_map: dict[str, tuple[str, fitz.Rect]],
+        caption_kind: str | None = None,
     ) -> str:
         """Return the caption text closest to img_rect, or ''."""
         best_dist = float("inf")
         best_cap = ""
         for _key, (cap_text, cap_rect) in caption_map.items():
+            if caption_kind == "table" and not re.match(r"\s*(?:table|表)\s*[0-9０-９]+", cap_text, re.IGNORECASE):
+                continue
+            if min(cap_rect.x1, img_rect.x1) <= max(cap_rect.x0, img_rect.x0):
+                continue
             # Captions usually sit below figures but above tables. Compare the
             # nearest vertical edges so both conventions retain their identity.
             dist = min(abs(cap_rect.y0 - img_rect.y1), abs(img_rect.y0 - cap_rect.y1))
@@ -642,7 +663,7 @@ class PDFParser(PaperParser):
                 img_path.write_bytes(img_bytes)
 
                 # Look for a "Table N" caption near this region.
-                caption = self._nearest_caption(clip, caption_map)
+                caption = self._nearest_caption(clip, caption_map, caption_kind="table")
                 figures.append(
                     PaperFigure(
                         path=img_path,
@@ -663,7 +684,8 @@ class PDFParser(PaperParser):
             except Exception:
                 continue
 
-        graphic_rects = drawing_rects + raster_rects
+        displayed_rects = [fitz.Rect(info["bbox"]) for info in image_infos if info.get("bbox")]
+        graphic_rects = drawing_rects + raster_rects + [rect for rect in displayed_rects if rect not in raster_rects]
 
         # ── pass B: caption-anchored object-region render ──────────────────
         for cap_text, cap_rect in caption_map.values():
@@ -924,6 +946,7 @@ class PDFParser(PaperParser):
             for rect in graphic_rects
             if rect.y1 <= caption_rect.y0 + 12
             and rect.y0 >= search_top
+            and min(rect.x1, caption_rect.x1) > max(rect.x0, caption_rect.x0)
             and rect.width >= MIN_RENDERED_FIGURE_SIDE
             and rect.height >= MIN_RENDERED_FIGURE_SIDE / 2
         ]
@@ -964,6 +987,8 @@ class PDFParser(PaperParser):
         for block in text_blocks:
             rect = block["rect"]
             if not label_zone.intersects(rect):
+                continue
+            if min(rect.x1, max(cluster_rect.x1, caption_rect.x1)) <= max(rect.x0, min(cluster_rect.x0, caption_rect.x0)):
                 continue
             if block["char_count"] > LABEL_TEXT_CHARS_THRESHOLD:
                 continue
@@ -1074,11 +1099,9 @@ class PDFParser(PaperParser):
             other_rect
             for _, other_rect in caption_map.values()
             if other_rect.y1 < caption_rect.y0 - 2
+            and min(other_rect.x1, caption_rect.x1) > max(other_rect.x0, caption_rect.x0)
         ]
         if preceding_captions:
-            horizontal_pad = max(20.0, page_rect.width * 0.04)
-            normalized.x0 = page_rect.x0 + horizontal_pad
-            normalized.x1 = page_rect.x1 - horizontal_pad
             normalized.y0 = max(normalized.y0, max(rect.y1 for rect in preceding_captions) + 10)
             normalized.y1 = caption_rect.y0 - 4
             return normalized

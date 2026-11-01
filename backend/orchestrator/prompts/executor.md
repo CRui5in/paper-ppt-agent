@@ -14,9 +14,9 @@ Choose region sizes and spacing from the content. Alignment, whitespace, shared 
 
 Build the visible page from the brief's `Content` and assigned assets, preserving values, units, notation, and comparison conditions. The page manuscript supplies the supporting detail. Place explanations beside the figures, equations, and diagram elements they explain; carry oral elaboration in the speaker notes.
 
-Choose ornament for visual balance, atmosphere, and the deck's aesthetic. Use color, shape, proportion, depth, and negative space to support the composition. Draw explanatory relationships from the named components and operations. Plot the selected observation records with their conditions and units, and present qualitative changes through labeled relationships or stated milestones. Preserve scientific spatial geometry from its source figure.
+Choose ornament for visual balance, atmosphere, and the deck's aesthetic. Use color, shape, proportion, depth, and negative space to support the composition.
 
-Calculate quantitative coordinates from the selected observations or stated mathematical relationship. Use consistent scales, units, and precise data labels. Assigned source figures retain their recorded geometry.
+Every factual detail conveyed by a graphic comes from the supplied material. Keep source figure references attached to their corresponding original asset.
 
 Fit assigned paper figures completely at their natural aspect ratios. Arrange captions and direct annotations around the visible image. Reuse colors for the same meanings across the deck, with distinguishable series colors where useful.
 

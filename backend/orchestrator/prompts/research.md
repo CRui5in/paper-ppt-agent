@@ -114,6 +114,8 @@ Use these markers to signal visual intent:
 
 These markers guide the downstream strategist and executor; they are not rendered literally.
 
+Supply the source material supporting each proposed visual and identify the corresponding asset when available.
+
 ### 3.4 Figure Reference Contract
 
 The parsed paper content lists available paper figures with stable tokens of the form `[[FIG:fig_id]]` (for example `[[FIG:fig_007_p9_page]]`). When a slide should display one of those real paper figures:
@@ -122,7 +124,7 @@ The parsed paper content lists available paper figures with stable tokens of the
 - Place the token on its own line, optionally followed by `— short note for the executor`.
 - Pick the token whose listed caption actually matches the slide's topic.
 - If no listed figure fits, omit the real paper figure instead of guessing — never write `![caption](path)` or make up a path.
-- Avoid reusing the same figure token on multiple slides. If a later slide needs the same idea, summarize it with bullets, a native diagram, or a small redrawn chart instead of repeating the same extracted image.
+- Assign each source figure token to one content slide that analyzes it. Later mentions draw on the source material without repeating the asset.
 - Do not claim a different figure/table number than the token caption. For example, never describe a `Figure 3` token as `Figure 4`.
 - Use figure tokens only on `content` slides. Do not place paper figures on `cover`, `chapter/transition`, or `ending` slides.
 
@@ -191,5 +193,5 @@ If any dimension falls below threshold:
 2. **Evidence**: Use source-supported observations, passages, arguments, or metrics appropriate to the discipline. Preserve original units and precision for numerical findings.
 3. **No fabrication**: Every claim must trace to the paper. If the paper doesn't provide a detail, say so or omit it.
 4. **Content structure**: Choose the opening and sequence from the page's explanation, derivation, method, comparison, or result. Preserve mathematical expressions in LaTeX.
-5. **Figure-first thinking**: When a paper figure captures the key point, use it. When the paper lacks a figure for an important concept, suggest a visual marker instead.
+5. **Visual planning**: Choose visuals from the current material and available assets. Identify the source supporting what each visual conveys.
 6. **Direct writing**: Lead with the finding, procedure, or scope. Remove repeated disclaimers and vague self-criticism. Retain uncertainty, tradeoffs, and applicability conditions that affect the claim; keep speculative reviewer concerns in analysis notes.

@@ -50,7 +50,7 @@ Provider icon decoration is disabled. Use native SVG geometry, labels, and assig
 
 Identify the relationships worth visualizing: a flow, dependency, feedback loop, hierarchy, spatial arrangement, quantitative comparison, or other structure present in the manuscript. Name the source facts and the encoding that would reveal them. The designer can build these from native paths, curves, shapes, labels, and connectors.
 
-Use quantitative positions to encode supplied numeric values and defined mathematical relationships, with precise labels and units. Use labelled components and connectors to express stated qualitative findings and their order or relationships.
+Choose the visual form from the current material. Every factual detail conveyed by a graphic comes from that material. Keep references to original figures attached to their corresponding assets.
 
 Choose a visual encoding from the actual material: numeric observations and their conditions, a mathematical relationship, an assigned figure, a stated sequence, or relationships between named components. Identify the material used by the proposed visual and how its positions, connections, and labels express that material.
 

@@ -229,6 +229,37 @@ def _paper_figure_keys(figures: list[dict]) -> set[str]:
     return keys
 
 
+def _explicit_figure_owners(pages: list[str], inventory: list[dict] | None) -> dict[str, int]:
+    """Reserve source figures for their explicit manuscript placements first."""
+    owners, captions = {}, {}
+    for page, content in enumerate(pages, 1):
+        if _classify_page_type(content) in STRUCTURAL_PAGE_TYPES:
+            continue
+        _, explicit_figures, _ = _resolve_fig_tokens(content, inventory)
+        for figure in explicit_figures:
+            caption = _caption_signature(str(figure.get('caption') or ''))
+            owner = page
+            if caption:
+                owner = captions.setdefault((caption, figure.get('page_number')), page)
+            owners.setdefault(Path(str(figure['path'])).stem, owner)
+    for figure in inventory or []:
+        caption = _caption_signature(str(figure.get('caption') or ''))
+        signature = (caption, figure.get('page_number'))
+        if signature in captions:
+            owners.setdefault(Path(str(figure['path'])).stem, captions[signature])
+    return owners
+
+
+def _honor_figure_owners(figures: list[dict], owners: dict[str, int], page: int,
+                         content: str, rejected: list[str]) -> tuple[list[dict], str]:
+    deferred = {key for key in _paper_figure_keys(figures) if key in owners and owners[key] != page}
+    if not deferred:
+        return figures, content
+    rejected.extend(f'{key}: assigned to manuscript slide {owners[key]}' for key in sorted(deferred))
+    return ([figure for figure in figures if Path(str(figure['path'])).stem not in deferred],
+            _remove_paper_reference_lines(content, deferred))
+
+
 def _remove_paper_reference_lines(content: str, disallowed_keys: set[str]) -> str:
     if not disallowed_keys:
         return content
@@ -2459,6 +2490,7 @@ async def generate_svg_pages(
     svg_output_dir = project_dir / "svg_output"
     svg_output_dir.mkdir(parents=True, exist_ok=True)
     used_paper_figures: dict[str, int] = {}
+    figure_owners = _explicit_figure_owners(pages, figure_inventory)
     resumed_pages = _resume_svg_pages(project_dir, resume)
     for previous_page, svg in resumed_pages.items():
         for href in IMAGE_HREF_RE.findall(svg):
@@ -2605,6 +2637,9 @@ async def generate_svg_pages(
                 + "\n"
                 + "\n".join(_paper_figure_reference_line(fig) for fig in used_figures)
             )
+        used_figures, rewritten_content = _honor_figure_owners(
+            used_figures, figure_owners, page_num, rewritten_content, rejected_figures,
+        )
         figure_guidance = _figure_guidance_block(
             used_figures,
             rejected_figures,
@@ -3524,6 +3559,7 @@ def _prepare_parallel_page_inputs(
     template_vars: dict[str, str] | None = None,
     slide_plan: str = "",
     slide_context: str = "",
+    figure_owners: dict[str, int] | None = None,
 ) -> dict:
     page_name = _make_page_name(page_num, page_content)
     page_type = _classify_page_type(page_content)
@@ -3601,6 +3637,9 @@ def _prepare_parallel_page_inputs(
             + "\n".join(_paper_figure_reference_line(fig) for fig in used_figures)
         )
 
+    used_figures, rewritten_content = _honor_figure_owners(
+        used_figures, figure_owners or {}, page_num, rewritten_content, rejected_figures,
+    )
     duplicate_keys = _paper_figure_keys(used_figures).intersection(claimed_paper_figures)
     if duplicate_keys:
         used_figures = [
@@ -3940,6 +3979,7 @@ async def generate_svg_pages_parallel(
         pass
 
     resumed_pages = _resume_svg_pages(project_dir, resume)
+    figure_owners = _explicit_figure_owners(pages, figure_inventory)
     claimed_paper_figures: set[str] = {
         key for svg in resumed_pages.values() for href in IMAGE_HREF_RE.findall(svg)
         if (key := _paper_figure_key_from_href(href)) is not None
@@ -3960,6 +4000,7 @@ async def generate_svg_pages_parallel(
                 template_vars=template_vars.get(page_num),
                 slide_plan=slide_plan_markdown(deck_plan, page_num),
                 slide_context=(slide_contexts or {}).get(page_num, ""),
+                figure_owners=figure_owners,
             )
         )
         page_inputs[-1].update(resume=resume, retry_failed_pages=retry_failed_pages)
