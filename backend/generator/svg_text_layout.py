@@ -410,13 +410,14 @@ def paragraph_layout_issues(root: ET.Element) -> list[dict]:
 
 
 def reflow_declared_paragraphs(root: ET.Element) -> int:
-    """Wrap and stack paragraphs atomically within each declared flow box."""
+    """Typeset declared paragraphs at their authored width and typography.
+
+    Height is a capacity constraint reported by ``paragraph_layout_issues``;
+    it does not change the requested wrapping or remove overflowing copy.
+    """
     namespace = root.tag.split("}", 1)[0] + "}" if root.tag.startswith("{") else ""
     count = 0
-    for _owner, (x, y, width, height), plans in _paragraph_layouts(root):
-        if any(plan["bottom"] > y + height + .1 or plan["right"] > x + width + .1 for plan in plans):
-            # Leave the complete authored group intact; generation receives its measured capacity error.
-            continue
+    for _owner, _box, plans in _paragraph_layouts(root):
         for plan in plans:
             element, first = plan["element"], plan["first"]
             before = ET.tostring(element)

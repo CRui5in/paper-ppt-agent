@@ -198,17 +198,46 @@ class ParagraphLayoutTests(unittest.TestCase):
         reflow_declared_paragraphs(root)
         self.assertEqual(ET.tostring(root), laid_out)
 
-    def test_overfull_shared_box_is_rejected_as_a_whole(self):
+    def test_overfull_shared_box_keeps_wrapping_and_reports_its_capacity(self):
         root = ET.fromstring(SVG.format('<g data-role="body" data-textbox="100 180 160 60">'
             '<text x="100" y="200" font-size="18">这是一段需要自动换行的较长正文，包含完整的信息。</text>'
             '<text x="100" y="228" font-size="18">第二段也需要保留。</text></g>'))
-        before = ET.tostring(root)
-        self.assertEqual(reflow_declared_paragraphs(root), 0)
-        self.assertEqual(ET.tostring(root), before)
+        original_copy = signature(''.join(root.itertext()))
+        original_issues = paragraph_layout_issues(root)
+        self.assertGreater(reflow_declared_paragraphs(root), 0)
+        self.assertEqual(signature(''.join(root.itertext())), original_copy)
+        self.assertEqual(next(root.iter(NS+'g')).get('data-textbox'), '100 180 160 60')
+        for text in root.iter(NS+'text'):
+            self.assertEqual(text.get('font-size'), '18')
+            self.assertLessEqual(_bounds(text)[2], 260.1)
+        paragraphs = list(root.iter(NS+'text'))
+        self.assertGreater(_bounds(paragraphs[1])[1], _bounds(paragraphs[0])[3])
         issues = paragraph_layout_issues(root)
         self.assertEqual(len(issues), 1)
         self.assertEqual(issues[0]['paragraphs'], 2)
         self.assertGreater(issues[0]['required_height'], 60)
+        self.assertEqual(issues, original_issues)
+        laid_out = ET.tostring(root)
+        reflow_declared_paragraphs(root)
+        self.assertEqual(ET.tostring(root), laid_out)
+
+    def test_fractional_height_overrun_does_not_disable_wrapping(self):
+        root = ET.fromstring(SVG.format('<g data-role="body" data-textbox="100 180 160 10">'
+            '<text x="100" y="200" font-size="18">这是一段需要在声明宽度内换行的完整正文。</text></g>'))
+        owner = next(root.iter(NS+'g'))
+        required = paragraph_layout_issues(root)[0]['required_height']
+        owner.set('data-textbox', f'100 180 160 {required - .2}')
+        self.assertGreater(reflow_declared_paragraphs(root), 0)
+        self.assertLessEqual(_bounds(next(root.iter(NS+'text')))[2], 260.1)
+        self.assertEqual(len(paragraph_layout_issues(root)), 1)
+
+    def test_overwide_identifier_retains_copy_and_capacity_failure(self):
+        root = ET.fromstring(SVG.format('<g data-role="body" data-textbox="100 180 40 100">'
+            '<text x="100" y="200" font-size="18">an_unbreakable_identifier</text></g>'))
+        before = ''.join(root.itertext())
+        reflow_declared_paragraphs(root)
+        self.assertEqual(''.join(root.itertext()), before)
+        self.assertGreater(paragraph_layout_issues(root)[0]['required_width'], 40)
 
     def test_header_label_and_title_have_distinct_rows(self):
         root = ET.fromstring(SVG.format('<g data-role="header"><text x="40" y="40" font-size="12">Chapter</text><text x="40" y="48" font-size="28">Title</text><rect x="40" y="55" width="100" height="2"/></g>'))
@@ -283,9 +312,19 @@ class ParagraphLayoutTests(unittest.TestCase):
 
     def test_insufficient_height_keeps_complete_source_text(self):
         root = ET.fromstring(SVG.format('<g data-textbox="100 180 80 20" data-role="body"><text x="100" y="200" font-size="16">这段文字超过了容器容量，仍然必须完整保留。</text></g>'))
-        before = ET.tostring(root)
+        before = signature(''.join(root.itertext()))
         reflow_declared_paragraphs(root)
-        self.assertEqual(ET.tostring(root), before)
+        self.assertEqual(signature(''.join(root.itertext())), before)
+        self.assertEqual(next(root.iter(NS+'text')).get('font-size'), '16')
+        self.assertEqual(len(paragraph_layout_issues(root)), 1)
+
+    def test_overfull_paragraph_keeps_all_text_through_native_export(self):
+        body = '<g data-textbox="100 180 80 20" data-role="body"><text x="100" y="200" font-size="16">完整正文 <tspan font-weight="bold">12.345</tspan> 单位与尾句。</text></g>'
+        root = ET.fromstring(SVG.format(body))
+        before = signature(''.join(root.itertext()))
+        reflow_declared_paragraphs(root)
+        xml = NestedTextTests().native_xml(''.join(ET.tostring(e, encoding='unicode') for e in root))
+        self.assertEqual(signature(''.join(e.text or '' for e in xml.iter(A+'t'))), before)
 
     def test_preview_and_native_export_share_nested_text_content(self):
         with TemporaryDirectory() as directory:
