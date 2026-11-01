@@ -2223,7 +2223,10 @@ def _repair_quality(report: CriticReport) -> tuple[float, float]:
     for violation in report.violations:
         if violation.severity != 'error':
             continue
-        defects += 1
+        weights = {'paragraph_capacity': .25, 'out_of_bounds': 2,
+                   'xml_parse': 1000, 'forbidden_element': 1000,
+                   'filter_requires_raster_fallback': 1000}
+        defects += weights.get(violation.rule, 1)
         if violation.rule == 'paragraph_capacity' and violation.bbox:
             match = re.search(r'required: ([\d.]+)px wide and ([\d.]+)px high', violation.detail)
             if match:
@@ -2234,9 +2237,7 @@ def _repair_quality(report: CriticReport) -> tuple[float, float]:
 
 
 def _repair_regressed(before: CriticReport, after: CriticReport) -> bool:
-    old = Counter(v.rule for v in before.violations if v.severity == 'error')
-    new = Counter(v.rule for v in after.violations if v.severity == 'error')
-    return any(new[rule] > old[rule] for rule in new) or _repair_quality(after)[1] > _repair_quality(before)[1]
+    return _repair_quality(after) > _repair_quality(before)
 
 
 def _pseudo_icon_badge_violations(svg_content: str) -> list[Violation]:
@@ -2974,6 +2975,7 @@ async def generate_svg_pages(
 
                 repair_errors = []
                 repaired = _apply_svg_repair_response(response.content, svg_content, repair_errors)
+                decoded_svg = repaired is not None
                 if repaired:
                     repaired = _normalize_obvious_short_text_lines(repaired, page_design_block)
                     if report_metadata.get('source') == 'static':
@@ -2991,7 +2993,7 @@ async def generate_svg_pages(
                 repair_feedback = ''
                 _write_generation_response_debug(project_dir, prefix="repair", page_num=page_num,
                     attempt=event_attempt, content=response.content, max_tokens=SVG_REPAIR_MAX_TOKENS,
-                    note=f"parseable_svg={repaired is not None}")
+                    note=f"decoded_svg={decoded_svg}; accepted_candidate={repaired is not None}; validation={repair_errors}")
                 after_archive_rel: str | None = None
                 if repaired:
                     after_archive_rel = _archive_repair_svg(
@@ -4313,6 +4315,7 @@ async def _generate_parallel_page(
 
         repair_errors = []
         repaired = _apply_svg_repair_response(response.content, svg_content, repair_errors)
+        decoded_svg = repaired is not None
         if repaired:
             repaired = _normalize_obvious_short_text_lines(repaired, page_design_block)
             if report_metadata.get('source') == 'static':
@@ -4330,7 +4333,7 @@ async def _generate_parallel_page(
         repair_feedback = ''
         _write_generation_response_debug(project_dir, prefix="parallel_repair", page_num=page_num,
             attempt=event_attempt, content=response.content, max_tokens=SVG_REPAIR_MAX_TOKENS,
-            note=f"parseable_svg={repaired is not None}")
+            note=f"decoded_svg={decoded_svg}; accepted_candidate={repaired is not None}; validation={repair_errors}")
         if repaired:
             after_archive_rel = _archive_repair_svg(
                 repair_archive_dir,

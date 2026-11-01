@@ -58,6 +58,15 @@ class NestedTextTests(unittest.TestCase):
         report = check_svg(SVG.format('<text x="40" y="60" font-size="28">Title</text><rect x="40" y="74" width="80" height="2" fill="#0000FF"/><text x="40" y="200" font-size="18">正文<tspan font-weight="bold">强调</tspan></text>'))
         self.assertFalse({'accent_line_under_title', 'bold_tspan_in_cjk'} & {v.rule for v in report.violations})
 
+    def test_collision_feedback_identifies_both_blocks_for_coordinated_repair(self):
+        source = SVG.format('<text data-editor-id="label" x="100" y="200" font-size="18">Softmax</text>'
+            '<text data-editor-id="paragraph" x="100" y="200" font-size="18">Complete explanation</text>')
+        issue = next(v for v in check_svg(source).violations if v.rule == 'text_line_overlap')
+        self.assertIn('label', issue.element)
+        self.assertIn('paragraph', issue.detail)
+        self.assertIn('Complete explanation', issue.detail)
+        self.assertIn('bbox', issue.detail)
+
     def test_decorative_dots_are_not_inferred_to_be_empty_list_bullets(self):
         circle = '<circle cx="40" cy="160" r="4" fill="#2B6CB0"/>'
         report = check_svg(SVG.format(circle))

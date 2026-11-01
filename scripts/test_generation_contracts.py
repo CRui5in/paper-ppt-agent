@@ -61,6 +61,9 @@ class SvgGenerationEntryPointTests(unittest.IsolatedAsyncioTestCase):
         before = CriticReport(False, [Violation('paragraph_capacity', 'error', 'Measured space required: 200px wide and 100px high', bbox=(100,180,200,50))])
         after = CriticReport(False, [Violation('text_overlap', 'error', 'Two labels intersect')])
         self.assertTrue(svg_executor._repair_regressed(before, after))
+        clipped = CriticReport(False, [Violation('out_of_bounds', 'error', 'Clipped paragraph') for _ in range(8)])
+        improved = CriticReport(False, [Violation('out_of_bounds', 'error', 'One remaining clipped line'), Violation('text_overlap', 'error', 'One overlap')])
+        self.assertFalse(svg_executor._repair_regressed(clipped, improved))
 
     async def test_partial_progress_gets_a_followup_and_regressions_keep_the_previous_page(self):
         source = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720"><g data-textbox="100 180 200 10"><text x="100" y="200" font-size="18">This complete paragraph needs enough vertical space to wrap across several lines.</text></g></svg>'

@@ -119,3 +119,13 @@ The preparation pass still inferred text regions from nearby rectangles and desi
 Preparation now applies only the declared paragraph flow, opted-in label/header layout, font resolution, and mathematical rendering. Positioned labels keep their coordinates and font sizes. Geometry findings can request a coordinated model repair rather than mutating labels through inferred ownership.
 
 Validation: 93 tests passed. A long positioned annotation remains a single text element at its authored baseline and size. Existing paragraph, script, table, equation, and export regressions pass.
+
+## Actionable collision feedback and visual review
+
+The fresh pass generated 27 pages. All exported natively, but three pages still contained geometry errors; visual inspection confirmed a paragraph drawn over an attention diagram and overflowing right-column copy. Export success is reported separately from those defects.
+
+Collision feedback previously named only the first text element on a shared baseline. The reproduced repair repeatedly moved the label while missing the paragraph laid over it. Reports now identify both text elements, their visible copy, and the second bounding box.
+
+A further review showed the per-category acceptance rule rejecting a candidate that reduced eight clipped lines to two because it introduced one remaining overlap. Candidate ranking now prioritizes native compatibility, visible clipping and collisions, then declared paragraph capacity. Source-number membership has no contribution to acceptance. A capacity-only fix still cannot compensate for creating a visible overlap. Debug records distinguish decoding success from candidate rejection and retain the actual reason.
+
+Validation: 94 tests passed. The focused replay below evaluates the new feedback against the saved fresh outputs rather than generating a new manuscript.

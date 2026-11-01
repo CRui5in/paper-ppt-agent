@@ -755,9 +755,11 @@ def check_svg(svg_content: str, config: CriticConfig | None = None) -> CriticRep
                         rule="text_line_overlap",
                         severity="error",
                         detail=(
-                            "Two text elements collide on the same visual line. "
-                            "Reallocate table columns or merge intentional inline "
-                            "styling into one text element with tspans."
+                            f"This text {_text_of(el_a)[:60]!r} intersects "
+                            f"{_element_identifier(el_b)} {_text_of(el_b)[:60]!r} "
+                            f"at bbox {box_b} on the same visual line. "
+                            "Reposition the conflicting blocks together, or combine "
+                            "inline runs belonging to one sentence."
                         ),
                         element=_element_identifier(el_a),
                         bbox=box_a,
@@ -801,7 +803,8 @@ def check_svg(svg_content: str, config: CriticConfig | None = None) -> CriticRep
                         severity="error",
                         detail=(
                             f"Text overlaps (IoU={iou:.2f}) with another text element "
-                            f"{_element_identifier(el_b)}. Separate them or shrink one."
+                            f"{_element_identifier(el_b)} {_text_of(el_b)[:60]!r} at bbox {box_b}. "
+                            "Allocate distinct space for both complete blocks."
                         ),
                         element=_element_identifier(el_a),
                         bbox=box_a,
