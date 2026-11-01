@@ -15,64 +15,21 @@ from backend.generator.svg_to_pptx.builder import create_pptx
 import json
 from backend.orchestrator.deck_plan import _extract_page_title_parts
 from backend.orchestrator.svg_executor import _normalize_obvious_short_text_lines, _svg_for_model
-from backend.orchestrator.svg_executor import _identify_svg_elements, _apply_svg_repair_response
 
 SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720">{}</svg>'
 NS = '{http://www.w3.org/2000/svg}'
 
 
 class SvgTextGeometryTests(unittest.TestCase):
-    def test_overescaped_xml_fragments_are_decoded_without_touching_latex(self):
-        source = _identify_svg_elements(SVG.format('<g id="panel"/>'))
-        target = next(ET.fromstring(source).iter(NS+'g')).get('data-editor-id')
-        reply = json.dumps({'edits':[{'target':target,'append':r'<text x=\"80\" y=\"200\">Label</text>'}]})
-        result = ET.fromstring(_apply_svg_repair_response(reply, source))
-        self.assertEqual(next(result.iter(NS+'text')).get('x'), '80')
-
-    def test_invalid_equation_patch_keeps_the_last_valid_authoring_tree(self):
-        source = _identify_svg_elements(SVG.format(r'<g data-latex="x^2" data-math-box="100 180 200 60"/>'))
-        target = next(ET.fromstring(source).iter(NS+'g')).get('data-editor-id')
-        reply = json.dumps({'edits':[{'target':target,'attributes':{'data-math-box':'100 180 200 0'}}]})
-        self.assertIsNone(_apply_svg_repair_response(reply, source))
-        self.assertIn('100 180 200 60', source)
-
-    def test_repair_preserves_existing_equations_for_edits_and_complete_svg_responses(self):
-        source = _identify_svg_elements(SVG.format(r'<g data-latex="x^2" data-math-box="100 180 200 60"/>'))
-        target = next(ET.fromstring(source).iter(NS+'g')).get('data-editor-id')
-        for response in (json.dumps({'edits':[{'target':target,'remove':True}]}), SVG.format('<text>Equation omitted</text>')):
-            errors = []
-            self.assertIsNone(_apply_svg_repair_response(response, source, errors))
-            self.assertIn('Retain the existing equation', errors[0])
-
-    def test_identified_xml_edits_preserve_other_geometry_and_canvas(self):
-        source = _identify_svg_elements(SVG.format('<text x="100" y="200">Keep me</text><rect x="80" y="180" width="300" height="60"/>'))
-        root = ET.fromstring(source)
-        rectangle = next(root.iter(NS+'rect'))
-        reply = json.dumps({'edits':[{'target':rectangle.get('data-editor-id'),'attributes':{'y':'300'}}]})
-        result = ET.fromstring(_apply_svg_repair_response(reply, source))
-        self.assertEqual(next(result.iter(NS+'rect')).get('y'), '300')
-        self.assertEqual(next(result.iter(NS+'text')).text, 'Keep me')
-        self.assertEqual(result.get('viewBox'), '0 0 1280 720')
-
-    def test_xml_edits_replace_and_append_namespaced_content(self):
-        source = _identify_svg_elements(SVG.format('<g id="panel"><text>Old</text></g>'))
-        root = ET.fromstring(source)
-        panel = next(root.iter(NS+'g')).get('data-editor-id')
-        edits = {'edits':[{'target':panel,'replace':'<g id="panel"><text>New</text></g>'},
-                          {'target':panel,'append':'<text>Another row</text>'}]}
-        result = ET.fromstring(_apply_svg_repair_response(json.dumps(edits), source))
-        self.assertEqual([e.text for e in result.iter(NS+'text')], ['New','Another row'])
-
-    def test_invalid_xml_edits_are_atomic_and_cannot_change_the_assigned_viewbox(self):
-        source = _identify_svg_elements(SVG.format('<rect x="80" y="180" width="300" height="60"/>'))
-        root = ET.fromstring(source)
-        root_id = root.get('data-editor-id')
-        rect_id = next(root.iter(NS+'rect')).get('data-editor-id')
-        invalid = {'edits':[{'target':rect_id,'attributes':{'y':'300'}},{'target':'unknown','remove':True}]}
-        self.assertIsNone(_apply_svg_repair_response(json.dumps(invalid), source))
-        self.assertEqual(next(ET.fromstring(source).iter(NS+'rect')).get('y'), '180')
-        changed_canvas = {'edits':[{'target':root_id,'attributes':{'viewBox':'0 0 1600 900'}}]}
-        self.assertIsNone(_apply_svg_repair_response(json.dumps(changed_canvas), source))
+    def test_native_conversion_failure_is_reported_without_a_full_slide_image(self):
+        with TemporaryDirectory() as directory:
+            source = Path(directory)/'unsupported.svg'
+            source.write_text(SVG.format('<defs><filter id="shadow"><feDropShadow/></filter></defs>'
+                '<g filter="url(#shadow)"><rect width="100" height="100"/></g>'), encoding='utf8')
+            output = Path(directory)/'export.pptx'
+            with self.assertRaisesRegex(ValueError, 'Native PPTX export failed on slide 1'):
+                create_pptx([source], output)
+            self.assertFalse(output.exists())
 
     def test_model_context_keeps_math_source_and_rebuilds_identical_vectors(self):
         source = SVG.format(r'<path id="diagram" d="M20 20 L80 80"/>'

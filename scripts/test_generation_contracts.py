@@ -56,68 +56,34 @@ class ManuscriptEntryPointTests(unittest.IsolatedAsyncioTestCase):
 
 
 class SvgGenerationEntryPointTests(unittest.IsolatedAsyncioTestCase):
-    def test_repair_cannot_trade_capacity_for_a_new_overlap(self):
-        from backend.generator.svg_critic import CriticReport, Violation
-        before = CriticReport(False, [Violation('paragraph_capacity', 'error', 'Measured space required: 200px wide and 100px high', bbox=(100,180,200,50))])
-        after = CriticReport(False, [Violation('text_overlap', 'error', 'Two labels intersect')])
-        self.assertTrue(svg_executor._repair_regressed(before, after))
-        clipped = CriticReport(False, [Violation('out_of_bounds', 'error', 'Clipped paragraph') for _ in range(8)])
-        improved = CriticReport(False, [Violation('out_of_bounds', 'error', 'One remaining clipped line'), Violation('text_overlap', 'error', 'One overlap')])
-        self.assertFalse(svg_executor._repair_regressed(clipped, improved))
-
-    async def test_partial_progress_gets_a_followup_and_regressions_keep_the_previous_page(self):
-        source = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720"><g data-textbox="100 180 200 10"><text x="100" y="200" font-size="18">This complete paragraph needs enough vertical space to wrap across several lines.</text></g></svg>'
-        partial = source.replace('200 10', '200 40')
-        worse = source.replace('200 10', '200 1')
+    async def test_first_response_is_saved_and_diagnostics_never_trigger_another_generation(self):
+        sources = [
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720"><g data-role="body" data-textbox="100 180 50 20"><text x="100" y="200" font-size="18">This complete paragraph needs several lines.</text></g></svg>',
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720"><text x="100" y="200">First label</text><text x="100" y="200">Second label</text></svg>',
+        ]
         for mode in ('sequential', 'page_parallel'):
-            for candidate in (partial, worse, '{"edits":[{"target":"unknown","remove":true}]}'):
-                with self.subTest(mode=mode, candidate=candidate), TemporaryDirectory() as directory:
-                    provider = SimpleNamespace(chat=AsyncMock(side_effect=[LLMResponse(content=source), LLMResponse(content=candidate), LLMResponse(content=MODEL_SVG)]))
+            for source in sources:
+                with self.subTest(mode=mode), TemporaryDirectory() as directory:
+                    provider = SimpleNamespace(chat=AsyncMock(return_value=LLMResponse(content=source)))
+                    critic = AsyncMock()
                     generator = svg_executor.generate_svg_pages if mode == 'sequential' else svg_executor.generate_svg_pages_parallel
                     kwargs = {} if mode == 'sequential' else {'mode': mode}
-                    results = [result async for result in generator('', '<!-- page_type: content -->\n# Method', Path(directory), provider, 'test-model', max_critic_attempts=0, enable_visual_critic=False, **kwargs)]
-                    self.assertEqual(provider.chat.await_count, 3)
-                    self.assertIn('The input is normalized.', results[0][1])
-                    if candidate != partial:
-                        last_prompt = provider.chat.call_args.args[0][1].content
-                        self.assertIn('current SVG is unchanged', last_prompt)
-                        self.assertIn('200 10', last_prompt)
+                    results = [result async for result in generator('', '<!-- page_type: content -->\n# Method', Path(directory), provider, 'test-model', max_critic_attempts=5, enable_visual_critic=False, on_critic=critic, **kwargs)]
+                    self.assertEqual(provider.chat.await_count, 1)
+                    self.assertEqual((Path(directory)/'svg_initial/slide_001.svg').read_text(encoding='utf8'), source)
+                    self.assertFalse(critic.call_args.args[2].passed)
+                    self.assertIsNone(critic.call_args.args[3])
+                    self.assertEqual(len(results), 1)
 
-    async def test_json_repair_moves_the_reported_occluding_shape(self):
-        import json
-        source = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720"><text x="100" y="200" font-size="18">Explanation</text><rect x="80" y="175" width="300" height="50" fill="#FFFFFF"/></svg>'
-        calls = 0
-        async def chat(messages, model, **kwargs):
-            nonlocal calls
-            calls += 1
-            if calls == 1:
-                return LLMResponse(content=source)
-            current = svg_executor._extract_svg(messages[1].content)
-            root = ET.fromstring(current)
-            rect_id = next(root.iter(NS+'rect')).get('data-editor-id')
-            return LLMResponse(content=json.dumps({'edits':[{'target':rect_id,'attributes':{'y':'300'}}]}))
-        with TemporaryDirectory() as directory:
-            provider = SimpleNamespace(chat=chat)
-            _results = [result async for result in svg_executor.generate_svg_pages_parallel('', '<!-- page_type: content -->\n# Method', Path(directory), provider, 'test-model', mode='page_parallel', max_critic_attempts=0, enable_visual_critic=False)]
-            saved = ET.parse(Path(directory)/'svg_output/slide_001.svg').getroot()
-            self.assertEqual(next(saved.iter(NS+'rect')).get('y'), '300')
-            self.assertEqual(calls, 2)
-
-    async def test_repairs_receive_compact_math_and_saved_results_are_render_ready(self):
-        overfull = MODEL_SVG.replace('84 180 500 100', '84 180 500 10')
+    async def test_invalid_first_svg_is_reported_without_regeneration(self):
         for mode in ('sequential', 'page_parallel'):
             with self.subTest(mode=mode), TemporaryDirectory() as directory:
-                provider = SimpleNamespace(chat=AsyncMock(side_effect=[LLMResponse(content=overfull), LLMResponse(content=MODEL_SVG)]))
+                provider = SimpleNamespace(chat=AsyncMock(return_value=LLMResponse(content='<svg>')))
                 generator = svg_executor.generate_svg_pages if mode == 'sequential' else svg_executor.generate_svg_pages_parallel
                 kwargs = {} if mode == 'sequential' else {'mode': mode}
-                _results = [result async for result in generator('', '<!-- page_type: content -->\n# Method', Path(directory), provider, 'test-model', max_critic_attempts=0, enable_visual_critic=False, **kwargs)]
-                self.assertEqual(provider.chat.await_count, 2)
-                messages = provider.chat.call_args.args[0]
-                authoring = [message.content for message in messages if '```svg' in message.content]
-                self.assertTrue(authoring)
-                self.assertTrue(all('data-latex' in text and '<path' not in text for text in authoring))
-                saved = ET.parse(Path(directory)/'svg_output/slide_001.svg').getroot()
-                self.assertTrue(list(saved.iter(NS+'path')))
+                with self.assertRaisesRegex(RuntimeError, 'first generation response'):
+                    _results = [result async for result in generator('', '<!-- page_type: content -->\n# Method', Path(directory), provider, 'test-model', enable_visual_critic=False, **kwargs)]
+                self.assertEqual(provider.chat.await_count, 1)
 
     async def test_table_membership_diagnostics_do_not_force_the_entire_manuscript_onto_a_page(self):
         manuscript = '<!-- page_type: content -->\n# Counts\n|Year|Count|\n|---|---|\n|2020|1234.5|\n|2021|0.625|'
@@ -143,45 +109,6 @@ class SvgGenerationEntryPointTests(unittest.IsolatedAsyncioTestCase):
         complete = omitted.replace('</svg>', '<text>2021 0.625</text></svg>')
         self.assertTrue(svg_executor._validate_source_table_values(complete, source).passed)
 
-    async def test_text_collisions_are_repaired_without_style_review(self):
-        overlap = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720"><text x="100" y="200" font-size="20">First paragraph</text><text x="100" y="202" font-size="20">Second paragraph</text></svg>'
-        with TemporaryDirectory() as directory:
-            provider = SimpleNamespace(chat=AsyncMock(side_effect=[LLMResponse(content=overlap), LLMResponse(content=MODEL_SVG)]))
-            results = [result async for result in svg_executor.generate_svg_pages_parallel('', '<!-- page_type: content -->\n# Method', Path(directory), provider, 'test-model', mode='page_parallel', max_critic_attempts=0, enable_visual_critic=False)]
-            self.assertEqual(len(results), 1)
-            self.assertEqual(provider.chat.await_count, 2)
-
-    async def test_native_export_incompatibility_is_repaired_without_style_review(self):
-        unsupported = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720"><defs><filter id="shadow"><feDropShadow dx="0" dy="2" stdDeviation="2"/></filter></defs><g filter="url(#shadow)"><rect x="100" y="180" width="300" height="100" fill="#FFFFFF"/><text x="120" y="210">Method</text></g></svg>'
-        with TemporaryDirectory() as directory:
-            provider = SimpleNamespace(chat=AsyncMock(side_effect=[LLMResponse(content=unsupported), LLMResponse(content=MODEL_SVG)]))
-            results = [result async for result in svg_executor.generate_svg_pages_parallel('', '<!-- page_type: content -->\n# Method', Path(directory), provider, 'test-model', mode='page_parallel', max_critic_attempts=0, enable_visual_critic=False)]
-            self.assertEqual(len(results), 1)
-            self.assertEqual(provider.chat.await_count, 2)
-            messages = provider.chat.call_args.args[0]
-            self.assertIn('filter_requires_raster_fallback', '\n'.join(message.content for message in messages if message.role == 'user'))
-
-    async def test_measured_capacity_feedback_regenerates_in_both_modes_without_review(self):
-        overfull = '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720">
-        <g data-role="body" data-textbox="100 180 100 30">
-        <text x="100" y="200" font-size="18">A complete paragraph needs enough room to wrap.</text>
-        <text x="100" y="228" font-size="18">A second paragraph.</text></g></svg>'''
-        for mode in ('sequential', 'page_parallel'):
-            with self.subTest(mode=mode), TemporaryDirectory() as directory:
-                provider = SimpleNamespace(chat=AsyncMock(side_effect=[LLMResponse(content=overfull), LLMResponse(content=MODEL_SVG)]))
-                generator = svg_executor.generate_svg_pages if mode == 'sequential' else svg_executor.generate_svg_pages_parallel
-                kwargs = {} if mode == 'sequential' else {'mode': mode}
-                results = [result async for result in generator(
-                    '', '<!-- page_type: content -->\n# Method\nTwo paragraphs.', Path(directory), provider, 'test-model',
-                    max_critic_attempts=0, enable_visual_critic=False, **kwargs,
-                )]
-                self.assertEqual(len(results), 1)
-                self.assertEqual(provider.chat.await_count, 2)
-                messages = provider.chat.call_args.args[0]
-                feedback = '\n'.join(str(message.content) for message in messages if message.role == 'user')
-                self.assertIn('paragraph_capacity', feedback)
-                self.assertIn('Measured space required', feedback)
-
     async def test_remaining_capacity_findings_are_reported_without_aborting_the_deck(self):
         overfull = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720"><g data-role="body" data-textbox="100 180 50 20"><text x="100" y="200" font-size="18">This paragraph needs several lines of space.</text></g></svg>'
         manuscript = '<!-- page_type: content -->\n# First\n\n---\n\n<!-- page_type: content -->\n# Second'
@@ -193,7 +120,7 @@ class SvgGenerationEntryPointTests(unittest.IsolatedAsyncioTestCase):
                 kwargs = {} if mode == 'sequential' else {'mode': mode}
                 results = [result async for result in generator('', manuscript, Path(directory), provider, 'test-model', max_critic_attempts=0, enable_visual_critic=False, on_critic=critic, **kwargs)]
                 self.assertEqual(len(results), 2)
-                self.assertEqual(provider.chat.await_count, 4)
+                self.assertEqual(provider.chat.await_count, 2)
                 self.assertTrue((Path(directory) / 'svg_output/slide_002.svg').exists())
                 self.assertTrue(any(any(v.rule == 'paragraph_capacity' for v in call.args[2].violations) for call in critic.call_args_list))
 

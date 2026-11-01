@@ -17,8 +17,6 @@ import xml.etree.ElementTree as ET
 
 from pptx import Presentation
 from pptx.util import Emu
-from reportlab.graphics import renderPM
-from svglib.svglib import svg2rlg
 
 from backend.config import CANVAS_FORMATS
 from backend.generator.svg_finalize.render_ready import prepare_svg_file_for_render
@@ -87,29 +85,16 @@ def create_pptx(
             prepared_svg_path = prepare_svg_file_for_render(svg_path)
             source_metrics = _analyze_svg_source(prepared_svg_path)
             try:
-                try:
-                    slide_xml, media_files, rel_entries = convert_svg_to_slide_shapes(
-                        prepared_svg_path, slide_num
-                    )
-                    conversion_report.append({
-                        "slide": slide_num,
-                        "svg": svg_path.name,
-                        "mode": "native",
-                    })
-                except Exception as exc:
-                    slide_xml, media_files, rel_entries = _build_svg_fallback_slide(
-                        prepared_svg_path,
-                        slide_num,
-                        fmt["width"],
-                        fmt["height"],
-                    )
-                    conversion_report.append({
-                        "slide": slide_num,
-                        "svg": svg_path.name,
-                        "mode": "fallback_image",
-                        "error_type": type(exc).__name__,
-                        "error": str(exc),
-                    })
+                slide_xml, media_files, rel_entries = convert_svg_to_slide_shapes(
+                    prepared_svg_path, slide_num
+                )
+                conversion_report.append({
+                    "slide": slide_num, "svg": svg_path.name, "mode": "native",
+                })
+            except Exception as exc:
+                raise ValueError(
+                    f"Native PPTX export failed on slide {slide_num} ({svg_path.name}): {exc}"
+                ) from exc
             finally:
                 prepared_svg_path.unlink(missing_ok=True)
 
@@ -204,100 +189,6 @@ def _build_rels_xml(rel_entries: list[dict]) -> str:
         f'{"".join(rels)}'
         '</Relationships>'
     )
-
-
-def _build_svg_fallback_slide(
-    svg_path: Path,
-    slide_num: int,
-    width_px: int,
-    height_px: int,
-) -> tuple[str, dict[str, bytes], list[dict]]:
-    """Fallback to embedding the whole slide SVG as a single image.
-
-    This keeps export working even when native shape conversion fails.
-    """
-    png_bytes = _rasterize_svg_to_png(svg_path)
-    media_name = f"slide{slide_num}_fallback.png"
-    rel_id = "rId2"
-    slide_xml = (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        '<p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"'
-        ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"'
-        ' xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">'
-        '<p:cSld><p:spTree>'
-        '<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>'
-        '<p:grpSpPr>'
-        '<a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/>'
-        '<a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm>'
-        '</p:grpSpPr>'
-        '<p:pic>'
-        '<p:nvPicPr><p:cNvPr id="2" name="Fallback SVG"/>'
-        '<p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr>'
-        '<p:nvPr/></p:nvPicPr>'
-        f'<p:blipFill><a:blip r:embed="{rel_id}"/><a:stretch><a:fillRect/></a:stretch></p:blipFill>'
-        '<p:spPr>'
-        f'<a:xfrm><a:off x="0" y="0"/><a:ext cx="{px_to_emu(width_px)}" cy="{px_to_emu(height_px)}"/></a:xfrm>'
-        '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>'
-        '</p:spPr>'
-        '</p:pic>'
-        '</p:spTree></p:cSld>'
-        '<p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr>'
-        '</p:sld>'
-    )
-    rel_entries = [{
-        "id": rel_id,
-        "type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image",
-        "target": f"../media/{media_name}",
-    }]
-    return slide_xml, {media_name: png_bytes}, rel_entries
-
-
-def _rasterize_svg_to_png(svg_path: Path) -> bytes:
-    """Rasterize an SVG to PNG bytes for robust PowerPoint fallback rendering."""
-    try:
-        from resvg_py import svg_to_bytes  # type: ignore[import-not-found]
-
-        png_bytes = svg_to_bytes(svg_string=svg_path.read_text(encoding="utf-8"), width=1920)
-        if isinstance(png_bytes, list):
-            return bytes(png_bytes)
-        return png_bytes
-    except Exception:
-        pass
-
-    return _rasterize_svg_to_png_with_svglib(svg_path)
-
-
-def _rasterize_svg_to_png_with_svglib(svg_path: Path) -> bytes:
-    """Fallback rasterizer for environments where resvg is unavailable."""
-    sanitized_path: Path | None = None
-    try:
-        drawing = svg2rlg(str(svg_path))
-    except TypeError:
-        sanitized_path = _sanitize_svg_for_svglib(svg_path)
-        drawing = svg2rlg(str(sanitized_path))
-    finally:
-        if sanitized_path is not None:
-            sanitized_path.unlink(missing_ok=True)
-
-    if drawing is None:
-        raise ValueError(f"Failed to load SVG drawing for fallback: {svg_path.name}")
-    return renderPM.drawToString(drawing, fmt="PNG")
-
-
-def _sanitize_svg_for_svglib(svg_path: Path) -> Path:
-    """Normalize SVG syntax that browsers/resvg accept but svglib rejects."""
-    content = svg_path.read_text(encoding="utf-8")
-
-    def normalize_radius(match: re.Match[str]) -> str:
-        attr = match.group(1)
-        value = match.group(2)
-        first = re.split(r"[\s,]+", value.strip())[0]
-        return f'{attr}="{first}"'
-
-    content = re.sub(r'\b(rx|ry)="([^"]+)"', normalize_radius, content)
-    sanitized_path = svg_path.with_name(f".__svglib_{uuid.uuid4().hex}_{svg_path.name}")
-    sanitized_path.write_text(content, encoding="utf-8")
-    return sanitized_path
 
 
 def _ensure_unique_media_names(

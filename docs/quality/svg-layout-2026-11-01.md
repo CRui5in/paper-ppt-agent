@@ -1,3 +1,5 @@
+> Current direction: evaluate first-generation composition across the corpus. Automatic SVG repair, post-design rewrite, and whole-slide raster fallback have been removed. Earlier repair experiments below are historical results, not the current generation path.
+
 # SVG layout regression checks, 2026-11-01
 
 ## Reproduced defects
@@ -122,10 +124,18 @@ Validation: 93 tests passed. A long positioned annotation remains a single text 
 
 ## Actionable collision feedback and visual review
 
-The fresh pass generated 27 pages. All exported natively, but three pages still contained geometry errors; visual inspection confirmed a paragraph drawn over an attention diagram and overflowing right-column copy. Export success is reported separately from those defects.
+The fresh pass generated 27 pages. All exported natively, but four pages across three papers still contained geometry errors; visual inspection confirmed a paragraph drawn over an attention diagram and overflowing right-column copy. Export success is reported separately from those defects.
 
 Collision feedback previously named only the first text element on a shared baseline. The reproduced repair repeatedly moved the label while missing the paragraph laid over it. Reports now identify both text elements, their visible copy, and the second bounding box.
 
 A further review showed the per-category acceptance rule rejecting a candidate that reduced eight clipped lines to two because it introduced one remaining overlap. Candidate ranking now prioritizes native compatibility, visible clipping and collisions, then declared paragraph capacity. Source-number membership has no contribution to acceptance. A capacity-only fix still cannot compensate for creating a visible overlap. Debug records distinguish decoding success from candidate rejection and retain the actual reason.
 
 Validation: 94 tests passed. The focused replay below evaluates the new feedback against the saved fresh outputs rather than generating a new manuscript.
+
+## Direction correction: first generation
+
+The user explicitly rejected reliance on repair, fallback, and repeated optimization around one sample. Removed the SVG critic-to-edit loops, their XML edit interpreter and prompts, invalid-SVG regeneration requests, the added post-design evidence rewrite, and full-slide raster fallback during native PPTX export. Layout diagnostics observe the first result. Raw SVG is saved separately in `svg_initial` before declared rendering preparation. Native conversion failures identify the failing slide and stop export.
+
+Public generation arguments remain compatible with existing callers; diagnostic settings no longer grant automatic rewrite attempts. Existing font resolution, formula typesetting, explicit paragraph flow, and text-preservation fixes remain rendering capabilities.
+
+Validation: 82 tests passed after replacing deleted repair tests with first-output preservation and single-generation-call checks. Tests verify that both generation modes keep the first response even when layout checks fail, invalid output triggers no regeneration, content design uses no extra review rewrite, and a native conversion failure produces no rasterized PPTX.

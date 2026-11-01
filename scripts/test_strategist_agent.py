@@ -4,7 +4,6 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
-import json
 from unittest.mock import AsyncMock, patch
 
 from backend.llm import LLMResponse, TokenUsage
@@ -59,32 +58,13 @@ def response(text: str, reason: str = "stop") -> LLMResponse:
 
 
 class StrategistGenerationTests(unittest.IsolatedAsyncioTestCase):
-    def test_visual_replacements_preserve_page_content_and_document_sections(self):
-        patch_data = {'slide': 2, 'layout_family': 'Annotated timeline',
-                      'visual_relationship': 'Ordered observations',
-                      'visual_material': 'Named events supplied by the manuscript',
-                      'design_brief': 'Place the events in order.\nAlign their descriptions.'}
-        result = strategist._apply_visual_evidence_replacements(COMPLETE, [patch_data])
-        self.assertIn('- **Content**: Complete page plan.', result)
-        self.assertIn('#### Slide 02 - Agenda', result)
-        self.assertIn('- **Type**: toc', result)
-        self.assertIn('**Layout Family**: Annotated timeline', result)
-        self.assertIn(NOTES, result)
-        self.assertIn(CONSTRAINTS, result)
-        self.assertIsNone(strategist._design_spec_validation_error(result, expected_page_count=3))
-
-    def test_visual_review_cannot_add_unknown_slides(self):
-        with self.assertRaisesRegex(ValueError, 'unknown slide'):
-            strategist._apply_visual_evidence_replacements(COMPLETE, [{'slide': 99}])
-
-    async def test_content_design_is_reviewed_against_the_manuscript_before_drawing(self):
+    async def test_content_design_is_returned_without_an_automatic_review_rewrite(self):
         manuscript = MANUSCRIPT.replace('page_type: toc', 'page_type: content')
         design = COMPLETE.replace('Agenda', 'Method').replace('**Type**: toc', '**Type**: content')
-        provider = SimpleNamespace(chat=AsyncMock(side_effect=[response(design), response(json.dumps({'replacements': []}))]))
+        provider = SimpleNamespace(chat=AsyncMock(return_value=response(design)))
         result = await strategist.create_design_spec(manuscript, provider, 'deepseek-flash')
-        self.assertIn('**Type**: content', result)
-        self.assertEqual(provider.chat.await_count, 2)
-        self.assertIn(manuscript, provider.chat.call_args.args[0][1].content)
+        self.assertEqual(result, design)
+        self.assertEqual(provider.chat.await_count, 1)
 
     def setUp(self):
         self.budgets = patch.multiple(

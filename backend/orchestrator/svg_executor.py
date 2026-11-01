@@ -1,16 +1,8 @@
-"""SVG Executor agent: generates SVG page code from design spec.
-
-The executor runs a page-by-page generation loop. Each page is checked by
-the static :mod:`backend.generator.svg_critic` before being accepted. If
-the critic finds violations, a targeted repair prompt is fed back to the
-LLM (bounded retries, with slightly lower temperature on each retry) so
-that regeneration is *informed* rather than blind.
-"""
+"""Generate each SVG once and report its first-pass layout diagnostics."""
 
 from __future__ import annotations
 
 import asyncio
-import json
 import re
 import uuid
 import xml.etree.ElementTree as ET
@@ -85,14 +77,11 @@ DEFAULT_MAX_CRITIC_ATTEMPTS = 0
 # Maximum number of prior same-type SVGs used as continuity references.
 MAX_PRIOR_PAGES_IN_CONTEXT = 2
 
-# Initial response plus bounded same-page retries when no SVG can be extracted.
-MAX_SVG_EXTRACTION_ATTEMPTS = 3
 SVG_GENERATION_MAX_TOKENS = max(8192, int(settings.svg_generation_max_tokens or 16384))
 SVG_GENERATION_MAX_TOKENS_CEILING = max(
     SVG_GENERATION_MAX_TOKENS,
     int(settings.svg_generation_max_tokens_ceiling or 32768),
 )
-SVG_REPAIR_MAX_TOKENS = max(4096, int(settings.svg_repair_max_tokens or 8192))
 MAX_DESIGN_SECTION_CHARS = 1800
 STRUCTURAL_PAGE_TYPES = frozenset({"cover", "chapter", "toc", "ending"})
 
@@ -773,26 +762,6 @@ def _is_max_token_limit_error(exc: BaseException) -> bool:
     return any(term in text for term in token_terms) and any(term in text for term in limit_terms)
 
 
-def _completion_near_limit(response: LLMResponse, requested_max_tokens: int) -> bool:
-    usage = response.usage
-    if usage is None or requested_max_tokens <= 0:
-        return False
-    return usage.completion_tokens >= int(requested_max_tokens * 0.96)
-
-
-def _svg_response_looks_truncated(content: str) -> bool:
-    text = content.strip()
-    if "</svg>" in text:
-        return False
-    return "<svg" in text or text.endswith((">", "/>", "</g>", "</text>", "</rect>"))
-
-
-def _next_higher_svg_max_tokens(current: int) -> int:
-    if current >= SVG_GENERATION_MAX_TOKENS_CEILING:
-        return current
-    return min(SVG_GENERATION_MAX_TOKENS_CEILING, max(current + 2048, current * 2))
-
-
 def _next_lower_svg_max_tokens(current: int) -> int:
     if current <= 4096:
         return current
@@ -916,98 +885,6 @@ def _svg_for_model(svg: str) -> str:
         element.attrib.pop('data-math-rendered', None)
         changed = True
     return ET.tostring(root, encoding='unicode') if changed else svg
-
-
-def _svg_repair_messages(svg: str, page_content: str, report: CriticReport,
-                         figures: list[dict] | None = None, feedback: str = '') -> list[LLMMessage]:
-    prompt = (Path(__file__).parent/'prompts/svg_repair.md').read_text(encoding='utf8')
-    figure_lines = '\n'.join(_paper_figure_reference_line(figure) for figure in figures or [])
-    content = (f'## Page manuscript\n{page_content}\n\n## Assigned source figures\n{figure_lines}\n\n## Current authoring SVG\n'
-               f'```svg\n{_svg_for_model(svg)}\n```\n\n{report.to_prompt_block(output_format="edits")}')
-    if feedback:
-        content += '\n\n## Previous edit result\n' + feedback
-    return [LLMMessage.system(prompt), LLMMessage.user(content)]
-
-
-def _apply_svg_repair_response(response: str, svg: str, errors: list[str] | None = None) -> str | None:
-    """Apply a complete set of identified XML edits atomically."""
-    def validate(root):
-        original = ET.fromstring(svg)
-        equations = Counter(element.get('data-latex') for element in original.iter() if element.get('data-latex'))
-        retained = Counter(element.get('data-latex') for element in root.iter() if element.get('data-latex'))
-        if equations - retained:
-            raise ValueError('Retain the existing equation expressions in visible, positive-sized math boxes')
-        from backend.generator.svg_finalize.render_math import render_math_in_tree
-        render_math_in_tree(root)
-        return ET.tostring(root, encoding='unicode')
-
-    try:
-        raw = re.sub(r'^\s*```(?:json)?\s*|\s*```\s*$', '', response.strip())
-        payload = json.loads(raw)
-    except (ValueError, TypeError):
-        candidate = _extract_svg(response)
-        if candidate:
-            try:
-                return validate(ET.fromstring(candidate))
-            except (ValueError, ET.ParseError) as error:
-                if errors is not None:
-                    errors.append(str(error))
-        return None
-    try:
-        edits = payload['edits']
-        if not isinstance(edits, list) or not edits:
-            return None
-        root = ET.fromstring(_svg_for_model(svg))
-        original_viewbox = root.get('viewBox')
-        namespace = root.tag.split('}',1)[0]+'}' if root.tag.startswith('{') else ''
-
-        def fragment(markup):
-            try:
-                element = ET.fromstring(markup)
-            except ET.ParseError:
-                element = ET.fromstring(markup.replace('\\"', '"').replace("\\'", "'"))
-            for child in element.iter():
-                if '}' not in child.tag:
-                    child.tag = namespace + child.tag
-            return element
-
-        for edit in edits:
-            nodes = {element.get('data-editor-id'): element for element in root.iter() if element.get('data-editor-id')}
-            target = nodes.get(edit['target'])
-            if target is None:
-                raise ValueError('Unknown edit target')
-            parents = {child: parent for parent in root.iter() for child in parent}
-            if edit.get('remove'):
-                if target is root:
-                    raise ValueError('The page root is required')
-                parents[target].remove(target)
-                continue
-            if 'replace' in edit:
-                replacement = fragment(edit['replace'])
-                replacement.set('data-editor-id', edit['target'])
-                replacement.tail = target.tail
-                if target is root:
-                    root = replacement
-                else:
-                    parent = parents[target]
-                    index = list(parent).index(target)
-                    parent.remove(target)
-                    parent.insert(index, replacement)
-                target = replacement
-            for name, value in edit.get('attributes', {}).items():
-                if not isinstance(value, (str, int, float)):
-                    raise ValueError('SVG attributes require scalar values')
-                target.set(name, str(value))
-            if 'append' in edit:
-                wrapper = fragment('<g>' + edit['append'] + '</g>')
-                target.extend(list(wrapper))
-        if _local_tag(root.tag) != 'svg' or root.get('viewBox') != original_viewbox:
-            raise ValueError('The assigned canvas must be preserved')
-        return validate(root)
-    except (KeyError, TypeError, ValueError, ET.ParseError) as error:
-        if errors is not None:
-            errors.append(str(error))
-        return None
 
 
 def _merged_text_regions(root: ET.Element, page_design_block: str) -> list[dict[str, float]]:
@@ -2207,37 +2084,26 @@ def _validate_source_table_values(svg_content: str, page_content: str) -> Critic
     )])
 
 
-def _static_attempt_limit_for_report(
-    max_critic_attempts: int,
-    report: CriticReport | None,
-) -> int:
-    # Basic geometry gets one repair pass; remaining findings are reported
-    # on the page without aborting generation of the rest of the deck.
-    return max(1, int(max_critic_attempts))
-
-
-def _repair_quality(report: CriticReport) -> tuple[float, float]:
-    """Compare geometry defects and capacity pressure independently."""
-    defects = 0
-    pressure = 0.0
-    for violation in report.violations:
-        if violation.severity != 'error':
-            continue
-        weights = {'paragraph_capacity': .25, 'out_of_bounds': 2,
-                   'xml_parse': 1000, 'forbidden_element': 1000,
-                   'filter_requires_raster_fallback': 1000}
-        defects += weights.get(violation.rule, 1)
-        if violation.rule == 'paragraph_capacity' and violation.bbox:
-            match = re.search(r'required: ([\d.]+)px wide and ([\d.]+)px high', violation.detail)
-            if match:
-                width, height = violation.bbox[2:]
-                pressure += max(0, float(match[1]) / max(width, 1) - 1)
-                pressure += max(0, float(match[2]) / max(height, 1) - 1)
-    return defects, round(pressure, 3)
-
-
-def _repair_regressed(before: CriticReport, after: CriticReport) -> bool:
-    return _repair_quality(after) > _repair_quality(before)
+async def _report_initial_svg(svg_content, *, page_num, page_title, page_content,
+                              critic_config, allowed_figures, used_paper_figures,
+                              required_icon, include_general_svg_checks, on_critic,
+                              llm, model, style, enable_visual_critic, visual_critic_config):
+    """Observe the first output without sending edits or changing the page."""
+    report = _generation_static_report(svg_content, critic_config=critic_config,
+        allowed_figures=allowed_figures, used_paper_figures=used_paper_figures,
+        required_icon=required_icon, include_general_svg_checks=include_general_svg_checks,
+        page_content=page_content)
+    await _emit_critic(on_critic, page_num, 1, report, None, None,
+                       {"source": "static", "phase": "initial_generation"})
+    if enable_visual_critic:
+        snapshot = set_usage_context(stage="visual_qa", page=page_num, attempt=1)
+        try:
+            outcome = await visual_check(svg_content, llm=llm, model=model, page_num=page_num,
+                page_title=page_title, style=style, config=visual_critic_config)
+        finally:
+            reset_usage_context(snapshot)
+        await _emit_critic(on_critic, page_num, 1, outcome.report, None, None,
+                           _visual_outcome_metadata(outcome))
 
 
 def _pseudo_icon_badge_violations(svg_content: str) -> list[Violation]:
@@ -2318,25 +2184,6 @@ def _merge_reports(*reports: CriticReport) -> CriticReport:
         violations=violations,
         canvas=canvas,
     )
-
-
-def _archive_repair_svg(
-    repair_archive_dir: Path,
-    *,
-    page_num: int,
-    attempt: int,
-    label: str,
-    svg_content: str,
-) -> str | None:
-    """Persist an SVG snapshot for review before/after repair."""
-    try:
-        repair_archive_dir.mkdir(parents=True, exist_ok=True)
-        archive_filename = f"p{page_num:02d}_attempt{attempt}_{label}.svg"
-        archive_path = repair_archive_dir / archive_filename
-        archive_path.write_text(svg_content, encoding="utf-8")
-        return f"svg_archive/repair/{archive_filename}"
-    except OSError:
-        return None
 
 
 def _archive_visual_render(
@@ -2544,7 +2391,6 @@ async def generate_svg_pages(
         pass
     svg_output_dir = project_dir / "svg_output"
     svg_output_dir.mkdir(parents=True, exist_ok=True)
-    repair_archive_dir = project_dir / "svg_archive" / "repair"
     used_paper_figures: dict[str, int] = {}
     if max_critic_attempts is None:
         max_critic_attempts = DEFAULT_MAX_CRITIC_ATTEMPTS
@@ -2797,262 +2643,23 @@ async def generate_svg_pages(
         )
 
         svg_content = _extract_svg(response.content)
-        for extraction_attempt in range(2, MAX_SVG_EXTRACTION_ATTEMPTS + 1):
-            if svg_content:
-                break
-            if (
-                _completion_near_limit(response, generation_max_tokens)
-                and _svg_response_looks_truncated(response.content)
-            ):
-                generation_max_tokens = _next_higher_svg_max_tokens(generation_max_tokens)
-            conversation.append(LLMMessage.assistant(response.content))
-            conversation.append(
-                LLMMessage.user(
-                    _build_svg_extraction_retry_prompt(
-                        page_num=page_num,
-                        total_pages=len(pages),
-                        page_name=page_name,
-                        page_content=page_content,
-                        attempt=extraction_attempt,
-                    )
-                )
-            )
-            response, generation_max_tokens = await _chat_svg_generation(
-                llm,
-                conversation,
-                model,
-                temperature=0.2,
-                max_tokens=generation_max_tokens,
-                project_dir=project_dir,
-                debug_prefix="executor",
-                page_num=page_num,
-                attempt=extraction_attempt,
-            )
-            svg_content = _extract_svg(response.content)
 
         if svg_content:
+            initial_dir = project_dir / "svg_initial"
+            initial_dir.mkdir(parents=True, exist_ok=True)
+            _write_generated_svg(initial_dir, page_num, svg_content)
             svg_content = _normalize_obvious_short_text_lines(svg_content, page_design_block)
             conversation.append(LLMMessage.assistant(f"```svg\n{_svg_for_model(svg_content)}\n```"))
 
             best_svg = svg_content
-            visual_attempts = 0
-            critic_attempt = 1
-            repair_feedback = ''
-            invalid_retry_used = False
-            static_attempt_limit = _static_attempt_limit_for_report(
-                max_critic_attempts,
-                None,
+            await _report_initial_svg(
+                svg_content, page_num=page_num, page_title=page_name, page_content=page_content,
+                critic_config=critic_config, allowed_figures=used_figures, used_paper_figures=used_paper_figures,
+                required_icon=required_icon, include_general_svg_checks=max_critic_attempts > 0,
+                on_critic=on_critic, llm=llm, model=model, style=style,
+                enable_visual_critic=enable_visual_critic and visual_qa_max_attempts > 0,
+                visual_critic_config=visual_critic_config,
             )
-            while True:
-                report: CriticReport | None = None
-                report_metadata: CriticMetadata = {"source": "static"}
-                event_attempt = critic_attempt
-
-                if static_attempt_limit > 0:
-                    report = _generation_static_report(
-                        svg_content,
-                        critic_config=critic_config,
-                        allowed_figures=used_figures,
-                        used_paper_figures=used_paper_figures,
-                        required_icon=required_icon,
-                        include_general_svg_checks=max_critic_attempts > 0,
-                        page_content=page_content,
-                    )
-                    if report.passed and max_critic_attempts <= 0:
-                        report = None
-                    report_metadata = {"source": "static"}
-                    event_attempt = critic_attempt
-                    if report is not None and not report.passed and critic_attempt > static_attempt_limit:
-                        archive_rel = _archive_repair_svg(
-                            repair_archive_dir,
-                            page_num=page_num,
-                            attempt=event_attempt,
-                            label="unrepaired",
-                            svg_content=svg_content,
-                        )
-                        if archive_rel:
-                            report_metadata = {
-                                **report_metadata,
-                                "before_archive_path": archive_rel,
-                            }
-                        await _emit_critic(
-                            on_critic,
-                            page_num,
-                            event_attempt,
-                            report,
-                            None,
-                            archive_rel,
-                            report_metadata,
-                        )
-                        best_svg = svg_content
-                        break
-
-                # Visual QA has its own budget. A static critic budget of zero
-                # disables only static checks; it does not disable visual QA.
-                if report is None or report.passed:
-                    if report is not None:
-                        await _emit_critic(
-                            on_critic,
-                            page_num,
-                            event_attempt,
-                            report,
-                            None,
-                            None,
-                            report_metadata,
-                        )
-                    if not enable_visual_critic or visual_attempts >= visual_qa_max_attempts:
-                        best_svg = svg_content
-                        break
-                    visual_attempts += 1
-                    snapshot = set_usage_context(
-                        stage="visual_qa", page=page_num, attempt=visual_attempts
-                    )
-                    try:
-                        visual_outcome = await visual_check(
-                            svg_content,
-                            llm=llm,
-                            model=model,
-                            page_num=page_num,
-                            page_title=page_name,
-                            style=style,
-                            config=visual_critic_config,
-                        )
-                    finally:
-                        reset_usage_context(snapshot)
-                    visual_metadata = _visual_outcome_metadata(
-                        visual_outcome,
-                        repair_archive_dir,
-                        page_num=page_num,
-                        attempt=visual_attempts,
-                    )
-                    event_attempt = visual_attempts
-                    if visual_outcome.report.passed:
-                        await _emit_critic(
-                            on_critic,
-                            page_num,
-                            event_attempt,
-                            visual_outcome.report,
-                            None,
-                            None,
-                            visual_metadata,
-                        )
-                        best_svg = svg_content
-                        break
-                    if not visual_outcome.rendered:
-                        best_svg = svg_content
-                        break
-                    report = visual_outcome.report
-                    report_metadata = visual_metadata
-
-                if report is None:
-                    best_svg = svg_content
-                    break
-
-                # Archive pre-repair SVG for before/after comparison.
-                before_archive_rel = _archive_repair_svg(
-                    repair_archive_dir,
-                    page_num=page_num,
-                    attempt=event_attempt,
-                    label="before",
-                    svg_content=svg_content,
-                )
-
-                repair_messages = _svg_repair_messages(svg_content, page_content, report, used_figures, repair_feedback)
-                repair_prompt_text = repair_messages[1].content
-                repair_temp = max(0.1, 0.3 - 0.1 * event_attempt)
-                snapshot = set_usage_context(
-                    stage="repair", page=page_num, attempt=event_attempt
-                )
-                try:
-                    response = await llm.chat(
-                        repair_messages,
-                        model,
-                        temperature=repair_temp,
-                        max_tokens=SVG_REPAIR_MAX_TOKENS,
-                    )
-                finally:
-                    reset_usage_context(snapshot)
-
-                repair_errors = []
-                repaired = _apply_svg_repair_response(response.content, svg_content, repair_errors)
-                decoded_svg = repaired is not None
-                if repaired:
-                    repaired = _normalize_obvious_short_text_lines(repaired, page_design_block)
-                    if report_metadata.get('source') == 'static':
-                        candidate_report = _generation_static_report(
-                            repaired, critic_config=critic_config, allowed_figures=used_figures,
-                            used_paper_figures=used_paper_figures, required_icon=required_icon,
-                            include_general_svg_checks=max_critic_attempts > 0, page_content=page_content)
-                        before_quality, after_quality = _repair_quality(report), _repair_quality(candidate_report)
-                        if _repair_regressed(report, candidate_report):
-                            repair_errors.append('The proposed edits increased outstanding defects. Recompose the current page using these candidate findings:\n' + candidate_report.to_prompt_block(output_format='edits'))
-                            repaired = None
-                        elif (after_quality <= before_quality and not candidate_report.passed
-                              and _svg_for_model(repaired) != _svg_for_model(svg_content)):
-                            static_attempt_limit = max(static_attempt_limit, min(3, critic_attempt + 1))
-                repair_feedback = ''
-                _write_generation_response_debug(project_dir, prefix="repair", page_num=page_num,
-                    attempt=event_attempt, content=response.content, max_tokens=SVG_REPAIR_MAX_TOKENS,
-                    note=f"decoded_svg={decoded_svg}; accepted_candidate={repaired is not None}; validation={repair_errors}")
-                after_archive_rel: str | None = None
-                if repaired:
-                    after_archive_rel = _archive_repair_svg(
-                        repair_archive_dir,
-                        page_num=page_num,
-                        attempt=event_attempt,
-                        label="after",
-                        svg_content=repaired,
-                    )
-                    event_metadata: CriticMetadata = dict(report_metadata)
-                    if before_archive_rel:
-                        event_metadata["before_archive_path"] = before_archive_rel
-                    if after_archive_rel:
-                        event_metadata["after_archive_path"] = after_archive_rel
-                    await _emit_critic(
-                        on_critic,
-                        page_num,
-                        event_attempt,
-                        report,
-                        repair_prompt_text,
-                        before_archive_rel,
-                        event_metadata,
-                    )
-                    svg_content = repaired
-                    best_svg = repaired
-                    conversation.append(
-                        LLMMessage.assistant(f"```svg\n{_svg_for_model(repaired)}\n```")
-                    )
-                    if on_svg_update is not None:
-                        await on_svg_update(page_num, repaired)
-                    if report_metadata.get("source") == "static":
-                        critic_attempt += 1
-                    else:
-                        # Visual QA attempts are counted when the image is
-                        # inspected, so visual repairs do not spend static
-                        # critic budget.
-                        pass
-                else:
-                    event_metadata = dict(report_metadata)
-                    if before_archive_rel:
-                        event_metadata["before_archive_path"] = before_archive_rel
-                    await _emit_critic(
-                        on_critic,
-                        page_num,
-                        event_attempt,
-                        report,
-                        repair_prompt_text,
-                        before_archive_rel,
-                        event_metadata,
-                    )
-                    if (report_metadata.get('source') == 'static' and not invalid_retry_used
-                            and critic_attempt < max(3, max_critic_attempts)):
-                        invalid_retry_used = True
-                        repair_feedback = 'Edits were rejected; the current SVG is unchanged. ' + '; '.join(repair_errors or ['Return a valid identified XML edit list.'])
-                        static_attempt_limit = max(static_attempt_limit, critic_attempt + 1)
-                        critic_attempt += 1
-                        continue
-                    conversation.append(LLMMessage.assistant(response.content))
-                    break
 
             _write_generated_svg(svg_output_dir, page_num, best_svg)
             generated_history[page_num] = (
@@ -3069,7 +2676,7 @@ async def generate_svg_pages(
             conversation.append(LLMMessage.assistant(response.content))
             failure_message = (
                 f"Failed to generate parseable SVG for page {page_num}/{len(pages)} "
-                f"({page_name}) after {MAX_SVG_EXTRACTION_ATTEMPTS} attempts"
+                f"({page_name}) on its first generation response"
             )
             raise RuntimeError(failure_message)
 
@@ -3995,7 +3602,6 @@ async def _generate_parallel_page(
 
     svg_output_dir = project_dir / "svg_output"
     svg_output_dir.mkdir(parents=True, exist_ok=True)
-    repair_archive_dir = project_dir / "svg_archive" / "repair"
 
     figure_guidance = _figure_guidance_block(
         used_figures,
@@ -4138,253 +3744,30 @@ async def _generate_parallel_page(
     )
 
     svg_content = _extract_svg(response.content)
-    for extraction_attempt in range(2, MAX_SVG_EXTRACTION_ATTEMPTS + 1):
-        if svg_content:
-            break
-        if (
-            _completion_near_limit(response, generation_max_tokens)
-            and _svg_response_looks_truncated(response.content)
-        ):
-            generation_max_tokens = _next_higher_svg_max_tokens(generation_max_tokens)
-        conversation.append(LLMMessage.assistant(response.content))
-        conversation.append(
-            LLMMessage.user(
-                _build_svg_extraction_retry_prompt(
-                    page_num=page_num,
-                    total_pages=total_pages,
-                    page_name=page_name,
-                    page_content=str(page_input["page_content"]),
-                    attempt=extraction_attempt,
-                )
-            )
-        )
-        response, generation_max_tokens = await _chat_svg_generation(
-            llm,
-            conversation,
-            model,
-            temperature=0.2,
-            max_tokens=generation_max_tokens,
-            project_dir=project_dir,
-            debug_prefix="parallel",
-            page_num=page_num,
-            attempt=extraction_attempt,
-        )
-        svg_content = _extract_svg(response.content)
 
     if not svg_content:
         conversation.append(LLMMessage.assistant(response.content))
         failure_message = (
             f"Failed to generate parseable SVG for page {page_num}/{total_pages} "
-            f"({page_name}) after {MAX_SVG_EXTRACTION_ATTEMPTS} attempts"
+            f"({page_name}) on its first generation response"
         )
         raise RuntimeError(failure_message)
 
+    initial_dir = project_dir / "svg_initial"
+    initial_dir.mkdir(parents=True, exist_ok=True)
+    _write_generated_svg(initial_dir, page_num, svg_content)
     svg_content = _normalize_obvious_short_text_lines(svg_content, page_design_block)
     conversation.append(LLMMessage.assistant(f"```svg\n{_svg_for_model(svg_content)}\n```"))
 
     best_svg = svg_content
-    visual_attempts = 0
-    critic_attempt = 1
-    repair_feedback = ''
-    invalid_retry_used = False
-    max_critic_attempts = max(0, int(max_critic_attempts))
-    visual_qa_max_attempts = max(0, int(visual_qa_max_attempts or 0))
-    static_attempt_limit = _static_attempt_limit_for_report(
-        max_critic_attempts,
-        None,
+    await _report_initial_svg(
+        svg_content, page_num=page_num, page_title=page_name, page_content=str(page_input["page_content"]),
+        critic_config=critic_config, allowed_figures=used_figures, used_paper_figures={},
+        required_icon=required_icon, include_general_svg_checks=max_critic_attempts > 0,
+        on_critic=on_critic, llm=llm, model=model, style=style,
+        enable_visual_critic=enable_visual_critic and visual_qa_max_attempts > 0,
+        visual_critic_config=visual_critic_config,
     )
-
-    while True:
-        report: CriticReport | None = None
-        report_metadata: CriticMetadata = {"source": "static"}
-        event_attempt = critic_attempt
-
-        if static_attempt_limit > 0:
-            report = _generation_static_report(
-                svg_content,
-                critic_config=critic_config,
-                allowed_figures=used_figures,
-                used_paper_figures={},
-                required_icon=required_icon,
-                include_general_svg_checks=max_critic_attempts > 0,
-                page_content=str(page_input["page_content"]),
-            )
-            if report.passed and max_critic_attempts <= 0:
-                report = None
-            if report is not None and not report.passed and critic_attempt > static_attempt_limit:
-                archive_rel = _archive_repair_svg(
-                    repair_archive_dir,
-                    page_num=page_num,
-                    attempt=event_attempt,
-                    label="unrepaired",
-                    svg_content=svg_content,
-                )
-                if archive_rel:
-                    report_metadata = {
-                        **report_metadata,
-                        "before_archive_path": archive_rel,
-                    }
-                await _emit_critic(
-                    on_critic,
-                    page_num,
-                    event_attempt,
-                    report,
-                    None,
-                    archive_rel,
-                    report_metadata,
-                )
-                best_svg = svg_content
-                break
-
-        if report is None or report.passed:
-            if report is not None:
-                await _emit_critic(
-                    on_critic,
-                    page_num,
-                    event_attempt,
-                    report,
-                    None,
-                    None,
-                    report_metadata,
-                )
-            if not enable_visual_critic or visual_attempts >= visual_qa_max_attempts:
-                best_svg = svg_content
-                break
-            visual_attempts += 1
-            snapshot = set_usage_context(
-                stage="visual_qa",
-                page=page_num,
-                attempt=visual_attempts,
-            )
-            try:
-                visual_outcome = await visual_check(
-                    svg_content,
-                    llm=llm,
-                    model=model,
-                    page_num=page_num,
-                    page_title=page_name,
-                    style=style,
-                    config=visual_critic_config,
-                )
-            finally:
-                reset_usage_context(snapshot)
-            visual_metadata = _visual_outcome_metadata(visual_outcome)
-            event_attempt = visual_attempts
-            if visual_outcome.report.passed:
-                await _emit_critic(
-                    on_critic,
-                    page_num,
-                    event_attempt,
-                    visual_outcome.report,
-                    None,
-                    None,
-                    visual_metadata,
-                )
-                best_svg = svg_content
-                break
-            if not visual_outcome.rendered:
-                best_svg = svg_content
-                break
-            report = visual_outcome.report
-            report_metadata = visual_metadata
-
-        if report is None:
-            best_svg = svg_content
-            break
-
-        before_archive_rel = _archive_repair_svg(
-            repair_archive_dir,
-            page_num=page_num,
-            attempt=event_attempt,
-            label="before",
-            svg_content=svg_content,
-        )
-        repair_messages = _svg_repair_messages(svg_content, str(page_input["page_content"]), report, used_figures, repair_feedback)
-        repair_prompt_text = repair_messages[1].content
-        repair_temp = max(0.1, 0.3 - 0.1 * event_attempt)
-        snapshot = set_usage_context(stage="repair", page=page_num, attempt=event_attempt)
-        try:
-            response = await llm.chat(
-                repair_messages,
-                model,
-                temperature=repair_temp,
-                max_tokens=SVG_REPAIR_MAX_TOKENS,
-            )
-        finally:
-            reset_usage_context(snapshot)
-
-        repair_errors = []
-        repaired = _apply_svg_repair_response(response.content, svg_content, repair_errors)
-        decoded_svg = repaired is not None
-        if repaired:
-            repaired = _normalize_obvious_short_text_lines(repaired, page_design_block)
-            if report_metadata.get('source') == 'static':
-                candidate_report = _generation_static_report(
-                    repaired, critic_config=critic_config, allowed_figures=used_figures,
-                    used_paper_figures={}, required_icon=required_icon,
-                    include_general_svg_checks=max_critic_attempts > 0, page_content=str(page_input["page_content"]))
-                before_quality, after_quality = _repair_quality(report), _repair_quality(candidate_report)
-                if _repair_regressed(report, candidate_report):
-                    repair_errors.append('The proposed edits increased outstanding defects. Recompose the current page using these candidate findings:\n' + candidate_report.to_prompt_block(output_format='edits'))
-                    repaired = None
-                elif (after_quality <= before_quality and not candidate_report.passed
-                      and _svg_for_model(repaired) != _svg_for_model(svg_content)):
-                    static_attempt_limit = max(static_attempt_limit, min(3, critic_attempt + 1))
-        repair_feedback = ''
-        _write_generation_response_debug(project_dir, prefix="parallel_repair", page_num=page_num,
-            attempt=event_attempt, content=response.content, max_tokens=SVG_REPAIR_MAX_TOKENS,
-            note=f"decoded_svg={decoded_svg}; accepted_candidate={repaired is not None}; validation={repair_errors}")
-        if repaired:
-            after_archive_rel = _archive_repair_svg(
-                repair_archive_dir,
-                page_num=page_num,
-                attempt=event_attempt,
-                label="after",
-                svg_content=repaired,
-            )
-            event_metadata: CriticMetadata = dict(report_metadata)
-            if before_archive_rel:
-                event_metadata["before_archive_path"] = before_archive_rel
-            if after_archive_rel:
-                event_metadata["after_archive_path"] = after_archive_rel
-            await _emit_critic(
-                on_critic,
-                page_num,
-                event_attempt,
-                report,
-                repair_prompt_text,
-                before_archive_rel,
-                event_metadata,
-            )
-            svg_content = repaired
-            best_svg = repaired
-            conversation.append(LLMMessage.assistant(f"```svg\n{_svg_for_model(repaired)}\n```"))
-            if on_svg_update is not None:
-                await on_svg_update(page_num, repaired)
-            if report_metadata.get("source") == "static":
-                critic_attempt += 1
-        else:
-            event_metadata = dict(report_metadata)
-            if before_archive_rel:
-                event_metadata["before_archive_path"] = before_archive_rel
-            await _emit_critic(
-                on_critic,
-                page_num,
-                event_attempt,
-                report,
-                repair_prompt_text,
-                before_archive_rel,
-                event_metadata,
-            )
-            if (report_metadata.get('source') == 'static' and not invalid_retry_used
-                    and critic_attempt < max(3, max_critic_attempts)):
-                invalid_retry_used = True
-                repair_feedback = 'Edits were rejected; the current SVG is unchanged. ' + '; '.join(repair_errors or ['Return a valid identified XML edit list.'])
-                static_attempt_limit = max(static_attempt_limit, critic_attempt + 1)
-                critic_attempt += 1
-                continue
-            conversation.append(LLMMessage.assistant(response.content))
-            break
 
     _write_generated_svg(svg_output_dir, page_num, best_svg)
     return page_num, best_svg
@@ -4628,32 +4011,3 @@ def _extract_svg(text: str) -> str | None:
         return match.group(1).strip()
 
     return None
-
-
-def _build_svg_extraction_retry_prompt(
-    *,
-    page_num: int,
-    total_pages: int,
-    page_name: str,
-    page_content: str,
-    attempt: int,
-) -> str:
-    """Build structured feedback when the model output is not parseable SVG."""
-    return (
-        "## Generation Validation Report\n\n"
-        f"The previous response for page {page_num}/{total_pages} ({page_name}) "
-        "did not contain a parseable complete SVG document.\n\n"
-        "## Failure\n"
-        "- No complete `<svg ...>...</svg>` block could be extracted.\n"
-        "- The current page has not been generated yet.\n\n"
-        "## Regeneration Instructions\n"
-        f"- Regenerate page {page_num}/{total_pages} only; do not move to another page.\n"
-        "- Start from a clean SVG document instead of continuing or patching the previous response; it may have been truncated.\n"
-        "- Do not spend tokens on hidden reasoning, analysis, explanations, or empty output. Emit visible SVG code immediately.\n"
-        "- Preserve the page content below; do not invent a different slide.\n"
-        "- Keep the SVG concise: prefer native text/rect/path groups, avoid excessive decorative paths, and stay well below the token limit.\n"
-        "- Return one complete SVG document, wrapped in a ```svg code block.\n"
-        "- The SVG must start with `<svg` and end with `</svg>`.\n\n"
-        f"## Page Content To Render\n\n{page_content}\n\n"
-        f"## Retry Attempt\n\n{attempt}"
-    )

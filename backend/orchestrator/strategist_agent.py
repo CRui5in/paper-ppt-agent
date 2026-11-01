@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import json
 import re
 from pathlib import Path
 
@@ -17,70 +16,8 @@ from backend.orchestrator.manuscript import (
 logger = logging.getLogger(__name__)
 
 PROMPT_PATH = Path(__file__).parent / "prompts" / "strategist.md"
-EVIDENCE_PROMPT_PATH = Path(__file__).parent / "prompts" / "design_evidence.md"
 MAX_DESIGN_SPEC_ATTEMPTS = 2
 MAX_DESIGN_SPEC_CONTINUATIONS = 2
-
-
-def _apply_visual_evidence_replacements(content: str, replacements: list[dict]) -> str:
-    """Replace visual fields while preserving the authored titles and content."""
-    fields = {'layout_family': 'Layout Family', 'visual_relationship': 'Visual relationship',
-              'visual_material': 'Visual material', 'design_brief': 'Design brief'}
-    blocks = list(re.finditer(r'(?m)^####\s+Slide\s+(\d+)\b[^\n]*', content))
-    patches = {int(item['slide']): item for item in replacements}
-    known = {int(block.group(1)) for block in blocks}
-    if not set(patches).issubset(known):
-        raise ValueError('Visual evidence review referenced an unknown slide')
-    for index in range(len(blocks)-1, -1, -1):
-        match = blocks[index]
-        patch = patches.get(int(match.group(1)))
-        if patch is None:
-            continue
-        start = match.start()
-        end = blocks[index+1].start() if index+1 < len(blocks) else len(content)
-        section = re.search(r'(?m)^##\s+[XVI]+[.\s]', content[match.end():end])
-        if section:
-            end = match.end() + section.start()
-        block = content[start:end]
-        for key, label in fields.items():
-            value = patch.get(key)
-            if not isinstance(value, str) or not value.strip():
-                raise ValueError(f'Visual evidence review omitted {key}')
-            replacement = '- **' + label + '**: ' + value.strip().replace('\n', '\n  ') + '\n'
-            pattern = re.compile(r'(?m)^[-*]\s+(?:\*\*|`)?' + re.escape(label) + r'(?:\*\*|`)?\s*:[^\n]*(?:\n(?![-*]\s|#{1,6}\s)[^\n]*)*', re.I)
-            existing = pattern.search(block)
-            if existing:
-                block = block[:existing.start()] + replacement + block[existing.end():]
-            else:
-                block = block.rstrip() + '\n' + replacement
-        content = content[:start] + block + content[end:]
-    return content
-
-
-async def _review_visual_evidence(content: str, manuscript: str, llm: LLMProvider,
-                                  model: str, debug_dir: Path | None,
-                                  figure_inventory: list[dict] | None = None) -> str:
-    messages = [LLMMessage.system(EVIDENCE_PROMPT_PATH.read_text(encoding='utf8')),
-                LLMMessage.user(f'## Manuscript\n{manuscript}\n\n## Assigned source figures\n'
-                    f'{json.dumps(figure_inventory or [], ensure_ascii=False, default=str)}\n\n'
-                    f'## Proposed design specification\n{content}')]
-    try:
-        response = await llm.chat(messages, model, temperature=.1, max_tokens=8192)
-        raw = re.sub(r'^\s*```(?:json)?\s*|\s*```\s*$', '', response.content.strip())
-        review = json.loads(raw)
-        if not isinstance(review.get('replacements'), list):
-            raise ValueError('Expected a replacements array')
-        candidate = _apply_visual_evidence_replacements(content, review['replacements'])
-        if debug_dir:
-            debug_dir.mkdir(parents=True, exist_ok=True)
-            (debug_dir/'visual_evidence_review.json').write_text(json.dumps(review, ensure_ascii=False, indent=2), encoding='utf8')
-        return candidate
-    except Exception as error:
-        logger.warning('Visual evidence review could not be applied: %s', error)
-        if debug_dir:
-            debug_dir.mkdir(parents=True, exist_ok=True)
-            (debug_dir/'visual_evidence_review.json').write_text(json.dumps({'status': 'unapplied', 'error': str(error)}, ensure_ascii=False, indent=2), encoding='utf8')
-        return content
 
 
 def _design_spec_max_tokens(model: str) -> int:
@@ -651,8 +588,6 @@ async def create_design_spec(
             if error is None:
                 if enforce_page_types:
                     content = _align_content_outline_page_types(content, inventory)
-                if any(item['type'] == 'content' for item in inventory):
-                    content = await _review_visual_evidence(content, manuscript, llm, model, debug_dir, figure_inventory)
                 return content
             if not truncated or not chunk or continuation == MAX_DESIGN_SPEC_CONTINUATIONS:
                 break
