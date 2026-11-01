@@ -21,6 +21,7 @@ from .flatten_tspan import flatten_text_in_svg
 from .normalize_fonts import normalize_text_fonts_in_svg
 from .render_math import render_math_in_svg
 from ..svg_text_layout import reflow_declared_paragraphs, layout_text_groups, normalize_inline_scripts
+from ..svg_text_flow import layout_text_flows
 
 _PREVIEW_CONTENT_CACHE_LIMIT = 256
 _preview_content_cache: OrderedDict[str, tuple[int, int, str]] = OrderedDict()
@@ -104,7 +105,7 @@ def _prepare_in_place(svg_path: Path) -> None:
     normalize_text_fonts_in_svg(svg_path)
     render_math_in_svg(svg_path)
     tree = ET.parse(svg_path)
-    if normalize_inline_scripts(tree.getroot()) + reflow_declared_paragraphs(tree.getroot()) + layout_text_groups(tree.getroot()):
+    if normalize_inline_scripts(tree.getroot()) + layout_text_flows(tree.getroot()) + reflow_declared_paragraphs(tree.getroot()) + layout_text_groups(tree.getroot()):
         tree.write(svg_path, encoding="unicode")
     embed_icons_in_file(svg_path, settings.icons_dir)
     embed_images_in_svg(svg_path)

@@ -6,6 +6,7 @@ Use the exact presentation viewBox and inline SVG attributes.
 
 - Native shapes: `rect`, `circle`, `ellipse`, `line`, `polyline`, `polygon`, and `path` with line, Bezier, and arc commands. Use them for diagrams, plots, connectors, annotations, and illustrations that explain the source material.
 - Text: `text` and inline `tspan`, with a system font stack that covers the requested language. Continuous body/caption/callout paragraphs use a parent `g` with `data-textbox="x y width height"` and an appropriate `data-role` for measured wrapping. Diagram and data labels can be positioned directly.
+- Text flows: `g data-layout="text-flow" data-flow-box="x y width height" data-gap="12"` positions its direct `text` children vertically using measured font metrics, wrapping, and the declared gap. Children carry their typography and inline `tspan` styles; backgrounds and graphics are separate siblings. Frame dimensions remain fixed and excess capacity is reported.
 - Inline scripts: use `tspan` with a relative `font-size` and `baseline-shift="sub"` or `baseline-shift="super"`; the surrounding text keeps its baseline.
 - Math: `g data-latex="..." data-math-box="x y width height"`; expressions are typeset as vector paths during preparation.
 - Images: assigned existing local paths via `image href="..."`, preserving the complete paper figure with `preserveAspectRatio="xMidYMid meet"`.

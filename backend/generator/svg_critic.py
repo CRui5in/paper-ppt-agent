@@ -470,6 +470,7 @@ def _normalize_hex(value: str) -> str:
 def check_paragraph_layout(svg_content: str) -> CriticReport:
     """Check the measured capacity of explicit paragraph flow boxes."""
     from .svg_text_layout import paragraph_layout_issues
+    from .svg_text_flow import text_flow_issues
 
     try:
         root = ET.fromstring(svg_content)
@@ -488,7 +489,7 @@ def check_paragraph_layout(svg_content: str) -> CriticReport:
             element=issue["element"],
             bbox=issue["box"],
         )
-        for issue in paragraph_layout_issues(root)
+        for issue in paragraph_layout_issues(root) + text_flow_issues(root)
     ]
     return CriticReport(passed=not violations, violations=violations)
 

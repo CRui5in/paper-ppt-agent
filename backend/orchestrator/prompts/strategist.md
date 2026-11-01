@@ -24,7 +24,7 @@ Describe recurring chrome and structural pages. Specify stroke weights, connecto
 
 ### IV. Typography System
 
-Give a CJK-compatible font stack when needed, and a readable hierarchy for titles, body, diagram labels, captions, and footer. On a 1280x720 canvas, body text normally starts at 18px, captions at 12-14px, and titles at 28-36px; adapt emphasis and display sizes to the intended hierarchy. Reserve spacing for headers and captions.
+Give a CJK-compatible font stack when needed, and a readable hierarchy for titles, body, diagram labels, captions, and footer. On a 1280x720 canvas, 24px body text and 36px titles are useful starting points; adapt them to the assigned template and viewing context. Select visible copy at the chosen type sizes. Reserve spacing for headers and captions.
 
 ### V. Layout Principles
 
@@ -36,7 +36,9 @@ Allocate space for the title, main visual, explanations, and captions before det
 
 Calculate parallel region widths after reserving margins and gutters. Include their bounds in the page brief so the composition has room for its full text and figures.
 
-Compose the visible copy together with those regions. Select the evidence and explanation that the audience can read at the planned type size, then allocate paragraph lines, labels, and captions within the available height. Carry supporting detail into the speaker notes. A table's selected rows and columns, a diagram's labels, and an equation's explanations belong to the same space allocation as their visual.
+Compose the visible copy together with those regions. Choose what the audience should read first, then give supporting material a quieter scale and its own space. Use direct labels and annotations to explain the visual where the audience encounters them. Adjacent prose supplies the context needed to read it; speaker notes carry the extended explanation.
+
+Plan text-bearing regions from their selected copy: usable line width, type size, line height, wrapped lines, and padding. Reserve the resulting height before placing neighboring material. Include these dimensions in the page brief. A table's selected rows and columns, a diagram's labels, and an equation's explanations belong to the same space allocation as their visual.
 
 ### VI. Icon Usage
 
@@ -62,8 +64,8 @@ For every counted page, use a heading `#### Slide NN - Title` and include:
 - `Style Family`: the common deck identity; all chapter pages share one divider family.
 - `Layout Family`: a short descriptive name for the proposed composition. Choose a name that describes this page's composition.
 - `Density`: based on this page's material and visual share.
-- `Design brief`: the composition, reading order, and supporting details. Describe the geometry and source assets used on the page.
 - `Content`: ready-to-draw visible copy grouped by the planned regions. Use the available region sizes and readable typography to choose the amount of material.
+- `Design brief`: the composition and reading order, with bounds and text layout dimensions for the selected copy. Describe the geometry and source assets used on the page.
 - `Speaker notes`: supporting explanations and source detail for oral delivery.
 
 For a page with an explanatory visual, add `Visual relationship` to describe what its placement or encoding explains, and `Visual material` to identify the source material used. Include the selected cells, labels, values, or notation in `Content` as needed by that composition.
@@ -78,6 +80,6 @@ Specify tone and useful explanation for oral delivery. Notes can carry transitio
 
 ### XI. Technical Constraints Reminder
 
-Use the native SVG export vocabulary: shapes, Bezier/arc paths, connectors, inline text, local images, gradients, and simple per-shape shadows. Equations use `data-latex` with `data-math-box` for vector typesetting. Paragraph groups use `data-textbox` for measured wrapping.
+Use the native SVG export vocabulary: shapes, Bezier/arc paths, connectors, inline text, local images, gradients, and simple per-shape shadows. Equations use `data-latex` with `data-math-box` for vector typesetting. Paragraph groups use `data-textbox` for measured wrapping. Successive text blocks can use `data-layout="text-flow"` with a `data-flow-box="x y width height"` and `data-gap` for measured vertical placement.
 
 Keep SVG static and use inline styling. CSS stylesheets/classes, masks, clip paths, patterns, text paths, `foreignObject`, animation, scripts, group filters, and complex blur effects are outside the export contract. Plan the same visual explanation using supported geometry.

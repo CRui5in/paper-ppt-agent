@@ -114,21 +114,19 @@
 
 > **Design principle**: Use body font size as baseline (1x), derive other levels proportionally
 > **Unit convention**: Use px uniformly (SVG native unit) to avoid pt/px conversion errors
-> **Selection principle**: Font size is based on **content density**, not design style
+> **Selection principle**: Establish readable typography for the canvas and viewing context, then select the visible content that fits it.
 
-**Baseline**: Body font size = [fill in]px (choose 18-24px based on content density)
+**Baseline**: Body font size = [fill in]px (24px is a starting point on a 1280x720 canvas; follow assigned template typography)
 
-| Purpose | Ratio | 24px baseline (relaxed) | 18px baseline (dense) | Weight |
-| ------- | ----- | ---------------------- | -------------------- | ------ |
-| Cover title | 2.5-3x | 60-72px | 45-54px | Bold |
-| Chapter title | 2-2.5x | 48-60px | 36-45px | Bold |
-| Content title | 1.5-2x | 36-48px | 27-36px | Bold |
-| Subtitle | 1.2-1.5x | 29-36px | 22-27px | SemiBold |
-| **Body content** | **1x** | **24px** | **18px** | Regular |
-| Annotation | 0.75-0.85x | 18-20px | 14-15px | Regular |
-| Page number/date | 0.55-0.65x | 13-16px | 10-12px | Regular |
-
-> **Tip**: Dense content (6+ points per page) use 18px; relaxed content (3-5 points per page) use 24px
+| Purpose | Ratio | Example at a 24px baseline | Weight |
+| ------- | ----- | ------------------------- | ------ |
+| Cover title | 2.5-3x | 60-72px | Bold |
+| Chapter title | 2-2.5x | 48-60px | Bold |
+| Content title | 1.5-2x | 36-48px | Bold |
+| Subtitle | 1.2-1.5x | 29-36px | SemiBold |
+| **Body content** | **1x** | **24px** | Regular |
+| Annotation | 0.75-0.85x | 18-20px | Regular |
+| Page number/date | 0.55-0.65x | 13-16px | Regular |
 
 ---
 
@@ -210,13 +208,13 @@ cell_height = (H - (rows - 1) × 20) / rows
 **Dynamic wrapping guidance**:
 1. Let ordinary non-final lines use most of the available width instead of inserting conservative early breaks.
 2. Use semantic punctuation and phrase boundaries for manual line breaks.
-3. Sparse pages may use larger type and wider text measures; text-heavy pages may use smaller type, tighter spacing, or additional columns when readable.
-4. Reflow or resize only when actual clipping or overlap occurs. Light raggedness is acceptable.
+3. Use consistent line heights and paragraph spacing to distinguish continuous explanation from separate ideas.
+4. Choose line widths and composition together with the selected visible copy.
 
 **Anti-Overflow Rules**:
 1. Preserve readable padding and clear separation between text, figures, charts, and footers.
 2. Treat each text region independently according to its width and role.
-3. Prefer reflowing regions, widening a text box, or adjusting typography before removing content.
+3. Select visible copy at the planned readable type sizes. Carry extended explanation and supporting detail into speaker notes.
 4. Only split content across slides when the manuscript and page plan already support that structure.
 
 ---

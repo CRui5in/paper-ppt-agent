@@ -26,6 +26,7 @@ from .flatten_tspan import flatten_text_in_svg
 from .normalize_fonts import normalize_text_fonts_in_svg
 from .render_math import render_math_in_svg
 from ..svg_text_layout import reflow_declared_paragraphs, layout_text_groups, normalize_inline_scripts
+from ..svg_text_flow import layout_text_flows
 from .svg_rect_to_path import convert_rounded_rects_in_svg
 from ..project_manager import prepare_for_finalize, get_svg_files
 
@@ -83,7 +84,7 @@ def finalize_project(
         ET.parse(svg_path)
         stats["equations_rendered"] += render_math_in_svg(svg_path)
         text_tree = ET.parse(svg_path)
-        if normalize_inline_scripts(text_tree.getroot()) + reflow_declared_paragraphs(text_tree.getroot()) + layout_text_groups(text_tree.getroot()):
+        if normalize_inline_scripts(text_tree.getroot()) + layout_text_flows(text_tree.getroot()) + reflow_declared_paragraphs(text_tree.getroot()) + layout_text_groups(text_tree.getroot()):
             text_tree.write(svg_path, encoding="unicode")
 
         # Step 1: Embed icons

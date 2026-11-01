@@ -838,10 +838,11 @@ def _normalize_obvious_short_text_lines(svg: str, page_design_block: str) -> str
     from backend.generator.svg_finalize.render_math import render_math_in_tree
     from backend.generator.svg_finalize.normalize_fonts import normalize_text_fonts_in_tree
     from backend.generator.svg_text_layout import reflow_declared_paragraphs, layout_text_groups, normalize_inline_scripts
+    from backend.generator.svg_text_flow import layout_text_flows
 
     fonts_normalized = normalize_text_fonts_in_tree(root)
     math_rendered = render_math_in_tree(root) + normalize_inline_scripts(root)
-    paragraphs_reflowed = reflow_declared_paragraphs(root) + layout_text_groups(root)
+    paragraphs_reflowed = layout_text_flows(root) + reflow_declared_paragraphs(root) + layout_text_groups(root)
     if not math_rendered and not paragraphs_reflowed and not fonts_normalized:
         return _identify_svg_elements(svg)
     return _identify_svg_elements(ET.tostring(root, encoding="unicode"))
