@@ -61,17 +61,18 @@ plan. Keep local pivots as `content` slides with clear section labels.
 
 For each slide, specify in this exact format:
 
-Keep this plan separate from visible slide copy. For structural pages, describe the orientation or closing purpose and mark evidence as not applicable.
+Keep this plan separate from visible slide copy. For structural pages, describe the orientation or closing purpose.
 
 ```
 Slide N: [Title]
   Page type: [cover/toc/chapter/content/ending]
-  Narrative role: [Hook/Tension/Core Insight/Mechanism/Evidence/Implications/Coda]
+  Narrative role: [How this slide contributes to the presentation]
   Purpose: [What this page explains or presents]
-  Key evidence: [Data point, figure, or argument that supports the insight]
   Visual strategy: [How to present — comparison, flow diagram, data table, before/after, etc.]
   Detail density: [page-derived — how much this particular slide should carry]
 ```
+
+Include a `Source material` field for the passages, observations, or other material developed on a content slide.
 
 ---
 

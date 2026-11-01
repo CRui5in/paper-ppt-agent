@@ -62,11 +62,11 @@ For every counted page, use a heading `#### Slide NN - Title` and include:
 - `Style Family`: the common deck identity; all chapter pages share one divider family.
 - `Layout Family`: a short descriptive name for the proposed composition. Choose a name that describes this page's composition.
 - `Density`: based on this page's material and visual share.
-- `Visual relationship`: what the audience should understand from placement and visual encoding.
-- `Visual material`: the supplied material used by the proposed visual, with its source reference and relevant values, conditions, or relationships.
-- `Design brief`: the main visual, reading order, supporting details, and relevant source assets. Describe the main geometry and relationships for the designer to develop.
-- `Content`: ready-to-draw visible copy grouped by the planned regions, with the selected table cells, diagram labels, values, and notation. Use the available region sizes and readable typography to choose the amount of material.
+- `Design brief`: the composition, reading order, and supporting details. Describe the geometry and source assets used on the page.
+- `Content`: ready-to-draw visible copy grouped by the planned regions. Use the available region sizes and readable typography to choose the amount of material.
 - `Speaker notes`: supporting explanations and source detail for oral delivery.
+
+For a page with an explanatory visual, add `Visual relationship` to describe what its placement or encoding explains, and `Visual material` to identify the source material used. Include the selected cells, labels, values, or notation in `Content` as needed by that composition.
 
 The designer may improve the proposed composition while preserving the page's material and explicit template boundaries. Briefs should expose why a diagram, chart, figure, or typographic treatment suits the content.
 

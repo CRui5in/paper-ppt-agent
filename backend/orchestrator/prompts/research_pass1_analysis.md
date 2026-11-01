@@ -41,7 +41,7 @@ Source anchors should name a section, page, figure, table, formula, quotation, c
 
 ## 5. Assumptions and Boundaries
 
-- Separate assumptions used to construct data or labels from assumptions required at inference or application time.
+- Identify the assumptions underlying the paper's reasoning and the conditions under which its conclusions hold.
 - Identify scope conditions, validity threats, uncertainty, and generalization limits.
 - Distinguish limitations stated by the authors from additional reviewer concerns.
 - Keep this audit in the analysis. Recommend a qualification for slide copy when it affects the central conclusion, evidence interpretation, or application conditions; place it beside the relevant claim or in a focused discussion.

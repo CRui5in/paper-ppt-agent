@@ -130,14 +130,13 @@ These tokens are the only valid way to reference extracted paper figures.
 
 ### 3.5 Output Format
 
-Produce a Markdown document where each slide is separated by `---`. Each slide section should contain:
+Produce a Markdown document where each slide is separated by `---`. Each slide section contains:
 
 1. `<!-- page_type: cover|toc|chapter|content|ending -->`
 2. **Slide title** as a `## Heading`
-3. **Opening** appropriate to this page's material and purpose
-4. **Supporting content** — bullets, data points, or structured blocks
-5. **Visual markers** and/or **figure tokens** where appropriate
-6. **Key data/numbers** highlighted in bold
+3. **Visible content** organized for this page's material and purpose
+
+Add visual markers or figure tokens where they help explain the selected material. Use bold where emphasis helps the reader.
 
 The ending page should be a closing/thanks page, not a final content summary.
 Slide 2 should be a mandatory table of contents whose entries match the final

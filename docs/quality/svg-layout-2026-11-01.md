@@ -181,3 +181,9 @@ Validation: 92 tests passed. New cases cover exact values and units, inequalitie
 ## Keep audit stages separate
 
 The corpus evaluator now records geometry and native-export outcomes before the advisory model review. An invalid review response is recorded as `fidelity_status=failed`, preserving its error and raw response; it triggers no retry and does not overwrite generation/export evidence. Omission review receives the page briefs and compares visible output with their selected copy, while factual consistency remains checked against the manuscript and source excerpts.
+
+## Conditional content fields
+
+The page-brief schema still requested `Visual relationship` and `Visual material` on every page, including typographic pages. These fields now accompany an explanatory visual when the composition uses one. The visible-copy field includes cells, labels, values, and notation as required by the selected composition. The manuscript format now requires page metadata, title, and visible content, rather than treating highlighted numbers as a per-page item. Narrative roles are descriptive rather than a fixed label menu, and the analysis asks about the assumptions underlying the paper's reasoning rather than presuming data-label construction and inference stages.
+
+The original layout reference, fixed canvas regions, card dimensions, and chart-library conventions remain unchanged. This is a prompt-contract change; it adds no generation retry, repair, or fallback. Validation: all 92 existing tests passed, including design-spec parsing with absent visual-material fields. A fresh model evaluation has not been run for this change; these tests do not establish an improvement in generated visual quality.
