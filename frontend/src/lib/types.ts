@@ -565,6 +565,22 @@ export interface CancelJobResponse {
   status: string;
 }
 
+export interface GenerationRecovery {
+  backend: "agent" | "provider";
+  can_resume: boolean;
+  can_retry: boolean;
+  stage: string;
+  completed_pages: number;
+  total_pages: number;
+  reason: string | null;
+}
+
+export interface GenerationFeedback {
+  id: string;
+  message: string;
+  created_at: number;
+}
+
 export interface ReexportResponse {
   job_id: string;
   status: string;

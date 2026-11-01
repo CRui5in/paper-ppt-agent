@@ -183,8 +183,8 @@ async def write_generation_request(job_id: str, request: Any) -> Path:
     }
 
     def _write() -> None:
-        target_dir.mkdir(parents=True, exist_ok=True)
-        target.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        from backend.runtime.io import _write_text_atomic
+        _write_text_atomic(target, json.dumps(payload, ensure_ascii=False, indent=2), "utf-8")
 
     await aoffload(_write)
     return target

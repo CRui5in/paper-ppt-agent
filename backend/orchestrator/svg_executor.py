@@ -33,6 +33,7 @@ from backend.orchestrator.manuscript import (
 from backend.orchestrator.source_records import page_records, records_context
 from backend.orchestrator.copy_metrics import copy_metrics_context
 from backend.usage.tracker import reset_usage_context, set_usage_context
+from backend.orchestrator.checkpoints import GenerationCheckpoints
 
 # `[[FIG:fig_007_p9_page]]` style tokens emitted by the research agent.
 FIG_TOKEN_RE = re.compile(r"\[\[FIG:([A-Za-z0-9_\-]+)\]\]")
@@ -2344,6 +2345,40 @@ def _same_type_svg_history_message(
     return "\n".join(parts)
 
 
+def _resume_svg_pages(project_dir: Path, resume: bool) -> dict[int, str]:
+    if not resume:
+        return {}
+    checkpoints = GenerationCheckpoints(project_dir)
+    saved = checkpoints.saved_pages()
+    # Existing jobs predate page checkpoints. Their output directory contains
+    # pages written only after initial rendering and capacity checks succeeded.
+    for path in get_svg_files(project_dir, source="output"):
+        page = slide_index_from_svg_path(path)
+        if page is None:
+            continue
+        if page not in saved:
+            content = path.read_text(encoding="utf-8")
+            ET.fromstring(content)
+            checkpoints.save_page(page, path)
+            saved[page] = content
+    return saved
+
+
+def _saved_initial_svg(project_dir: Path, page: int, resume: bool, retry_failed_pages: bool) -> str | None:
+    if not resume:
+        return None
+    path = project_dir / "svg_initial" / f"slide_{page:03d}.svg"
+    if not path.is_file():
+        return None
+    content = path.read_text(encoding="utf-8")
+    if retry_failed_pages:
+        archive = project_dir / "checkpoints" / "attempts" / f"slide_{page:03d}_{uuid.uuid4().hex}.svg"
+        archive.parent.mkdir(parents=True, exist_ok=True)
+        archive.write_text(content, encoding="utf-8")
+        return None
+    return content
+
+
 async def generate_svg_pages(
     design_spec: str,
     manuscript: str,
@@ -2367,6 +2402,8 @@ async def generate_svg_pages(
     visual_critic_config: VisualCriticConfig | None = None,
     template_context: str | None = None,
     template_skeletons: dict[str, str] | None = None,
+    resume: bool = False,
+    retry_failed_pages: bool = False,
 ) -> AsyncIterator[tuple[int, str]]:
     """Generate SVG code for each slide page sequentially."""
     system_prompt = PROMPT_PATH.read_text(encoding="utf-8")
@@ -2395,6 +2432,12 @@ async def generate_svg_pages(
     svg_output_dir = project_dir / "svg_output"
     svg_output_dir.mkdir(parents=True, exist_ok=True)
     used_paper_figures: dict[str, int] = {}
+    resumed_pages = _resume_svg_pages(project_dir, resume)
+    for previous_page, svg in resumed_pages.items():
+        for href in IMAGE_HREF_RE.findall(svg):
+            key = _paper_figure_key_from_href(href)
+            if key is not None:
+                used_paper_figures.setdefault(key, previous_page)
     if max_critic_attempts is None:
         max_critic_attempts = DEFAULT_MAX_CRITIC_ATTEMPTS
     max_critic_attempts = max(0, int(max_critic_attempts))
@@ -2448,6 +2491,10 @@ async def generate_svg_pages(
     for i, page_content in enumerate(pages):
         page_num = i + 1
         if target_pages is not None and page_num not in target_pages:
+            continue
+
+        if page_num in resumed_pages:
+            yield page_num, resumed_pages[page_num]
             continue
 
         page_name = _make_page_name(page_num, page_content)
@@ -2634,19 +2681,13 @@ async def generate_svg_pages(
             pass
 
         generation_max_tokens = SVG_GENERATION_MAX_TOKENS
-        response, generation_max_tokens = await _chat_svg_generation(
-            llm,
-            conversation,
-            model,
-            temperature=0.3,
-            max_tokens=generation_max_tokens,
-            project_dir=project_dir,
-            debug_prefix="executor",
-            page_num=page_num,
-            attempt=1,
-        )
-
-        svg_content = _extract_svg(response.content)
+        svg_content = _saved_initial_svg(project_dir, page_num, resume, retry_failed_pages)
+        if svg_content is None:
+            response, generation_max_tokens = await _chat_svg_generation(
+                llm, conversation, model, temperature=0.3, max_tokens=generation_max_tokens,
+                project_dir=project_dir, debug_prefix="executor", page_num=page_num, attempt=1,
+            )
+            svg_content = _extract_svg(response.content)
 
         if svg_content:
             initial_dir = project_dir / "svg_initial"
@@ -2666,7 +2707,8 @@ async def generate_svg_pages(
                 visual_critic_config=visual_critic_config,
             )
 
-            _write_generated_svg(svg_output_dir, page_num, best_svg)
+            output_path = _write_generated_svg(svg_output_dir, page_num, best_svg)
+            GenerationCheckpoints(project_dir).save_page(page_num, output_path)
             generated_history[page_num] = (
                 page_type,
                 page_name,
@@ -3591,6 +3633,8 @@ async def _generate_parallel_page(
 ) -> tuple[int, str]:
     system_prompt = PROMPT_PATH.read_text(encoding="utf-8")
     page_num = int(page_input["page_num"])
+    if "resumed_svg" in page_input:
+        return page_num, page_input["resumed_svg"]
     total_pages = int(page_input["total_pages"])
     page_name = str(page_input["page_name"])
     page_type = str(page_input["page_type"])
@@ -3737,19 +3781,13 @@ async def _generate_parallel_page(
         pass
 
     generation_max_tokens = SVG_GENERATION_MAX_TOKENS
-    response, generation_max_tokens = await _chat_svg_generation(
-        llm,
-        conversation,
-        model,
-        temperature=0.3,
-        max_tokens=generation_max_tokens,
-        project_dir=project_dir,
-        debug_prefix="parallel",
-        page_num=page_num,
-        attempt=1,
-    )
-
-    svg_content = _extract_svg(response.content)
+    svg_content = _saved_initial_svg(project_dir, page_num, page_input.get("resume", False), page_input.get("retry_failed_pages", False))
+    if svg_content is None:
+        response, generation_max_tokens = await _chat_svg_generation(
+            llm, conversation, model, temperature=0.3, max_tokens=generation_max_tokens,
+            project_dir=project_dir, debug_prefix="parallel", page_num=page_num, attempt=1,
+        )
+        svg_content = _extract_svg(response.content)
 
     if not svg_content:
         conversation.append(LLMMessage.assistant(response.content))
@@ -3776,7 +3814,8 @@ async def _generate_parallel_page(
         visual_critic_config=visual_critic_config,
     )
 
-    _write_generated_svg(svg_output_dir, page_num, best_svg)
+    output_path = _write_generated_svg(svg_output_dir, page_num, best_svg)
+    GenerationCheckpoints(project_dir).save_page(page_num, output_path)
     return page_num, best_svg
 
 
@@ -3829,6 +3868,8 @@ async def generate_svg_pages_parallel(
     visual_critic_config: VisualCriticConfig | None = None,
     template_context: str | None = None,
     template_skeletons: dict[str, str] | None = None,
+    resume: bool = False,
+    retry_failed_pages: bool = False,
 ) -> AsyncIterator[tuple[int, str]]:
     """Generate SVG pages with independent page or chapter parallelism."""
     standards_path = settings.references_dir / "shared-standards-essential.md"
@@ -3871,7 +3912,11 @@ async def generate_svg_pages_parallel(
     except OSError:
         pass
 
-    claimed_paper_figures: set[str] = set()
+    resumed_pages = _resume_svg_pages(project_dir, resume)
+    claimed_paper_figures: set[str] = {
+        key for svg in resumed_pages.values() for href in IMAGE_HREF_RE.findall(svg)
+        if (key := _paper_figure_key_from_href(href)) is not None
+    }
     page_inputs: list[dict] = []
     for i, page_content in enumerate(pages):
         page_num = i + 1
@@ -3890,6 +3935,9 @@ async def generate_svg_pages_parallel(
                 slide_context=(slide_contexts or {}).get(page_num, ""),
             )
         )
+        page_inputs[-1].update(resume=resume, retry_failed_pages=retry_failed_pages)
+        if page_num in resumed_pages:
+            page_inputs[-1]["resumed_svg"] = resumed_pages[page_num]
 
     concurrency = max(1, min(int(parallel_concurrency or 1), 8, len(page_inputs) or 1))
     queue: asyncio.Queue[tuple[int, str] | BaseException] = asyncio.Queue()
@@ -3987,6 +4035,7 @@ async def generate_svg_pages_parallel(
         for task in tasks:
             if not task.done():
                 task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 def _classify_page_type(page_content: str) -> str:

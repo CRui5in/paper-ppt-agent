@@ -7901,6 +7901,32 @@ body::before {
   gap: 10px;
 }
 
+.generation-recovery-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 12px;
+  margin-bottom: 16px;
+}
+.generation-recovery-panel p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.generation-recovery-panel textarea {
+  width: 100%;
+  resize: vertical;
+  padding: 8px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 6px;
+  font: inherit;
+  font-size: 13px;
+}
+
 .result-run-status-card {
   display: grid;
   gap: 8px;

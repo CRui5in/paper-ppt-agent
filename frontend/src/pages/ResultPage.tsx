@@ -19,6 +19,7 @@ import { Progress } from "../components/ui/progress";
 import { RecentTasksPanel } from "../components/history/RecentTasksPanel";
 import { PptistStudioHost } from "../components/pptist/PptistStudioHost";
 import { GenerationAgentConsole } from "./GeneratePage";
+import { GenerationRecoveryPanel } from "../components/result/GenerationRecoveryPanel";
 
 export function ResultPage() {
   const [params] = useSearchParams();
@@ -204,7 +205,9 @@ export function ResultPage() {
           return;
         }
         setResult(null);
-        setJob(entry ? buildStoredJob(entry) : null);
+        const failedJob = await fetchJobStatus(currentJobId).catch(() => null);
+        if (cancelled) return;
+        setJob(failedJob ?? (entry ? buildStoredJob(entry) : null));
         setSlides([]);
         setSelectedSlide(undefined);
         // A 404 from the backend means the job is gone (server restart,
@@ -546,6 +549,7 @@ export function ResultPage() {
             </div>
           </div>
           <div className="sources-content">
+            <GenerationRecoveryPanel jobId={jobId ?? undefined} status={resultRunStatus} />
             <ResultSourceSummary
               historyEntry={historyEntry}
               sourcesGroup={resolvedRun?.sourcesGroup}
