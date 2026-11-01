@@ -56,6 +56,22 @@ class ManuscriptEntryPointTests(unittest.IsolatedAsyncioTestCase):
 
 
 class SvgGenerationEntryPointTests(unittest.IsolatedAsyncioTestCase):
+    async def test_repairs_receive_compact_math_and_saved_results_are_render_ready(self):
+        overfull = MODEL_SVG.replace('84 180 500 100', '84 180 500 10')
+        for mode in ('sequential', 'page_parallel'):
+            with self.subTest(mode=mode), TemporaryDirectory() as directory:
+                provider = SimpleNamespace(chat=AsyncMock(side_effect=[LLMResponse(content=overfull), LLMResponse(content=MODEL_SVG)]))
+                generator = svg_executor.generate_svg_pages if mode == 'sequential' else svg_executor.generate_svg_pages_parallel
+                kwargs = {} if mode == 'sequential' else {'mode': mode}
+                _results = [result async for result in generator('', '<!-- page_type: content -->\n# Method', Path(directory), provider, 'test-model', max_critic_attempts=0, enable_visual_critic=False, **kwargs)]
+                self.assertEqual(provider.chat.await_count, 2)
+                messages = provider.chat.call_args.args[0]
+                authoring = [message.content for message in messages if message.role=='assistant' and '```svg' in message.content]
+                self.assertTrue(authoring)
+                self.assertTrue(all('data-latex' in text and '<path' not in text for text in authoring))
+                saved = ET.parse(Path(directory)/'svg_output/slide_001.svg').getroot()
+                self.assertTrue(list(saved.iter(NS+'path')))
+
     async def test_missing_table_records_trigger_a_targeted_repair_in_both_modes(self):
         manuscript = '<!-- page_type: content -->\n# Counts\n|Year|Count|\n|---|---|\n|2020|1234.5|\n|2021|0.625|'
         omitted = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720"><text x="100" y="200">2020 1234.5</text></svg>'

@@ -55,3 +55,13 @@ The third pass exported all 27 pages natively. Remaining defects included paragr
 Paragraph flow now preserves script offsets and mixed font sizes during wrapping. Base symbols stay with their scripts. Numeric values selected into manuscript tables are checked against visible text and equation metadata, separately from SVG coordinates. Missing records trigger targeted repair in both sequential and parallel paths. This detects omissions; it does not establish every semantic claim or row-to-value association.
 
 Writing guidance preserves ties and comparison conditions when summarizing tables. Validation: 76 tests passed. The evaluator can reuse design briefs and replay existing initial SVGs, sending only detected repairs to the model. This isolates renderer and repair changes from new layout generation.
+
+## Repair context and rendering parity
+
+The replay pass exposed two truncated repairs. A page containing several equations sent approximately 65K input tokens to the model and reached its 8,192-token output limit. The application had expanded LaTeX into glyph paths before inserting the SVG into the conversation. That forced the model to copy renderer-generated vector data while repairing layout.
+
+Model-facing SVG now keeps `data-latex` and the math box while omitting generated glyph children. The renderer regenerates identical vector paths after repair. The reproduced source page shrinks from 108,274 to 15,010 SVG characters in repair context, without changing the drawing's formula source.
+
+Repaired candidates now receive the same font normalization, script conversion, paragraph flow, and math preparation as initial candidates before the next geometry check. Preview also resolves concrete fonts before measuring paragraphs. Repair directions permit coordinated recomposition of affected regions while preserving content and the deck's visual identity. Raw repair responses are retained in debug output, including whether a complete SVG was extracted.
+
+Validation before replay: 78 tests passed, including both generation modes and identical vector reconstruction from compact mathematical authoring markup.

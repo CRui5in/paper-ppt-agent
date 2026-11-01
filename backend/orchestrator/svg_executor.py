@@ -864,19 +864,39 @@ def _normalize_obvious_short_text_lines(svg: str, page_design_block: str) -> str
     if namespace:
         ET.register_namespace("", namespace)
     from backend.generator.svg_finalize.render_math import render_math_in_tree
+    from backend.generator.svg_finalize.normalize_fonts import normalize_text_fonts_in_tree
     from backend.generator.svg_text_layout import reflow_declared_paragraphs, layout_text_groups, normalize_inline_scripts
 
+    fonts_normalized = normalize_text_fonts_in_tree(root)
     math_rendered = render_math_in_tree(root) + normalize_inline_scripts(root)
     paragraphs_reflowed = reflow_declared_paragraphs(root) + layout_text_groups(root)
     regions = _merged_text_regions(root, page_design_block)
     if not regions:
-        return ET.tostring(root, encoding="unicode") if math_rendered or paragraphs_reflowed else svg
+        return ET.tostring(root, encoding="unicode") if math_rendered or paragraphs_reflowed or fonts_normalized else svg
 
     changed = _wrap_overlong_text_elements(root, regions)
 
-    if not changed and not math_rendered and not paragraphs_reflowed:
+    if not changed and not math_rendered and not paragraphs_reflowed and not fonts_normalized:
         return svg
     return ET.tostring(root, encoding="unicode")
+
+
+def _svg_for_model(svg: str) -> str:
+    """Keep authoring metadata in repair context, not generated glyph paths."""
+    try:
+        root = ET.fromstring(svg)
+    except ET.ParseError:
+        return svg
+    changed = False
+    for element in root.iter():
+        if element.get('data-latex') is None:
+            continue
+        element.text = None
+        for child in list(element):
+            element.remove(child)
+        element.attrib.pop('data-math-rendered', None)
+        changed = True
+    return ET.tostring(root, encoding='unicode') if changed else svg
 
 
 def _merged_text_regions(root: ET.Element, page_design_block: str) -> list[dict[str, float]]:
@@ -2678,7 +2698,7 @@ async def generate_svg_pages(
 
         if svg_content:
             svg_content = _normalize_obvious_short_text_lines(svg_content, page_design_block)
-            conversation.append(LLMMessage.assistant(f"```svg\n{svg_content}\n```"))
+            conversation.append(LLMMessage.assistant(f"```svg\n{_svg_for_model(svg_content)}\n```"))
 
             best_svg = svg_content
             visual_attempts = 0
@@ -2830,8 +2850,12 @@ async def generate_svg_pages(
                     reset_usage_context(snapshot)
 
                 repaired = _extract_svg(response.content)
+                _write_generation_response_debug(project_dir, prefix="repair", page_num=page_num,
+                    attempt=event_attempt, content=response.content, max_tokens=SVG_REPAIR_MAX_TOKENS,
+                    note=f"parseable_svg={repaired is not None}")
                 after_archive_rel: str | None = None
                 if repaired:
+                    repaired = _normalize_obvious_short_text_lines(repaired, page_design_block)
                     after_archive_rel = _archive_repair_svg(
                         repair_archive_dir,
                         page_num=page_num,
@@ -2856,7 +2880,7 @@ async def generate_svg_pages(
                     svg_content = repaired
                     best_svg = repaired
                     conversation.append(
-                        LLMMessage.assistant(f"```svg\n{repaired}\n```")
+                        LLMMessage.assistant(f"```svg\n{_svg_for_model(repaired)}\n```")
                     )
                     if on_svg_update is not None:
                         await on_svg_update(page_num, repaired)
@@ -4009,7 +4033,7 @@ async def _generate_parallel_page(
         raise RuntimeError(failure_message)
 
     svg_content = _normalize_obvious_short_text_lines(svg_content, page_design_block)
-    conversation.append(LLMMessage.assistant(f"```svg\n{svg_content}\n```"))
+    conversation.append(LLMMessage.assistant(f"```svg\n{_svg_for_model(svg_content)}\n```"))
 
     best_svg = svg_content
     visual_attempts = 0
@@ -4152,7 +4176,11 @@ async def _generate_parallel_page(
             reset_usage_context(snapshot)
 
         repaired = _extract_svg(response.content)
+        _write_generation_response_debug(project_dir, prefix="parallel_repair", page_num=page_num,
+            attempt=event_attempt, content=response.content, max_tokens=SVG_REPAIR_MAX_TOKENS,
+            note=f"parseable_svg={repaired is not None}")
         if repaired:
+            repaired = _normalize_obvious_short_text_lines(repaired, page_design_block)
             after_archive_rel = _archive_repair_svg(
                 repair_archive_dir,
                 page_num=page_num,
@@ -4176,7 +4204,7 @@ async def _generate_parallel_page(
             )
             svg_content = repaired
             best_svg = repaired
-            conversation.append(LLMMessage.assistant(f"```svg\n{repaired}\n```"))
+            conversation.append(LLMMessage.assistant(f"```svg\n{_svg_for_model(repaired)}\n```"))
             if on_svg_update is not None:
                 await on_svg_update(page_num, repaired)
             if report_metadata.get("source") == "static":

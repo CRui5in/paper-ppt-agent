@@ -158,14 +158,13 @@ class CriticReport:
             "- Fix all errors first. Then address as many warnings as practical."
         )
         lines.append(
-            "- When fixing an issue, adjust only the elements directly involved. "
-            "If moving a text element, also shift any closely-related decorative "
-            "elements (connecting lines, background rects) to maintain alignment."
+            "- Preserve the manuscript's facts, values, notation, and comparison conditions."
         )
         lines.append(
-            "- Do NOT restructure the page or change the overall layout, color "
-            "scheme, or information density unless a local overflow/container "
-            "violation explicitly requires resizing or re-wrapping that area."
+            "- Recompose the affected regions to fit their complete content. "
+            "Adjust text, containers, equations, and connectors together; reallocate "
+            "space and reading order where capacity, overlap, or occlusion requires it. "
+            "Carry the deck's typography, palette, and visual identity through the repair."
         )
         lines.append("- Return the complete corrected SVG only, wrapped in ```svg code block.")
         return "\n".join(lines)

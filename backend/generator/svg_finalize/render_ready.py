@@ -99,6 +99,7 @@ def prepare_svg_content_for_render(svg_content: str, svg_dir: Path) -> str:
 
 def _prepare_in_place(svg_path: Path) -> None:
     repair_svg_file(svg_path)
+    normalize_text_fonts_in_svg(svg_path)
     render_math_in_svg(svg_path)
     tree = ET.parse(svg_path)
     if reflow_declared_paragraphs(tree.getroot()) + layout_text_groups(tree.getroot()):

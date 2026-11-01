@@ -14,13 +14,28 @@ from backend.generator.svg_text_layout import text_runs
 from backend.generator.svg_to_pptx.builder import create_pptx
 import json
 from backend.orchestrator.deck_plan import _extract_page_title_parts
-from backend.orchestrator.svg_executor import _normalize_obvious_short_text_lines
+from backend.orchestrator.svg_executor import _normalize_obvious_short_text_lines, _svg_for_model
 
 SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720">{}</svg>'
 NS = '{http://www.w3.org/2000/svg}'
 
 
 class SvgTextGeometryTests(unittest.TestCase):
+    def test_model_context_keeps_math_source_and_rebuilds_identical_vectors(self):
+        source = SVG.format(r'<path id="diagram" d="M20 20 L80 80"/>'
+            r'<g data-latex="\sum_{i=0}^{n-1}\frac{a_i}{b_i}" data-math-box="100 180 500 100" font-size="28"/>')
+        rendered = _normalize_obvious_short_text_lines(source, '')
+        compact = _svg_for_model(rendered)
+        root = ET.fromstring(compact)
+        math_group = next(e for e in root.iter() if e.get('data-latex'))
+        self.assertFalse(list(math_group))
+        self.assertFalse(math_group.get('data-math-rendered'))
+        self.assertIsNotNone(next(e for e in root.iter() if e.get('id') == 'diagram'))
+        self.assertLess(len(compact), len(rendered)/3)
+        rebuilt = _normalize_obvious_short_text_lines(compact, '')
+        original_paths = [e.get('d') for e in ET.fromstring(rendered).iter(NS+'path')]
+        self.assertEqual([e.get('d') for e in ET.fromstring(rebuilt).iter(NS+'path')], original_paths)
+
     def test_native_script_fragments_share_the_parent_end_anchor(self):
         from backend.generator.svg_text_layout import text_anchor_offsets
         self.write('<text x="400" y="200" text-anchor="end" font-size="20">x<tspan baseline-shift="sub" font-size="14">i</tspan> tail</text>')
