@@ -122,6 +122,14 @@ def render_math_in_tree(root: ET.Element) -> int:
     return count
 
 
+def math_content_bounds(element: ET.Element) -> tuple[float, float, float, float]:
+    """Return the occupied equation area, excluding unused math-box space."""
+    x, y, width, height = [float(value) for value in element.get('data-math-box', '').split()]
+    _, (_, _, natural_width, natural_height) = _math_path(element.get('data-latex', ''), float(element.get('font-size', '28')))
+    scale = min(1.0, width/natural_width, height/natural_height)
+    return x, y+(height-natural_height*scale)/2, natural_width*scale, natural_height*scale
+
+
 def render_math_in_svg(svg_path: Path) -> int:
     tree = ET.parse(svg_path)
     count = render_math_in_tree(tree.getroot())

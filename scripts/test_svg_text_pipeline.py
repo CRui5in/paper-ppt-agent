@@ -15,12 +15,43 @@ from backend.generator.svg_to_pptx.builder import create_pptx
 import json
 from backend.orchestrator.deck_plan import _extract_page_title_parts
 from backend.orchestrator.svg_executor import _normalize_obvious_short_text_lines, _svg_for_model
+from backend.orchestrator.svg_executor import _identify_svg_elements, _apply_svg_repair_response
 
 SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720">{}</svg>'
 NS = '{http://www.w3.org/2000/svg}'
 
 
 class SvgTextGeometryTests(unittest.TestCase):
+    def test_identified_xml_edits_preserve_other_geometry_and_canvas(self):
+        source = _identify_svg_elements(SVG.format('<text x="100" y="200">Keep me</text><rect x="80" y="180" width="300" height="60"/>'))
+        root = ET.fromstring(source)
+        rectangle = next(root.iter(NS+'rect'))
+        reply = json.dumps({'edits':[{'target':rectangle.get('data-editor-id'),'attributes':{'y':'300'}}]})
+        result = ET.fromstring(_apply_svg_repair_response(reply, source))
+        self.assertEqual(next(result.iter(NS+'rect')).get('y'), '300')
+        self.assertEqual(next(result.iter(NS+'text')).text, 'Keep me')
+        self.assertEqual(result.get('viewBox'), '0 0 1280 720')
+
+    def test_xml_edits_replace_and_append_namespaced_content(self):
+        source = _identify_svg_elements(SVG.format('<g id="panel"><text>Old</text></g>'))
+        root = ET.fromstring(source)
+        panel = next(root.iter(NS+'g')).get('data-editor-id')
+        edits = {'edits':[{'target':panel,'replace':'<g id="panel"><text>New</text></g>'},
+                          {'target':panel,'append':'<text>Another row</text>'}]}
+        result = ET.fromstring(_apply_svg_repair_response(json.dumps(edits), source))
+        self.assertEqual([e.text for e in result.iter(NS+'text')], ['New','Another row'])
+
+    def test_invalid_xml_edits_are_atomic_and_cannot_change_the_assigned_viewbox(self):
+        source = _identify_svg_elements(SVG.format('<rect x="80" y="180" width="300" height="60"/>'))
+        root = ET.fromstring(source)
+        root_id = root.get('data-editor-id')
+        rect_id = next(root.iter(NS+'rect')).get('data-editor-id')
+        invalid = {'edits':[{'target':rect_id,'attributes':{'y':'300'}},{'target':'unknown','remove':True}]}
+        self.assertIsNone(_apply_svg_repair_response(json.dumps(invalid), source))
+        self.assertEqual(next(ET.fromstring(source).iter(NS+'rect')).get('y'), '180')
+        changed_canvas = {'edits':[{'target':root_id,'attributes':{'viewBox':'0 0 1600 900'}}]}
+        self.assertIsNone(_apply_svg_repair_response(json.dumps(changed_canvas), source))
+
     def test_model_context_keeps_math_source_and_rebuilds_identical_vectors(self):
         source = SVG.format(r'<path id="diagram" d="M20 20 L80 80"/>'
             r'<g data-latex="\sum_{i=0}^{n-1}\frac{a_i}{b_i}" data-math-box="100 180 500 100" font-size="28"/>')
@@ -192,6 +223,14 @@ class SvgTextGeometryTests(unittest.TestCase):
 
 
 class MathematicalLayoutTests(unittest.TestCase):
+    def test_equation_collisions_use_glyph_bounds_instead_of_the_whole_reserved_box(self):
+        from backend.generator.svg_critic import check_svg
+        equation = r'<g data-latex="x^2" data-math-box="100 180 200 80" font-size="28"/>'
+        overlapping = '<text x="100" y="225" font-size="18">Explanation</text>'
+        outside_glyphs = '<text x="100" y="257" font-size="12">Caption in the lower margin</text>'
+        self.assertIn('equation_overlaps_text', {v.rule for v in check_svg(SVG.format(equation+overlapping)).violations})
+        self.assertNotIn('equation_overlaps_text', {v.rule for v in check_svg(SVG.format(equation+outside_glyphs)).violations})
+
     def test_chinese_mathematical_labels_have_distinct_vector_glyphs(self):
         from backend.generator.svg_finalize.render_math import _math_path, _cjk_math_font
         try:

@@ -10,6 +10,7 @@ that regeneration is *informed* rather than blind.
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import uuid
 import xml.etree.ElementTree as ET
@@ -872,13 +873,37 @@ def _normalize_obvious_short_text_lines(svg: str, page_design_block: str) -> str
     paragraphs_reflowed = reflow_declared_paragraphs(root) + layout_text_groups(root)
     regions = _merged_text_regions(root, page_design_block)
     if not regions:
-        return ET.tostring(root, encoding="unicode") if math_rendered or paragraphs_reflowed or fonts_normalized else svg
+        return _identify_svg_elements(ET.tostring(root, encoding="unicode") if math_rendered or paragraphs_reflowed or fonts_normalized else svg)
 
     changed = _wrap_overlong_text_elements(root, regions)
 
     if not changed and not math_rendered and not paragraphs_reflowed and not fonts_normalized:
-        return svg
-    return ET.tostring(root, encoding="unicode")
+        return _identify_svg_elements(svg)
+    return _identify_svg_elements(ET.tostring(root, encoding="unicode"))
+
+
+def _identify_svg_elements(svg: str) -> str:
+    root = ET.fromstring(svg)
+    reserved = {element.get('data-editor-id') for element in root.iter() if element.get('data-editor-id')}
+    used = set()
+    counter = 1
+
+    def visit(element):
+        nonlocal counter
+        current = element.get('data-editor-id')
+        if not current or current in used:
+            while f'e{counter}' in used or f'e{counter}' in reserved:
+                counter += 1
+            current = f'e{counter}'
+            counter += 1
+            element.set('data-editor-id', current)
+            reserved.add(current)
+        used.add(current)
+        if element.get('data-latex') is None:
+            for child in element:
+                visit(child)
+    visit(root)
+    return ET.tostring(root, encoding='unicode')
 
 
 def _svg_for_model(svg: str) -> str:
@@ -897,6 +922,74 @@ def _svg_for_model(svg: str) -> str:
         element.attrib.pop('data-math-rendered', None)
         changed = True
     return ET.tostring(root, encoding='unicode') if changed else svg
+
+
+def _svg_repair_messages(svg: str, page_content: str, report: CriticReport,
+                         figures: list[dict] | None = None) -> list[LLMMessage]:
+    prompt = (Path(__file__).parent/'prompts/svg_repair.md').read_text(encoding='utf8')
+    figure_lines = '\n'.join(_paper_figure_reference_line(figure) for figure in figures or [])
+    content = (f'## Page manuscript\n{page_content}\n\n## Assigned source figures\n{figure_lines}\n\n## Current authoring SVG\n'
+               f'```svg\n{_svg_for_model(svg)}\n```\n\n{report.to_prompt_block(output_format="edits")}')
+    return [LLMMessage.system(prompt), LLMMessage.user(content)]
+
+
+def _apply_svg_repair_response(response: str, svg: str) -> str | None:
+    """Apply a complete set of identified XML edits atomically."""
+    try:
+        raw = re.sub(r'^\s*```(?:json)?\s*|\s*```\s*$', '', response.strip())
+        payload = json.loads(raw)
+    except (ValueError, TypeError):
+        return _extract_svg(response)
+    try:
+        edits = payload['edits']
+        if not isinstance(edits, list) or not edits:
+            return None
+        root = ET.fromstring(_svg_for_model(svg))
+        original_viewbox = root.get('viewBox')
+        namespace = root.tag.split('}',1)[0]+'}' if root.tag.startswith('{') else ''
+
+        def fragment(markup):
+            element = ET.fromstring(markup)
+            for child in element.iter():
+                if '}' not in child.tag:
+                    child.tag = namespace + child.tag
+            return element
+
+        for edit in edits:
+            nodes = {element.get('data-editor-id'): element for element in root.iter() if element.get('data-editor-id')}
+            target = nodes.get(edit['target'])
+            if target is None:
+                raise ValueError('Unknown edit target')
+            parents = {child: parent for parent in root.iter() for child in parent}
+            if edit.get('remove'):
+                if target is root:
+                    raise ValueError('The page root is required')
+                parents[target].remove(target)
+                continue
+            if 'replace' in edit:
+                replacement = fragment(edit['replace'])
+                replacement.set('data-editor-id', edit['target'])
+                replacement.tail = target.tail
+                if target is root:
+                    root = replacement
+                else:
+                    parent = parents[target]
+                    index = list(parent).index(target)
+                    parent.remove(target)
+                    parent.insert(index, replacement)
+                target = replacement
+            for name, value in edit.get('attributes', {}).items():
+                if not isinstance(value, (str, int, float)):
+                    raise ValueError('SVG attributes require scalar values')
+                target.set(name, str(value))
+            if 'append' in edit:
+                wrapper = fragment('<g>' + edit['append'] + '</g>')
+                target.extend(list(wrapper))
+        if _local_tag(root.tag) != 'svg' or root.get('viewBox') != original_viewbox:
+            raise ValueError('The assigned canvas must be preserved')
+        return ET.tostring(root, encoding='unicode')
+    except (KeyError, TypeError, ValueError, ET.ParseError):
+        return None
 
 
 def _merged_text_regions(root: ET.Element, page_design_block: str) -> list[dict[str, float]]:
@@ -2030,6 +2123,7 @@ def _generation_static_report(
             "paragraph_capacity", "out_of_bounds", "text_overflow_in_container",
             "filter_requires_raster_fallback", "forbidden_element", "xml_parse",
             "text_line_overlap", "text_overlap", "shape_covers_text",
+            "equation_overlaps_text",
         }]
         return _merge_reports(CriticReport(passed=not violations, violations=violations), source_report)
     reports = [
@@ -2825,23 +2919,15 @@ async def generate_svg_pages(
                     svg_content=svg_content,
                 )
 
-                repair_prompt_text = (
-                    report.to_prompt_block()
-                    + "\n\nWhen fixing paper-figure violations, resize the image "
-                    "to the visible frame, preserve the source aspect ratio, keep "
-                    "the full rendered image inside x=0..1260 and y=80..640, and "
-                    "remove over-cropping clip paths. Do not swap to an unlisted "
-                    "paper figure href.\n\nReturn the complete corrected SVG only, "
-                    "wrapped in a ```svg code block."
-                )
-                conversation.append(LLMMessage.user(repair_prompt_text))
+                repair_messages = _svg_repair_messages(svg_content, page_content, report, used_figures)
+                repair_prompt_text = repair_messages[1].content
                 repair_temp = max(0.1, 0.3 - 0.1 * event_attempt)
                 snapshot = set_usage_context(
                     stage="repair", page=page_num, attempt=event_attempt
                 )
                 try:
                     response = await llm.chat(
-                        conversation,
+                        repair_messages,
                         model,
                         temperature=repair_temp,
                         max_tokens=SVG_REPAIR_MAX_TOKENS,
@@ -2849,7 +2935,7 @@ async def generate_svg_pages(
                 finally:
                     reset_usage_context(snapshot)
 
-                repaired = _extract_svg(response.content)
+                repaired = _apply_svg_repair_response(response.content, svg_content)
                 _write_generation_response_debug(project_dir, prefix="repair", page_num=page_num,
                     attempt=event_attempt, content=response.content, max_tokens=SVG_REPAIR_MAX_TOKENS,
                     note=f"parseable_svg={repaired is not None}")
@@ -4154,20 +4240,13 @@ async def _generate_parallel_page(
             label="before",
             svg_content=svg_content,
         )
-        repair_prompt_text = (
-            report.to_prompt_block()
-            + "\n\nWhen fixing paper-figure violations, resize the image "
-            "to the visible frame, preserve the source aspect ratio, keep "
-            "the full rendered image inside x=0..1260 and y=80..640, and "
-            "remove over-cropping clip paths. Do not swap to an unlisted "
-            "paper figure href.\n\nReturn the complete corrected SVG only, wrapped in a ```svg code block."
-        )
-        conversation.append(LLMMessage.user(repair_prompt_text))
+        repair_messages = _svg_repair_messages(svg_content, str(page_input["page_content"]), report, used_figures)
+        repair_prompt_text = repair_messages[1].content
         repair_temp = max(0.1, 0.3 - 0.1 * event_attempt)
         snapshot = set_usage_context(stage="repair", page=page_num, attempt=event_attempt)
         try:
             response = await llm.chat(
-                conversation,
+                repair_messages,
                 model,
                 temperature=repair_temp,
                 max_tokens=SVG_REPAIR_MAX_TOKENS,
@@ -4175,7 +4254,7 @@ async def _generate_parallel_page(
         finally:
             reset_usage_context(snapshot)
 
-        repaired = _extract_svg(response.content)
+        repaired = _apply_svg_repair_response(response.content, svg_content)
         _write_generation_response_debug(project_dir, prefix="parallel_repair", page_num=page_num,
             attempt=event_attempt, content=response.content, max_tokens=SVG_REPAIR_MAX_TOKENS,
             note=f"parseable_svg={repaired is not None}")

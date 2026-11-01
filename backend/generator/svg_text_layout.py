@@ -397,7 +397,7 @@ def paragraph_layout_issues(root: ET.Element) -> list[dict]:
             issues.append({"box": (x, y, width, height), "required_height": required_height,
                            "required_width": required_width, "paragraphs": len(plans),
                            "lines": sum(len(plan["lines"]) for plan in plans),
-                           "element": owner.get("id", owner.get("data-role", "paragraph box"))})
+                           "element": owner.get('data-editor-id') or owner.get("id", owner.get("data-role", "paragraph box"))})
     return issues
 
 

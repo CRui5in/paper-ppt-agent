@@ -56,6 +56,26 @@ class ManuscriptEntryPointTests(unittest.IsolatedAsyncioTestCase):
 
 
 class SvgGenerationEntryPointTests(unittest.IsolatedAsyncioTestCase):
+    async def test_json_repair_moves_the_reported_occluding_shape(self):
+        import json
+        source = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720"><text x="100" y="200" font-size="18">Explanation</text><rect x="80" y="175" width="300" height="50" fill="#FFFFFF"/></svg>'
+        calls = 0
+        async def chat(messages, model, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return LLMResponse(content=source)
+            current = svg_executor._extract_svg(messages[1].content)
+            root = ET.fromstring(current)
+            rect_id = next(root.iter(NS+'rect')).get('data-editor-id')
+            return LLMResponse(content=json.dumps({'edits':[{'target':rect_id,'attributes':{'y':'300'}}]}))
+        with TemporaryDirectory() as directory:
+            provider = SimpleNamespace(chat=chat)
+            _results = [result async for result in svg_executor.generate_svg_pages_parallel('', '<!-- page_type: content -->\n# Method', Path(directory), provider, 'test-model', mode='page_parallel', max_critic_attempts=0, enable_visual_critic=False)]
+            saved = ET.parse(Path(directory)/'svg_output/slide_001.svg').getroot()
+            self.assertEqual(next(saved.iter(NS+'rect')).get('y'), '300')
+            self.assertEqual(calls, 2)
+
     async def test_repairs_receive_compact_math_and_saved_results_are_render_ready(self):
         overfull = MODEL_SVG.replace('84 180 500 100', '84 180 500 10')
         for mode in ('sequential', 'page_parallel'):
@@ -66,7 +86,7 @@ class SvgGenerationEntryPointTests(unittest.IsolatedAsyncioTestCase):
                 _results = [result async for result in generator('', '<!-- page_type: content -->\n# Method', Path(directory), provider, 'test-model', max_critic_attempts=0, enable_visual_critic=False, **kwargs)]
                 self.assertEqual(provider.chat.await_count, 2)
                 messages = provider.chat.call_args.args[0]
-                authoring = [message.content for message in messages if message.role=='assistant' and '```svg' in message.content]
+                authoring = [message.content for message in messages if '```svg' in message.content]
                 self.assertTrue(authoring)
                 self.assertTrue(all('data-latex' in text and '<path' not in text for text in authoring))
                 saved = ET.parse(Path(directory)/'svg_output/slide_001.svg').getroot()

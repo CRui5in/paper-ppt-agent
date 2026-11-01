@@ -104,7 +104,7 @@ class CriticReport:
             "violations": [v.to_dict() for v in self.violations],
         }
 
-    def to_prompt_block(self) -> str:
+    def to_prompt_block(self, *, output_format: str = 'svg') -> str:
         """Render the report as a targeted repair instruction block.
 
         Returns a non-empty string whenever there are violations, even if
@@ -166,7 +166,10 @@ class CriticReport:
             "space and reading order where capacity, overlap, or occlusion requires it. "
             "Carry the deck's typography, palette, and visual identity through the repair."
         )
-        lines.append("- Return the complete corrected SVG only, wrapped in ```svg code block.")
+        if output_format == 'edits':
+            lines.append('- Return JSON edits using the element IDs in the supplied authoring SVG.')
+        else:
+            lines.append("- Return the complete corrected SVG only, wrapped in ```svg code block.")
         return "\n".join(lines)
 
 
@@ -363,12 +366,33 @@ def _iou(a: tuple[float, float, float, float], b: tuple[float, float, float, flo
 
 
 def _element_identifier(el: ET.Element) -> str:
+    if el.get('data-editor-id'):
+        return f'{_strip_ns(el.tag)}[data-editor-id={el.get("data-editor-id")}]'
     if el.get("id"):
         return f'{_strip_ns(el.tag)}#{el.get("id")}'
     cls = el.get("class")
     if cls:
         return f'{_strip_ns(el.tag)}.{cls}'
     return _strip_ns(el.tag)
+
+
+def _check_equation_text_overlap(root, text_boxes, violations):
+    from .svg_finalize.render_math import math_content_bounds
+
+    for element in root.iter():
+        if element.get('data-latex') is None:
+            continue
+        try:
+            box = math_content_bounds(element)
+        except (ValueError, TypeError):
+            continue
+        descendants = {id(child) for child in element.iter()}
+        for _order, text, text_box in text_boxes:
+            if id(text) in descendants or _coverage_ratio(text_box, box) < .2:
+                continue
+            violations.append(Violation(rule='equation_overlaps_text', severity='error',
+                detail=f'Equation {_element_identifier(element)} occupies {box} and intersects text {_element_identifier(text)}. Allocate distinct space for the expression and its neighboring diagram or explanation.',
+                element=_element_identifier(text), bbox=text_box))
 
 
 def _collect_colors(el: ET.Element) -> list[str]:
@@ -781,7 +805,7 @@ def check_svg(svg_content: str, config: CriticConfig | None = None) -> CriticRep
                     rule="shape_covers_text",
                     severity="error",
                     detail=(
-                        "A later-drawn visible shape overlaps this text enough to "
+                        f"Later-drawn shape {_element_identifier(shape_el)} overlaps this text enough to "
                         "cover or obscure it. Move the shape away, resize it, or "
                         "increase the text/container spacing."
                     ),
@@ -798,6 +822,8 @@ def check_svg(svg_content: str, config: CriticConfig | None = None) -> CriticRep
         _check_text_container_overflow(
             root, text_boxes, element_order, canvas, violations
         )
+
+    _check_equation_text_overlap(root, text_boxes, violations)
 
     # 4f. Empty bullet detector: a bullet marker without a nearby text line
     #     usually means finalization dropped or misplaced the bullet content.

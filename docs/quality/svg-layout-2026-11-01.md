@@ -65,3 +65,11 @@ Model-facing SVG now keeps `data-latex` and the math box while omitting generate
 Repaired candidates now receive the same font normalization, script conversion, paragraph flow, and math preparation as initial candidates before the next geometry check. Preview also resolves concrete fonts before measuring paragraphs. Repair directions permit coordinated recomposition of affected regions while preserving content and the deck's visual identity. Raw repair responses are retained in debug output, including whether a complete SVG was extracted.
 
 Validation before replay: 78 tests passed, including both generation modes and identical vector reconstruction from compact mathematical authoring markup.
+
+## Identified XML repairs
+
+Compact context reduced the reproduced repair request from 64,508 to 12,410 input tokens and changed its completion from a truncated 8,192 tokens to a complete 6,015 tokens. Complete-SVG repairs nevertheless left some reported regions unchanged.
+
+Repair now uses a separate layout-editor request and an identified XML edit list. Coordinates, region replacements, and appended table rows can change without copying the rest of the page. Edits apply atomically to the current authoring tree, preserve its assigned viewBox, and then pass through normal rendering and checks. Existing full-SVG repair responses remain accepted for compatibility. Critic findings identify both the affected text and an occluding shape by editable element ID.
+
+Equation/text collisions now use the actual typeset glyph bounds, rather than assuming the whole reserved math box is occupied. Validation before the focused replay: 83 tests passed, including unknown targets, atomic failure, namespace preservation, canvas preservation, appended records, and an end-to-end JSON repair.
