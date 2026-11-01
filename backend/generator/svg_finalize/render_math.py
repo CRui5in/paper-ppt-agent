@@ -6,12 +6,50 @@ from functools import lru_cache
 import hashlib
 import math
 from pathlib import Path
+import re
 import threading
 import unicodedata
 import xml.etree.ElementTree as ET
 
 _math_lock = threading.Lock()
-_MATH_RENDER_VERSION = 2
+_MATH_RENDER_VERSION = 3
+
+# Mathtext accepts the delimiter glyphs but not LaTeX's left/right aliases.
+_DELIMITER_COMMANDS = {
+    r'\lVert': r'\Vert', r'\rVert': r'\Vert',
+    r'\lvert': r'\vert', r'\rvert': r'\vert',
+}
+_CONTROL_SEQUENCE = re.compile(r'\\(?:[A-Za-z]+|.)', re.DOTALL)
+
+
+def _mathtext_expression(expression: str) -> str:
+    """Lower delimiter aliases while retaining complete control sequences and text."""
+    parts, position = [], 0
+    for match in _CONTROL_SEQUENCE.finditer(expression):
+        if match.start() < position:
+            continue
+        parts.append(expression[position:match.start()])
+        command = match.group()
+        end = match.end()
+        if command == r'\text':
+            opening = end
+            while opening < len(expression) and expression[opening].isspace():
+                opening += 1
+            if opening < len(expression) and expression[opening] == '{':
+                cursor, depth = opening + 1, 1
+                while cursor < len(expression) and depth:
+                    if expression[cursor] == '\\':
+                        cursor += 2
+                        continue
+                    depth += (expression[cursor] == '{') - (expression[cursor] == '}')
+                    cursor += 1
+                end = cursor
+            parts.append(expression[match.start():end])
+        else:
+            parts.append(_DELIMITER_COMMANDS.get(command, command))
+        position = end
+    parts.append(expression[position:])
+    return ''.join(parts)
 
 
 @lru_cache(maxsize=32)
@@ -57,7 +95,7 @@ def _math_path(expression: str, font_size: float) -> tuple[str, tuple[float, flo
                        'mathtext.sf': regular, 'mathtext.tt': regular}
         prop = FontProperties(math_fontfamily="custom" if cjk else "stix")
         with rc_context(options):
-            path = TextPath((0, 0), f"${expression}$", size=font_size, prop=prop, usetex=False)
+            path = TextPath((0, 0), f"${_mathtext_expression(expression)}$", size=font_size, prop=prop, usetex=False)
         box = path.get_extents()
         bounds = (float(box.x0), float(box.y0), float(box.width), float(box.height))
         if not all(math.isfinite(v) for v in bounds) or box.width <= 0 or box.height <= 0:
