@@ -139,3 +139,9 @@ The user explicitly rejected reliance on repair, fallback, and repeated optimiza
 Public generation arguments remain compatible with existing callers; diagnostic settings no longer grant automatic rewrite attempts. Existing font resolution, formula typesetting, explicit paragraph flow, and text-preservation fixes remain rendering capabilities.
 
 Validation: 82 tests passed after replacing deleted repair tests with first-output preservation and single-generation-call checks. Tests verify that both generation modes keep the first response even when layout checks fail, invalid output triggers no regeneration, content design uses no extra review rewrite, and a native conversion failure produces no rasterized PPTX.
+
+## Generation-stage composition
+
+The strategist now writes the visible copy together with its proposed regions, selected table cells, diagram labels, and explanations. Supporting detail has a speaker-notes field. The SVG designer receives that planned `Content` as the visible copy and allocates line heights before placing neighboring regions. This changes the initial handoff, rather than adding a post-generation correction step.
+
+Condensed repeated information instructions in the SVG prompt. The evaluation script now labels results `first_generation`, records generation-call counts, retains initial SVGs, and removes the prior replay-to-repair mode. Fidelity review uses compact equation source instead of renderer-generated glyph paths. Tests: 82 passed.

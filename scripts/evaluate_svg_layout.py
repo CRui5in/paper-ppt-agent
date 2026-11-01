@@ -34,7 +34,7 @@ from backend.generator.svg_to_pptx.builder import create_pptx
 from backend.generator.visual_critic import render_svg_to_png
 from backend.llm import LLMMessage, LLMResponse, TokenUsage
 from backend.orchestrator.strategist_agent import create_design_spec
-from backend.orchestrator.svg_executor import generate_svg_pages_parallel, _validate_source_table_values
+from backend.orchestrator.svg_executor import generate_svg_pages_parallel, _validate_source_table_values, _svg_for_model
 
 
 def source_excerpts(path: Path) -> tuple[str, dict]:
@@ -61,7 +61,6 @@ class EvaluationProvider:
         self.client, self.semaphore, self.directory = client, semaphore, directory
         self.stage = 'manuscript'
         self.calls: list[dict] = []
-        self.replay_svg: Path | None = None
 
     async def chat(self, messages, model, **kwargs):
         index = len(self.calls) + 1
@@ -69,15 +68,6 @@ class EvaluationProvider:
         self.calls.append(entry)
         payload = [{'role': message.role, 'content': message.content} for message in messages]
         (self.directory / f'prompt_{index:02d}.json').write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf8')
-        if self.stage == 'svg' and self.replay_svg and not any(message.role == 'assistant' for message in messages):
-            page = next((re.search(r'## Page (\d+)/', message.content) for message in reversed(messages) if re.search(r'## Page (\d+)/', message.content)), None)
-            if page:
-                source_path = self.replay_svg / self.directory.name / 'svg_output' / f'slide_{int(page.group(1)):03d}.svg'
-                entry.update(replayed_from=str(source_path), seconds=0)
-                content = '```svg\n' + source_path.read_text(encoding='utf8') + '\n```'
-                (self.directory / f'response_{index:02d}.md').write_text(content, encoding='utf8')
-                (self.directory / 'calls.json').write_text(json.dumps(self.calls, indent=2), encoding='utf8')
-                return LLMResponse(content=content)
         async with self.semaphore:
             started = time.perf_counter()
             response = await self.client.chat.completions.create(
@@ -163,7 +153,6 @@ async def evaluate_one(item: dict, args, client, semaphore) -> dict:
             design = await create_design_spec(manuscript, provider, args.model, language='zh', debug_dir=directory / 'debug')
         (directory / 'design_spec.md').write_text(design, encoding='utf8')
         provider.stage = 'svg'
-        provider.replay_svg = args.replay_svg
         critic_events = []
         async def on_critic(*event):
             critic_events.append({'page': event[0], 'attempt': event[1], 'report': event[2].to_dict()})
@@ -174,7 +163,7 @@ async def evaluate_one(item: dict, args, client, semaphore) -> dict:
         (directory / 'critic_events.json').write_text(json.dumps(critic_events, ensure_ascii=False, indent=2), encoding='utf8')
         reports = await asyncio.to_thread(render_and_audit, directory)
         provider.stage = 'fidelity'
-        svg_sources = '\n\n'.join(f'## {path.name}\n{path.read_text(encoding="utf8")}' for path in sorted((directory / 'svg_output').glob('*.svg')))
+        svg_sources = '\n\n'.join(f'## {path.name}\n{_svg_for_model(path.read_text(encoding="utf8"))}' for path in sorted((directory / 'svg_output').glob('*.svg')))
         review = await provider.chat([
             LLMMessage.system('Review factual fidelity of research slides against the supplied source excerpts and manuscript. '
                 'Return JSON with unsupported_claims, unsupported_data_marks, and missing_material arrays. '
@@ -186,7 +175,7 @@ async def evaluate_one(item: dict, args, client, semaphore) -> dict:
         ], args.model, max_tokens=4000, temperature=.1)
         (directory / 'fidelity.json').write_text(json.dumps(json_response(review.content), ensure_ascii=False, indent=2), encoding='utf8')
         audit = json.loads((directory / 'samples.export_audit.json').read_text(encoding='utf8'))
-        summary.update(status='generated', slides=len(reports), export=audit['summary'],
+        summary.update(status='generated', phase='first_generation', generation_calls=sum(call['stage']=='svg' for call in provider.calls), slides=len(reports), export=audit['summary'],
             geometry_errors=sum(report['error_count'] for report in reports),
             source_coverage_errors=sum(report.get('source_coverage',{}).get('error_count',0) for report in reports), calls=len(provider.calls))
     except Exception as error:
@@ -222,7 +211,7 @@ async def main(args):
            'model': args.model, 'thinking': 'disabled', 'concurrency': args.concurrency,
            'reuse_fixtures': str(args.reuse_fixtures) if args.reuse_fixtures else None,
            'reuse_designs': str(args.reuse_designs) if args.reuse_designs else None,
-           'replay_svg': str(args.replay_svg) if args.replay_svg else None,
+           'phase': 'first_generation', 'automatic_repairs': False,
            'source_hashes': {str(path.relative_to(repository)).replace('\\','/'): hashlib.sha256(path.read_bytes()).hexdigest() for path in source_paths}}
     (args.output/'run.json').write_text(json.dumps(run, ensure_ascii=False, indent=2), encoding='utf8')
     key = os.environ.get('DEEPSEEK_API_KEY') or getpass.getpass('API key (not saved): ')
@@ -246,5 +235,4 @@ if __name__ == '__main__':
     parser.add_argument('--reuse-fixtures', type=Path, help='Reuse prior manuscripts for a controlled SVG comparison')
     parser.add_argument('--recheck', action='store_true', help='Rerender and audit existing SVGs without model calls')
     parser.add_argument('--reuse-designs', type=Path, help='Reuse prior design briefs for a controlled layout comparison')
-    parser.add_argument('--replay-svg', type=Path, help='Replay existing initial SVGs and send only detected repairs to the model')
     asyncio.run(main(parser.parse_args()))

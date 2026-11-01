@@ -36,6 +36,8 @@ Allocate space for the title, main visual, explanations, and captions before det
 
 Calculate parallel region widths after reserving margins and gutters. Include their bounds in the page brief so the composition has room for its full text and figures.
 
+Compose the visible copy together with those regions. Select the evidence and explanation that the audience can read at the planned type size, then allocate paragraph lines, labels, and captions within the available height. Carry supporting detail into the speaker notes. A table's selected rows and columns, a diagram's labels, and an equation's explanations belong to the same space allocation as their visual.
+
 ### VI. Icon Usage
 
 Provider icon decoration is disabled. Use native SVG geometry, labels, and assigned paper figures for explanations. Use mathematical symbols and diagram labels as ordinary content.
@@ -65,7 +67,8 @@ For every counted page, use a heading `#### Slide NN - Title` and include:
 - `Visual relationship`: what the audience should understand from placement and visual encoding.
 - `Visual material`: the actual observation records or assigned source figure for a plot; named components, relationships, and dimensions for a schematic; or the title and metadata for a structural page.
 - `Design brief`: the main visual, reading order, supporting details, and relevant source assets. Describe the main geometry and relationships for the designer to develop.
-- `Content`: the visible material for the page's role, including the substantive facts, exact values, and notation on content pages. Detailed explanations accompanying a cover's title and metadata go in its speaker notes.
+- `Content`: ready-to-draw visible copy grouped by the planned regions, with the selected table cells, diagram labels, values, and notation. Use the available region sizes and readable typography to choose the amount of material.
+- `Speaker notes`: supporting explanations and source detail for oral delivery.
 
 The designer may improve the proposed composition while preserving the page's material and explicit template boundaries. Briefs should expose why a diagram, chart, figure, or typographic treatment suits the content.
 

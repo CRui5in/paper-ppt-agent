@@ -12,17 +12,11 @@ Choose region sizes and spacing from the content. Alignment, whitespace, shared 
 
 ## Information
 
-Render the information called for by the page's role, preserving values, units, notation, and comparison conditions. Content pages retain their substantive explanation and evidence. Structural pages organize the supplied title, metadata, agenda, or closing message, with detailed explanations reserved for speaker notes.
+Build the visible page from the brief's `Content` and assigned assets, preserving values, units, notation, and comparison conditions. The page manuscript supplies the supporting detail. Place explanations beside the figures, equations, and diagram elements they explain; carry oral elaboration in the speaker notes.
 
-Use the page's supplied quantitative values in readable charts or tables and explain qualitative relationships through labeled geometry.
+Use unlabeled abstract geometry for ornament. Draw structural relationships from the named components and operations. Plot the selected observation records with their conditions and units, and present qualitative changes through labeled relationships or stated milestones. Preserve scientific spatial geometry from its source figure.
 
-Use unlabeled abstract geometry for ornament. Build explanatory content from the page manuscript and source figures; use the design brief for visual treatment. Preserve scientific spatial geometry from its source figure.
-
-Use consistent visual scales and precise data labels. Calculate chart coordinates from the supplied values. Bar lengths share a zero baseline; dot plots can use a labeled narrow range. Distinguish measured values, scale guides, and schematic illustrations.
-
-Data-bearing marks encode supplied values or reproduce a source asset. Structural schematics use components, dimensions, and operation labels to explain how the parts relate.
-
-Use the brief's visual material to choose the encoding. Plot explicit observation records with their conditions and units. Present qualitative changes through labeled relationships or a timeline of the stated milestones.
+Calculate chart coordinates from the selected values. Bar lengths share a zero baseline; dot plots can use a labeled narrow range. Use consistent scales and precise data labels.
 
 Fit assigned paper figures completely at their natural aspect ratios. Arrange captions and direct annotations around the visible image. Reuse colors for the same meanings across the deck, with distinguishable series colors where useful.
 
@@ -33,6 +27,8 @@ Use the specified viewBox, content boundary, and footer clearance. Place the hea
 Use the deck's type hierarchy. Align related labels, reserve paragraph line-height and padding, and size table columns from their cells. Position diagram labels, headings, and data labels directly. SVG text y is the baseline.
 
 Allocate the page's regions before drawing details. Size each region for its full content, establish shared edges and gutters, and leave distinct room for captions. Treat a sentence explaining an equation or diagram as a paragraph with wrapping space. Keep short diagram and data labels next to the element they describe.
+
+Estimate the lines of copy at the chosen font size and reserve their full line-height before positioning the next region. Compose dense material through aligned table cells, concise labels, and visual relationships; arrange supporting prose in the remaining space.
 
 Reserve the gutter before dividing space between parallel regions, keeping related headings and body text on common baselines.
 
