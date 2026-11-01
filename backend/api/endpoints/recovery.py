@@ -1,4 +1,4 @@
-"""Explicit generation continuation and durable user feedback."""
+"""Explicit generation continuation with optional user instructions."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import uuid
 
 from fastapi import APIRouter, HTTPException
 
-from backend.api.schemas import AgentFeedbackRequest, GenerateResponse, ResumeGenerationRequest
+from backend.api.schemas import GenerateResponse, ResumeGenerationRequest
 from backend.config import settings
 from backend.runtime import aoffload
 from backend.runtime.io import _write_text_atomic
@@ -75,21 +75,6 @@ async def _save_feedback(job, text: str) -> dict:
     path = settings.runtime_dir / "job_feedback" / job.id / f"{record['id']}.json"
     await aoffload(_write_text_atomic, path, json.dumps(record, ensure_ascii=False), "utf-8")
     return record
-
-
-@router.post("/generate/{job_id}/feedback")
-async def save_feedback(job_id: str, payload: AgentFeedbackRequest) -> dict:
-    return await _save_feedback(_job(job_id), payload.message)
-
-
-@router.get("/generate/{job_id}/feedback")
-async def list_feedback(job_id: str) -> dict:
-    _job(job_id)
-    def read():
-        records = [json.loads(path.read_text(encoding="utf-8"))
-                   for path in (settings.runtime_dir / "job_feedback" / job_id).glob("*.json")]
-        return {"feedback": sorted(records, key=lambda record: record["created_at"])}
-    return await aoffload(read)
 
 
 @router.post("/generate/{job_id}/resume", response_model=GenerateResponse)

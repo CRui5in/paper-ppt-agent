@@ -3,9 +3,9 @@ import { useNavigate } from "react-router-dom";
 import { Loader2, Play, RotateCcw } from "lucide-react";
 import { useGeneration } from "../../hooks/useGeneration";
 import { useLocale } from "../../i18n";
-import { fetchGenerationFeedback, fetchGenerationRecovery, saveGenerationFeedback } from "../../lib/api";
+import { fetchGenerationRecovery } from "../../lib/api";
 import { translateStageStatus } from "../../lib/i18nStatus";
-import type { GenerationFeedback, GenerationRecovery } from "../../lib/types";
+import type { GenerationRecovery } from "../../lib/types";
 
 export function GenerationRecoveryPanel({ jobId, status }: { jobId?: string; status?: string }) {
   const { t, locale } = useLocale();
@@ -13,7 +13,6 @@ export function GenerationRecoveryPanel({ jobId, status }: { jobId?: string; sta
   const continueGeneration = useGeneration((state) => state.continueGeneration);
   const [recovery, setRecovery] = useState<GenerationRecovery | null>(null);
   const [feedback, setFeedback] = useState("");
-  const [records, setRecords] = useState<GenerationFeedback[]>([]);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const failed = status === "error" || status === "cancelled";
@@ -21,13 +20,12 @@ export function GenerationRecoveryPanel({ jobId, status }: { jobId?: string; sta
   useEffect(() => {
     let cancelled = false;
     setRecovery(null);
-    setRecords([]);
     setError("");
     setFeedback("");
     if (jobId && failed) {
-      Promise.all([fetchGenerationRecovery(jobId), fetchGenerationFeedback(jobId)])
-        .then(([next, saved]) => {
-          if (!cancelled) { setRecovery(next); setRecords(saved.feedback); }
+      fetchGenerationRecovery(jobId)
+        .then((next) => {
+          if (!cancelled) setRecovery(next);
         })
         .catch((err: unknown) => { if (!cancelled) setError(err instanceof Error ? err.message : String(err)); });
     }
@@ -62,18 +60,6 @@ export function GenerationRecoveryPanel({ jobId, status }: { jobId?: string; sta
       {recovery?.can_retry ? <button type="button" className="secondary-button full-width" disabled={pending} onClick={() => void resume("retry_failed")}>
         <RotateCcw size={15} />{t("recovery.retry")}
       </button> : null}
-      <p>{t(recovery?.backend === "agent" ? "recovery.agentHint" : "recovery.hint")}</p>
-      <button type="button" className="secondary-button full-width" disabled={pending || !feedback.trim()} onClick={async () => {
-        setPending(true); setError("");
-        try {
-          const record = await saveGenerationFeedback(jobId, feedback);
-          setRecords((current) => [...current, record]); setFeedback("");
-        } catch (err) { setError(err instanceof Error ? err.message : String(err)); }
-        finally { setPending(false); }
-      }}>{t("recovery.saveFeedback")}</button>
-      {records.length ? <details><summary>{t("recovery.savedFeedback")} ({records.length})</summary>
-        {records.map((record) => <p key={record.id}>{record.message}</p>)}
-      </details> : null}
       {error ? <p role="alert">{error}</p> : null}
     </section>
   );

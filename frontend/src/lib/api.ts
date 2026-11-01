@@ -6,7 +6,6 @@ import type {
   GenerateRequestPayload,
   GenerateResponse,
   GenerationRecovery,
-  GenerationFeedback,
   GenerationAgentFeedbackResponse,
   ImageApplyRequest,
   ImageApplyResponse,
@@ -61,14 +60,6 @@ export function fetchGenerationRecovery(jobId: string): Promise<GenerationRecove
 
 export function resumeGeneration(jobId: string, mode: "resume" | "retry_failed", feedback: string): Promise<GenerateResponse> {
   return request(`/api/generate/${jobId}/resume`, { method: "POST", body: JSON.stringify({ mode, feedback }) });
-}
-
-export function saveGenerationFeedback(jobId: string, message: string): Promise<GenerationFeedback> {
-  return request(`/api/generate/${jobId}/feedback`, { method: "POST", body: JSON.stringify({ message }) });
-}
-
-export function fetchGenerationFeedback(jobId: string): Promise<{ feedback: GenerationFeedback[] }> {
-  return request(`/api/generate/${jobId}/feedback`);
 }
 
 export interface UsageSummaryResponse {

@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, patch
 from fastapi import HTTPException
 
 from backend.api.endpoints import recovery
-from backend.api.schemas import AgentFeedbackRequest, ResumeGenerationRequest
+from backend.api.schemas import ResumeGenerationRequest
 from backend.config import settings
 from backend.llm import LLMResponse
 from backend.orchestrator import pipeline, svg_executor
@@ -165,15 +165,6 @@ class RecoveryApiTests(unittest.IsolatedAsyncioTestCase):
             await self.manager.flush_now()
             restored = SessionManager()
             self.assertEqual(restored.get_job(response.job_id).parent_job_id, self.parent.id)
-
-    async def test_feedback_is_saved_without_starting_generation(self):
-        with patch.object(recovery, 'get_scheduler') as scheduler:
-            await recovery.save_feedback(self.parent.id, AgentFeedbackRequest(message='Caption overlaps the chart'))
-            result = await recovery.list_feedback(self.parent.id)
-            self.assertEqual(result['feedback'][0]['message'], 'Caption overlaps the chart')
-            self.assertEqual(result['feedback'][0]['error'], 'Original error')
-            self.assertNotIn('test-only-key', json.dumps(result))
-            scheduler.assert_not_called()
 
     async def test_deleting_parent_preserves_workspace_used_by_continuation(self):
         child = self.manager.create_job('session')

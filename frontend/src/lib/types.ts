@@ -575,12 +575,6 @@ export interface GenerationRecovery {
   reason: string | null;
 }
 
-export interface GenerationFeedback {
-  id: string;
-  message: string;
-  created_at: number;
-}
-
 export interface ReexportResponse {
   job_id: string;
   status: string;
