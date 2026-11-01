@@ -31,6 +31,8 @@ from .normalize_fonts import normalize_text_fonts_in_svg
 from .svg_text_reflow import reflow_text_in_svg
 from .strip_filters import strip_filters_in_svg
 from .repair_svg import repair_svg_file
+from .render_math import render_math_in_svg
+from ..svg_text_layout import reflow_declared_paragraphs, layout_text_groups
 from .svg_rect_to_path import convert_rounded_rects_in_svg
 from ..project_manager import prepare_for_finalize, get_svg_files
 
@@ -81,12 +83,17 @@ def finalize_project(
         "text_integrity_restored": 0,
         "filters_removed": 0,
         "rects_converted": 0,
+        "equations_rendered": 0,
     }
 
     for svg_path in svg_files:
         # Step 0.5: Repair common malformed XML so downstream parse-based
         # finalizers and PPT export can continue instead of failing hard.
         stats["svgs_repaired"] += repair_svg_file(svg_path)
+        stats["equations_rendered"] += render_math_in_svg(svg_path)
+        text_tree = ET.parse(svg_path)
+        if reflow_declared_paragraphs(text_tree.getroot()) + layout_text_groups(text_tree.getroot()):
+            text_tree.write(svg_path, encoding="unicode")
 
         # Step 1: Embed icons
         stats["icons_embedded"] += embed_icons_in_file(svg_path, icons_dir)

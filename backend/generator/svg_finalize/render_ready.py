@@ -10,6 +10,7 @@ from collections import OrderedDict
 import uuid
 import re
 import threading
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from backend.config import settings
@@ -20,6 +21,8 @@ from .flatten_tspan import flatten_text_in_svg
 from .merge_adjacent_text import merge_adjacent_text_in_svg
 from .normalize_fonts import normalize_text_fonts_in_svg
 from .repair_svg import repair_svg_file
+from .render_math import render_math_in_svg
+from ..svg_text_layout import reflow_declared_paragraphs, layout_text_groups
 
 _PREVIEW_CONTENT_CACHE_LIMIT = 256
 _preview_content_cache: OrderedDict[str, tuple[int, int, str]] = OrderedDict()
@@ -96,6 +99,10 @@ def prepare_svg_content_for_render(svg_content: str, svg_dir: Path) -> str:
 
 def _prepare_in_place(svg_path: Path) -> None:
     repair_svg_file(svg_path)
+    render_math_in_svg(svg_path)
+    tree = ET.parse(svg_path)
+    if reflow_declared_paragraphs(tree.getroot()) + layout_text_groups(tree.getroot()):
+        tree.write(svg_path, encoding="unicode")
     embed_icons_in_file(svg_path, settings.icons_dir)
     embed_images_in_svg(svg_path)
     flatten_text_in_svg(svg_path)

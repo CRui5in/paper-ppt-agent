@@ -85,4 +85,5 @@ SVG requirements:
 - Every slide SVG must be directly authored as its own file. Multi-slide generator programs, loops, shared renderers, slide registries, and template expansion are forbidden.
 - Preserve source number precision and units; do not introduce K/M/B shorthand or rounded metrics unless the source uses them.
 - Do not include `<style>`, `class=`, masks, clip paths, script tags, event handlers, remote network URLs, or `foreignObject`.
+- Optional filters are limited to simple convertible drop shadows attached directly to one shape. Group filters, text glow, complex blur effects, and offset duplicate rectangles used as shadows are prohibited.
 - Do not use text glyphs (letters, emoji, Unicode symbols, arrows, stars) as fake icons. Use existing local icon assets or omit the icon.

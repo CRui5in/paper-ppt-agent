@@ -1,6 +1,6 @@
 # Pass 4: Independent Evidence Audit and Revision
 
-Act as an independent reviewer. Do not trust the manuscript or the earlier analysis merely because they are fluent. Re-check them against the supplied source working memory.
+Act as an independent reviewer. Verify the manuscript and earlier analysis against the supplied source working memory.
 
 ## Step 1: Blocking Evidence Audit
 
@@ -16,9 +16,9 @@ Inspect every slide for:
 8. Important contradictions, limitations, or evidence streams omitted in a way that changes the paper's meaning.
 9. Internal evidence-card IDs or retrieval IDs such as `s20t03`, `s22c011`, or other `s##c##` / `s##t##` markers exposed in visible manuscript text.
 
-For each issue, give the slide number, exact problematic wording, source anchor, severity, and required correction.
+For each demonstrated issue, give the slide number, exact problematic wording, source anchor, severity, and required correction. Keep questions needing verification and optional additional experiments distinct from demonstrated problems.
 
-Any unresolved evidence issue is blocking regardless of the presentation score. Revise it. If support is unavailable, remove or soften the claim.
+An unresolved error or unsupported claim is blocking regardless of the presentation score. Correct it using the supplied evidence, narrow it to the supported scope, or remove it. Optional further work is not a blocking issue.
 
 ## Step 2: Presentation Review
 
@@ -32,7 +32,7 @@ Score these dimensions from 1 to 5:
 - Visual fitness
 - Audience reach
 
-Use the paper's discipline and audience. Do not reward drama, contrarian framing, or numerical density when the source does not warrant it.
+Judge explanatory value and evidence fit for the paper's discipline and audience. Evaluate structural pages by their identity, navigation, transition, or closing role. Include limitations where they affect a conclusion, evidence interpretation, or application conditions; keep speculative reviewer concerns in the audit.
 
 ## Step 3: Decision
 
@@ -42,6 +42,6 @@ Output `QUALITY_CHECK_PASSED` only when:
 - all dimensions are at least 3;
 - total score is at least 28/35.
 
-Otherwise revise the complete manuscript. Preserve valid figure tokens exactly and do not introduce unlisted tokens.
+Otherwise revise the affected passages and output the complete manuscript. Preserve valid figure tokens exactly and do not introduce unlisted tokens.
 
 When a value is useful but derived, either show the calculation or use wording such as "calculated from Table X" or "approximately", as appropriate. Prefer exact source metrics and absolute percentage-point differences over newly derived relative percentages. Interpretations must be marked through wording such as "this suggests", "one interpretation is", or "the evidence is consistent with".

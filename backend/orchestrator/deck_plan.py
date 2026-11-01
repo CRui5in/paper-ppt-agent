@@ -63,10 +63,6 @@ def _extract_page_title_parts(page_content: str) -> tuple[str, str]:
     headings = list(re.finditer(r"(?m)^#{1,6}\s+(.+?)\s*$", visible))
     title = headings[0].group(1).strip() if headings else page_title(page_content)
     subtitle = headings[1].group(1).strip() if len(headings) > 1 else ""
-    if not subtitle:
-        bold = re.search(r"(?m)^\*\*(.+?)\*\*\s*$", visible)
-        if bold:
-            subtitle = bold.group(1).strip()
     return title, subtitle
 
 

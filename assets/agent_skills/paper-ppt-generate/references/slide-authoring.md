@@ -18,10 +18,10 @@ Layout:
 - Put styling directly on SVG elements. Do not use `<style>` blocks or `class=` attributes in final slide SVGs; inline `fill`, `stroke`, `font-family`, `font-size`, opacity, and line attributes instead.
 - Use local icons from the configured icons path; verify files exist before referencing them.
 - Design each slide's spatial layout before drawing. Choose a layout family from the Slide Plan, then place figures, text, cards, charts, and callouts in aligned rectangular regions with 24-40px gutters.
-- For ordinary content slides, aim for 65-85% meaningful occupancy of the content area. Whitespace is useful for hierarchy, but do not leave an empty quadrant, a short bullet list floating in a large blank field, or a bottom callout visually detached from the main grid.
+- Size regions from their text and figures. Use whitespace for separation and hierarchy; keep related edges aligned.
 - Use 24-40px gutters between major regions and align edges across repeated layout families.
-- **Visual depth is required** — flat pages without elevation look unfinished. Use filter shadows on cards/panels, gradients for backgrounds/overlays, accent top-bars on cards, and subtle decorative elements. Every card should have a shadow, an accent element, and proper inner padding — not just a plain flat rect with a stroke border.
-- **Visual hierarchy**: use large bold numbers with small gray labels for KPI/metrics. Use color-coded status indicators. Use accent callout boxes with tinted backgrounds for key takeaways.
+- Establish hierarchy through typography, contrast, alignment, and spacing. Use shadows, gradients, or accent bars when they serve the selected style or clarify grouping. Cards need clear grouping and inner padding; a flat layout is valid. Optional shadows must be simple convertible drop shadows attached directly to one shape. Group filters, text glow, complex blur effects, and offset duplicate rectangles used as shadows are prohibited.
+- Use emphasis and grouping where they clarify the current page's evidence or explanation.
 - **Color rules**: 60-30-10 rule (primary 60%, secondary 30%, accent 10%). Maximum 4 colors per page. Use monochromatic opacity variations for chart series.
 - For figure slides, reserve the figure frame first and fit the image inside that frame preserving aspect ratio. Do not stretch the paper figure to fill a convenient box.
 - If content is sparse, fill space with a supported visual explanation: enlarge the paper figure, split bullets into labeled callouts, add a mechanism/process diagram grounded in the paper, or use a comparison strip. Do not invent data, axes, or decorative mini charts.
@@ -40,10 +40,13 @@ Icons:
 Text:
 
 - Use normal SVG `<text>` elements.
+- Give each body paragraph a parent group with `data-textbox="x y width height"` and `data-role="body"`. Write continuous paragraph text and inline `<tspan>` emphasis; the renderer measures fonts and wraps to the declared width. Use separate text elements for separate paragraphs and reserve neighboring regions for figures or captions.
+- For mathematical expressions, use a `<g>` with `data-latex` containing the source LaTeX without dollar delimiters, `data-math-box="x y width height"`, `font-size`, and `fill`. The rendering pipeline typesets it as vector paths inside that box. Preserve the source's indices, limits, operators, and grouping.
 - Avoid excessive nested `tspan` complexity.
 - Do not use `foreignObject`, `<style>`, CSS classes, masks, clip paths, scripts, event handlers, or remote URLs.
 - Wrap against each text box's actual width and font size.
-- For Chinese body copy, let ordinary non-final lines use most of the available width, break at semantic boundaries, and allow light raggedness. Do not force a fixed characters-per-line target.
+- For Chinese body copy, use the box width and a consistent line height. Align related paragraphs on common left edges. Header labels, titles, and dividers need distinct rows and spacing.
+- Mark the header group with `data-role="header"`. Centered labels share their enclosing shape's center and stay within its height.
 - If wrapping is clearly wasteful or clips, widen or reallocate the text region, tune gaps, or adjust typography. Do not create huge blank bands with unnecessarily narrow text boxes.
 - Preserve exact source numbers and units. Do not use K/M/B shorthand, reduce decimal precision, or manufacture chart ticks unless the source itself does so. Put transparent derivations and their inputs on the same slide.
 
@@ -54,7 +57,7 @@ Images:
 - Avoid remote URLs.
 - For paper figures, read `source_assets/figures.json` or `source_assets/figures.md`.
 - Use the exact manifest `href` in `<image href="...">`; from `svg_output/` it normally starts with `../source_assets/images/`.
-- Preserve the listed natural aspect ratio. If you need a different visual box, letterbox or crop deliberately with SVG clipping; do not stretch the image.
+- Preserve the listed natural aspect ratio and fit the complete figure within its box using letterboxing or a resized box. Final Agent SVGs prohibit `clipPath`; keep figure content intact.
 - Choose figures by caption, page number, section/context, and slide claim. Do not choose a figure only because the filename looks convenient.
 
 Consistency:

@@ -45,6 +45,7 @@ dependencies = [
     "huey>=3.0.1",
     "peewee>=4.0.6",
     "rank-bm25>=0.2.2",
+    "matplotlib>=3.9,<4",
 ]
 
 [project.optional-dependencies]

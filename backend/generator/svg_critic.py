@@ -304,15 +304,7 @@ def _text_width_estimate(text: str, font_size: float) -> float:
 
 
 def _text_of(el: ET.Element) -> str:
-    parts: list[str] = []
-    if el.text:
-        parts.append(el.text)
-    for child in el:
-        if _strip_ns(child.tag) == "tspan" and child.text:
-            parts.append(child.text)
-        if child.tail:
-            parts.append(child.tail)
-    return "".join(parts).strip()
+    return "".join(el.itertext()).strip()
 
 
 def _looks_numeric_cell(text: str) -> bool:
@@ -761,39 +753,6 @@ def check_svg(svg_content: str, config: CriticConfig | None = None) -> CriticRep
                     )
                 )
 
-    # 4b. Accent-line-under-title detector.
-    #
-    # Find titles (the largest font_size text on the page, or any text whose
-    # font-size >= min_title_font_size). Then look for any <line> or thin
-    # horizontal <rect> sitting directly below it within the configured gap.
-    title_boxes: list[tuple[ET.Element, tuple[float, float, float, float]]] = [
-        (el, bbox)
-        for _, el, bbox in text_boxes
-        if _font_size_of(el, 16.0) >= cfg.min_title_font_size
-    ]
-    if title_boxes:
-        for el, bbox in _iter_horizontal_strokes(root):
-            for title_entry in title_boxes:
-                title_bbox = title_entry[1]
-                if _is_accent_line_under_title(
-                    title_bbox, bbox, cfg
-                ):
-                    violations.append(
-                        Violation(
-                            rule="accent_line_under_title",
-                            severity="warning",
-                            detail=(
-                                "A near-horizontal line/thin rectangle is positioned "
-                                "directly under a title. This is a hallmark of AI-generated "
-                                "slides. Remove it and use whitespace, a left-side accent "
-                                "bar, or a tinted background block instead."
-                            ),
-                            element=_element_identifier(el),
-                            bbox=bbox,
-                        )
-                    )
-                    break
-
     # 4c. Low-contrast detector.
     #
     # For each text element, find the nearest underlying filled shape (rect /
@@ -876,7 +835,6 @@ def check_svg(svg_content: str, config: CriticConfig | None = None) -> CriticRep
     # 4h. Bold tspan in CJK text: using font-weight="bold" on a tspan
     #     inside CJK text causes uneven character spacing because bold
     #     CJK glyphs are wider than regular ones.
-    _check_bold_tspan_in_cjk(root, violations)
 
     # 4i. Inline emphasis drift: short colored keywords should not be
     #     separated from their surrounding sentence as distant sibling text.
@@ -1585,46 +1543,6 @@ def _check_icon_text_misalign(
                     )
 
 
-def _check_bold_tspan_in_cjk(
-    root: ET.Element,
-    violations: list[Violation],
-) -> None:
-    """Flag tspan elements with font-weight='bold' inside CJK text,
-    because bold CJK glyphs are wider than regular ones and cause
-    uneven character spacing."""
-    for el in _iter_all(root):
-        if _strip_ns(el.tag) != "tspan":
-            continue
-
-        fw = (el.get("font-weight") or "").strip().lower()
-        if fw not in ("bold", "700", "800", "900"):
-            continue
-
-        # Check if the tspan contains CJK characters
-        text = el.text or ""
-        if not _CJK_RE.search(text):
-            # Also check parent <text> for CJK context
-            parent = _parent_of(el, root)
-            if parent is not None:
-                text = _text_of(parent)
-            if not _CJK_RE.search(text):
-                continue
-
-        violations.append(
-            Violation(
-                rule="bold_tspan_in_cjk",
-                severity="warning",
-                detail=(
-                    "Bold <tspan> in CJK text causes uneven character spacing "
-                    "because bold CJK glyphs are wider than regular ones. "
-                    "Use fill color instead of font-weight to emphasize keywords "
-                    '(e.g., fill="#C53030" instead of font-weight="bold").'
-                ),
-                element=_element_identifier(el),
-            )
-        )
-
-
 def _check_inline_emphasis_drift(
     root: ET.Element,
     text_boxes: list[tuple[int, ET.Element, tuple[float, float, float, float]]],
@@ -1698,13 +1616,12 @@ def _check_inline_emphasis_drift(
             violations.append(
                 Violation(
                     rule="inline_emphasis_drift",
-                    severity="error",
+                    severity="warning",
                     detail=(
-                        "A short colored keyword appears far from the preceding text "
-                        f"on the same baseline (estimated gap {gap:.0f}px). This is "
-                        "usually caused by using a separate `<text>` element for inline "
-                        "emphasis. Merge the sentence into one `<text>` and style the "
-                        "keyword with an inline `<tspan fill=\"...\">...</tspan>`."
+                        "Separated colored text shares a baseline with another text "
+                        f"element (estimated gap {gap:.0f}px). Check whether they are "
+                        "independent labels or parts of one sentence. Keep independent "
+                        "labels positioned separately; use inline tspans for a sentence."
                     ),
                     element=_element_identifier(cur_el),
                     bbox=cur_box,
@@ -1713,6 +1630,8 @@ def _check_inline_emphasis_drift(
 
 
 def _looks_like_inline_emphasis(el: ET.Element, text: str) -> bool:
+    if el.get("text-anchor", "start") != "start":
+        return False
     value = text.strip()
     if not value:
         return False

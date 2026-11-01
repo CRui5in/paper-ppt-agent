@@ -1172,7 +1172,7 @@ Repair the existing workspace without changing the requested narrative or slide 
 - Keep only deck-level visual tokens shared: palette, typography, margins, and recurring chrome.
 - Re-evaluate each slide's claim, evidence, paper figure, layout, whitespace, and Chinese wrapping independently.
 - Fix every listed out-of-bounds, card overflow, line collision, or text-capacity violation by changing the layout, container size, line breaks, table columns, or wording. Do not merely shrink all text.
-- Remove disallowed SVG constructs such as `<style>`, `class=`, `mask`, `filter`, `clipPath`, `foreignObject`, scripts, event handlers, or remote URLs. Put fill/stroke/font attributes directly on each SVG element instead of using CSS classes.
+- Remove disallowed SVG constructs such as `<style>`, `class=`, `mask`, `clipPath`, `foreignObject`, scripts, event handlers, or remote URLs. Put fill/stroke/font attributes directly on each SVG element. Preserve supported simple drop shadows attached directly to one shape; remove group filters, text glow, and complex blur effects.
 - Before finishing each slide, verify `text_right <= region_right`, `last_baseline + font_size*0.25 <= region_bottom`, and every table column has enough width for its longest visible cell.
 - Preserve exact source numbers and units; remove K/M/B shorthand unless it appears verbatim in the paper.
 - Ensure every content slide has a well-designed layout.
@@ -3999,14 +3999,15 @@ Workspace contract:
 - First read `agent_task.json`.
 - The current working directory is the generated workspace. If you need to open the skill file manually, read `{skill_path}` and follow its output contract.
 - Do not call this application's legacy provider pipeline or ask for external model API keys.
-- User intent priority: `agent_task.json.presentation.user_instruction` is the highest product requirement after hard export validity. The SVG/PPTX output files are a technical wrapper for this app, not a reason to override the user's requested visual direction. If the user asks for no SVG, image-only, GPT-image-style, or "more beautiful", preserve that goal by making an image-led, polished deck inside valid SVG slide wrappers; do not reply that the output contract wins over the user.
+- User intent priority: follow `agent_task.json.presentation.user_instruction` within export-valid artifacts. For an explicit image-led request, compose local/generated raster assets inside valid SVG slide wrappers. For "more beautiful", improve hierarchy, spacing, typography, and composition according to the selected style.
+- Writing contract: read `skills/paper-ppt-generate/references/writing.md` before writing manuscripts, speaker notes, or reports. Organize each page around the material it presents and the audience's understanding. Retain material uncertainty and applicability conditions; keep planning notes in research files.
 - Use subagents/parallel work when the runtime supports it. When deep research is enabled, SubAgents are required unless the Task/SubAgent tool is unavailable or fails.
 - External research: {external}. Deep research: {deep}. Agent post-generation review: {review}.
 - Deck budget contract: {detail_profile["slide_count_guidance"]} The detail selector affects only slide count and source/summary retrieval budgets. It does not set per-slide density, bullet count, evidence count, typography, or layout.
 - Structural contract: slide 1 is the cover and slide 2 is a mandatory table of contents whose chapter titles match the final chapter plan. Count structural pages separately and use the remaining content-slide budget to choose chapter boundaries.
 - Chapter contract: use at most {detail_profile["page_type_budget"]["chapter"]} chapter dividers. Chapters are presentation-level sections, not paper subsection headings; local method parts, result groups, and discussion points belong on content slides.
 - Per-slide authoring contract: author every `svg_output/slide_###.svg` directly as a separate file. Do not create or run a Python/JavaScript/TypeScript/shell/PowerShell/batch/Ruby program that generates multiple slides. Do not use loops, a `SLIDES`/maker registry, shared `base_svg`/`title`/card rendering functions, or template expansion to emit the deck. Shared palette, typography, margins, and recurring chrome may be documented, but each slide must have an explicit layout and SVG markup chosen from that slide's claim and evidence. Read-only validation/render/export scripts remain allowed.
-- Layout contract: design each slide's spatial layout when generating that slide. Build from aligned rectangular regions first; content slides should normally occupy 65-85% of the content area and avoid empty quadrants or detached bottom callouts. Wrap dynamically from each region's actual width, font size, visual share, and content density. Keep line edges, baselines, captions, and padding inside the final boxes. Size table columns from their longest visible cells.
+- Layout contract: design each slide's spatial layout from its text and visual material. Use aligned regions and consistent spacing. Declare each paragraph's text box and write continuous text with inline emphasis; the renderer wraps it using font metrics. Reserve separate space for paragraphs, figures, captions, header labels, and titles. Keep content inside its assigned boxes and size table columns from their cells.
 - Continuity contract: before writing a chapter slide, read at most the two most recent earlier chapter-slide SVGs. Before writing a content slide, read at most the two most recent earlier content-slide SVGs, skipping cover, TOC, chapter, and ending slides. Use them for style continuity only; the current manuscript remains authoritative.
 - Factual rendering contract: preserve exact source numbers, notation, precision, and units. Do not abbreviate, invent, or round metrics, chart axes, ticks, dates, sample sizes, or settings. Mark derived values explicitly and show their source inputs/calculation nearby. Evidence-card ids and retrieval snippets are private grounding, not visible slide copy.
 - Icon contract: icons are optional decorative/semantic visual aids. Add them only when they make the slide clearer or more polished, such as repeated semantic labels, process steps, comparison dimensions, legends, or diagram nodes. Before using icons, define a small vocabulary in `design_spec.md` (concept -> existing local SVG file -> size/style/color). Use filesystem commands against `agent_task.json.paths.icons` to list and match available `.svg` files directly; do not use icon search scripts, icon metadata files, `index_meta.json`, or vector indexes. Reuse the same icon for the same concept, keep to one icon family/style, and color icons with the template/deck palette. Avoid scattering one-off icons or multi-color icon accents across unrelated slides. Never use letters, initials, ASCII/Unicode symbols, emoji, dingbats, or decorative characters as icon substitutes; omit the icon or use a non-icon shape if no matching asset exists.
@@ -4195,7 +4196,7 @@ def _agent_layout_policy() -> dict[str, Any]:
             "ppt169": {"x": 40, "y": 100, "w": 1200, "h": 520},
         },
         "occupancy_target": {
-            "content_slides": "65-85% of the content area should be meaningfully occupied",
+            "content_slides": "Size regions from their text and figures; use whitespace for separation and hierarchy",
             "structural_slides": "sparse by design; do not force content density",
         },
         "layout_families": [
@@ -4218,9 +4219,9 @@ def _agent_layout_policy() -> dict[str, Any]:
             "Avoid empty quadrants, floating short bullet lists, and bottom callouts detached from the main grid.",
             "For sparse content, enlarge the supported figure, convert bullets into grouped callouts, or draw a simple paper-supported mechanism diagram.",
             "For image+text pages, reserve the figure frame first, preserve aspect ratio inside that frame, and make the text column use comparable vertical rhythm.",
-            "Visual depth is required: use simple drop shadows directly on individual card shapes, plus gradients and accent bars. Never simulate shadows with offset translucent duplicate rectangles, never apply filters to groups, and never use text glow or complex blur filters because they can rasterize the entire PPT slide.",
-            "Every card/panel should have an accent element and proper inner padding — not just a plain flat rect with a stroke border.",
-            "Use large bold numbers with small gray labels for KPI/metrics. Use color-coded status indicators. Use accent callout boxes with tinted backgrounds for key takeaways.",
+            "Establish hierarchy through typography, contrast, alignment, and spacing. Use shadows, gradients, or accent bars when they serve the selected style or clarify grouping; flat layouts are valid. Optional shadows must be simple convertible drop shadows attached directly to one shape. Group filters, text glow, complex blur effects, and offset duplicate rectangles used as shadows are prohibited.",
+            "Give each card/panel clear grouping and proper inner padding; use accent elements when they clarify the content.",
+            "Use emphasis, labels, and grouping where they clarify the current page's evidence or explanation. Choose the layout from its material.",
         ],
         "text_wrapping": {
             "mode": "dynamic_per_region",
@@ -4283,7 +4284,7 @@ def _agent_slide_authoring_policy() -> dict[str, Any]:
             "Loops, slide arrays, maker registries, shared base_svg/title/card rendering functions, or template expansion used to emit multiple slides.",
             "A single script that writes manuscript.md, design_spec.md, agent_report.json, notes, and the complete slide deck in one run.",
             "Treating repeated card grids or a shared page skeleton as evidence that the slide was independently designed.",
-            "`<style>` blocks, `class=` attributes, `mask`, `filter`, `clipPath`, `foreignObject`, scripts, event handlers, or remote image/icon URLs in final SVGs.",
+            "`<style>` blocks, `class=` attributes, `mask`, `clipPath`, `foreignObject`, scripts, event handlers, or remote image/icon URLs in final SVGs; group filters, text glow, and complex blur effects. Simple convertible drop shadows attached directly to one shape are allowed.",
         ],
         "allowed_tools": [
             "Scripts for source extraction, research retrieval, read-only SVG inspection, validation, rendering, and PPTX export.",

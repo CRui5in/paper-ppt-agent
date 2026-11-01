@@ -315,27 +315,22 @@ def _layout_generation_guardrails(page_type: str, has_paper_figure: bool) -> str
         "three-card-grid, kpi-dashboard, process-flow-with-evidence, "
         "comparison-table-callout, full-width-chart-with-notes, hero-title-plus-callouts, "
         "four-quadrant-matrix, timeline-horizontal, or full-bleed-image-overlay.\n"
-        "- Use shared gutters of 24-40px and align region edges. Content slides should "
-        "meaningfully occupy about 65-85% of the content area without edge crowding.\n"
+        "- Use consistent gutters and align related region edges. Size regions from "
+        "their text and visual material; use whitespace for separation and hierarchy.\n"
         "- Keep content boxes inside the content area; the footer band is not layout space.\n"
         "- Avoid free-floating bullets, detached bottom callouts, and large blank bands. "
         "A callout should align with the same column or span a clear full-width grid row.\n"
         f"{figure_note}"
-        "- **Visual depth is required**: flat pages without elevation look unfinished. "
-        "Use only a simple drop shadow directly on one shape. Do not simulate shadows "
-        "with offset translucent duplicate rectangles. Never put a filter on `<g>`, "
-        "and never use blur/glow filters on text; those rasterize the "
-        "whole PPT slide. Use gradients for backgrounds, header bars, and overlays "
-        "(`linearGradient` / `radialGradient`). Use accent top-bars or left-borders on cards "
-        "(4px colored rect). Use subtle decorative elements: rotated small shapes as corner "
-        "accents, gradient divider lines, brand-color orbs/circles.\n"
-        "- **Card design**: cards/panels may use a simple per-shape shadow and should have an accent element "
-        "(top-bar or left-border), and proper inner padding. Do not use plain flat rectangles "
-        "with just a stroke border.\n"
-        "- **Visual hierarchy**: use large bold numbers (36-48px) with small gray labels for "
-        "KPI/metrics. Use color-coded status (green=positive, red=negative, yellow=warning). "
-        "Use accent callout boxes with light tinted backgrounds (`fill-opacity=\"0.08\"`) and "
-        "colored left borders for key takeaways.\n"
+        "- Establish hierarchy through typography, contrast, alignment, and spacing. "
+        "Use shadows, gradients, and accent bars when they serve the design_spec or "
+        "clarify grouping; flat layouts are valid. Optional shadows must be simple "
+        "convertible drop shadows attached directly to one shape. Group filters, "
+        "text glow, complex blur effects, and offset duplicate rectangles used as "
+        "shadows are prohibited.\n"
+        "- **Card design**: give cards/panels clear grouping and proper inner padding. "
+        "Use an accent element or simple per-shape shadow when it clarifies the content.\n"
+        "- Use emphasis, labels, and grouping where they clarify the current page's "
+        "evidence or explanation. Choose these elements from its material.\n"
         "- **Color rules**: 60-30-10 rule (primary 60%, secondary 30%, accent 10%). "
         "Maximum 4 colors per page. Use monochromatic opacity variations for chart series, "
         "not rainbow colors.\n"
@@ -1097,13 +1092,18 @@ def _normalize_obvious_short_text_lines(svg: str, page_design_block: str) -> str
     namespace = _namespace_uri(root.tag)
     if namespace:
         ET.register_namespace("", namespace)
+    from backend.generator.svg_finalize.render_math import render_math_in_tree
+    from backend.generator.svg_text_layout import reflow_declared_paragraphs, layout_text_groups
+
+    math_rendered = render_math_in_tree(root)
+    paragraphs_reflowed = reflow_declared_paragraphs(root) + layout_text_groups(root)
     regions = _merged_text_regions(root, page_design_block)
     if not regions:
-        return svg
+        return ET.tostring(root, encoding="unicode") if math_rendered or paragraphs_reflowed else svg
 
     changed = _wrap_overlong_text_elements(root, regions)
 
-    if not changed:
+    if not changed and not math_rendered and not paragraphs_reflowed:
         return svg
     return ET.tostring(root, encoding="unicode")
 
@@ -1195,6 +1195,8 @@ def _wrap_overlong_text_elements(root: ET.Element, regions: list[dict[str, float
             continue
         if element.attrib.get("text-anchor") or "transform" in element.attrib:
             continue
+        if _has_positioned_text_children(element):
+            continue
         text = _element_text(element)
         if len(text) < 4:
             continue
@@ -1266,22 +1268,9 @@ def _explicit_or_best_text_region(
 
 
 def _styled_text_fragments(element: ET.Element) -> list[tuple[str, dict[str, str]]]:
-    fragments: list[tuple[str, dict[str, str]]] = []
+    from backend.generator.svg_text_layout import paragraph_fragments
 
-    def add(text: str | None, attrs: dict[str, str] | None = None) -> None:
-        if text:
-            fragments.append((text, attrs or {}))
-
-    add(element.text, {})
-    for child in list(element):
-        attrs = {
-            key: value
-            for key, value in child.attrib.items()
-            if key not in {"x", "y", "dx", "dy"}
-        }
-        add(child.text, attrs)
-        add(child.tail, {})
-    return fragments
+    return paragraph_fragments(element)
 
 
 def _styled_tokens(
