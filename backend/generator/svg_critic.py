@@ -86,6 +86,7 @@ class CriticReport:
     passed: bool
     violations: list[Violation] = field(default_factory=list)
     canvas: tuple[float, float] | None = None
+    prompt_limit: int = 20
 
     @property
     def error_count(self) -> int:
@@ -128,8 +129,8 @@ class CriticReport:
         lines.append("")
 
         # Separate errors from warnings for clearer repair guidance.
-        errors = [v for v in self.violations if v.severity == "error"]
-        warnings = [v for v in self.violations if v.severity == "warning"]
+        errors = [v for v in self.violations if v.severity == "error"][:self.prompt_limit]
+        warnings = [v for v in self.violations if v.severity == "warning"][:max(0, self.prompt_limit-len(errors))]
 
         if errors:
             lines.append("### Errors (must fix)")
@@ -929,14 +930,11 @@ def check_svg(svg_content: str, config: CriticConfig | None = None) -> CriticRep
 
     violations[0:0] = check_paragraph_layout(svg_content).violations
 
-    # Trim to avoid prompt bloat.
-    if len(violations) > cfg.max_violations_in_report:
-        violations = sorted(violations, key=lambda v: v.severity != "error")[: cfg.max_violations_in_report]
-
     error_count = sum(1 for v in violations if v.severity == "error")
     warning_count = sum(1 for v in violations if v.severity == "warning")
     blocking = error_count > 0 or (cfg.warnings_are_blocking and warning_count > 0)
-    return CriticReport(passed=not blocking, violations=violations, canvas=canvas)
+    return CriticReport(passed=not blocking, violations=violations, canvas=canvas,
+                        prompt_limit=cfg.max_violations_in_report)
 
 
 def _is_neutral(hex_value: str) -> bool:

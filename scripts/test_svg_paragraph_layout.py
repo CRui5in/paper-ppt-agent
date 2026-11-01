@@ -114,6 +114,12 @@ class ParagraphLayoutTests(unittest.TestCase):
         self.assertFalse(report.passed)
         self.assertIn('out_of_bounds', {v.rule for v in report.violations})
 
+    def test_repair_scoring_sees_every_defect_while_the_model_prompt_stays_bounded(self):
+        body = ''.join(f'<text x="1270" y="{120+i*20}" font-size="18">Overflow label {i}</text>' for i in range(25))
+        report = check_svg(SVG.format(body))
+        self.assertEqual(sum(v.rule == 'out_of_bounds' for v in report.violations), 25)
+        self.assertEqual(report.to_prompt_block().count('[out_of_bounds]'), 20)
+
     def test_content_boundary_follows_the_explicit_footer(self):
         footer = '<g data-role="footer"><line x1="40" y1="660" x2="1240" y2="660"/><text x="40" y="688" font-size="12">Footer</text></g>'
         fits = '<rect x="40" y="252" width="560" height="380" fill="#FFFFFF"/>'

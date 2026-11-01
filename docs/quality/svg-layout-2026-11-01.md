@@ -107,3 +107,7 @@ Removed that gate from production repair. Numeric membership remains an evaluati
 Paragraph flow also leaves independently positioned table columns intact, including tables nested inside an outer text box. Explicit diagram, chart, figure, and table groups establish a separate positioning scope. This prevents the paragraph engine from stacking independently authored cells.
 
 Validation: 91 tests passed. Added regressions preserve table-cell coordinates and reject a capacity-to-overlap trade. The earlier v9 native-export success did not establish layout quality; its rendered pages exposed the regression described here.
+
+## Complete acceptance reports
+
+Geometry reports retain all findings for candidate acceptance and saved audits. Only the model-facing repair excerpt is capped at twenty findings. Previously the same cap also truncated the score, allowing different heavily broken candidates to appear equal. Validation: 92 tests passed, including twenty-five simultaneous canvas violations with a bounded model prompt.
