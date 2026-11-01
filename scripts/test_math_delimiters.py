@@ -15,6 +15,21 @@ EXPRESSION=r'\lVert B_l\rVert_2 \leqslant 1'
 
 
 class MathDelimiterTests(unittest.TestCase):
+    def test_tex_single_token_font_arguments(self):
+        expression = r'M^{(t)}=\mathcal T_r\!\left(\mathcal T_c(M^{(t-1)})\right)'
+        expected = r'M^{(t)}=\mathcal{T}_r\!\left(\mathcal{T}_c(M^{(t-1)})\right)'
+        self.assertEqual(_math_path(expression, 28), _math_path(expected, 28))
+        for source, target in (
+            (r'\mathbb R^n', r'\mathbb{R}^n'),
+            (r'\mathbf x_i + \mathrm d x', r'\mathbf{x}_i + \mathrm{d} x'),
+            (r'\mathcal{AB}', r'\mathcal{AB}'),
+            (r'\text{literal \mathcal T}', r'\text{literal \mathcal T}'),
+            (r'\mathcal\Gamma', r'\mathcal{\Gamma}'),
+            (r'\mathcal TUV', r'\mathcal{T}UV'),
+        ):
+            with self.subTest(source=source):
+                self.assertEqual(_mathtext_expression(source), target)
+
     def test_norm_renders_identically_to_supported_delimiters(self):
         self.assertEqual(_math_path(EXPRESSION,28),_math_path(r'\Vert B_l\Vert_2 \leqslant 1',28))
 

@@ -12,7 +12,7 @@ import unicodedata
 import xml.etree.ElementTree as ET
 
 _math_lock = threading.Lock()
-_MATH_RENDER_VERSION = 3
+_MATH_RENDER_VERSION = 4
 
 # Mathtext accepts the delimiter glyphs but not LaTeX's left/right aliases.
 _DELIMITER_COMMANDS = {
@@ -20,10 +20,14 @@ _DELIMITER_COMMANDS = {
     r'\lvert': r'\vert', r'\rvert': r'\vert',
 }
 _CONTROL_SEQUENCE = re.compile(r'\\(?:[A-Za-z]+|.)', re.DOTALL)
+_FONT_COMMANDS = frozenset({
+    r'\mathcal', r'\mathbb', r'\mathfrak', r'\mathrm', r'\mathit',
+    r'\mathbf', r'\mathsf', r'\mathtt', r'\mathregular', r'\mathdefault',
+})
 
 
 def _mathtext_expression(expression: str) -> str:
-    """Lower delimiter aliases while retaining complete control sequences and text."""
+    """Express TeX delimiter aliases and single-token font arguments for Mathtext."""
     parts, position = [], 0
     for match in _CONTROL_SEQUENCE.finditer(expression):
         if match.start() < position:
@@ -45,6 +49,16 @@ def _mathtext_expression(expression: str) -> str:
                     cursor += 1
                 end = cursor
             parts.append(expression[match.start():end])
+        elif command in _FONT_COMMANDS:
+            opening = end
+            while opening < len(expression) and expression[opening].isspace():
+                opening += 1
+            if opening < len(expression) and expression[opening] not in '{}':
+                token = _CONTROL_SEQUENCE.match(expression, opening)
+                end = token.end() if token else opening + 1
+                parts.append(command + '{' + expression[opening:end] + '}')
+            else:
+                parts.append(command)
         else:
             parts.append(_DELIMITER_COMMANDS.get(command, command))
         position = end
