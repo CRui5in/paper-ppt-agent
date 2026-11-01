@@ -56,6 +56,30 @@ class ManuscriptEntryPointTests(unittest.IsolatedAsyncioTestCase):
 
 
 class SvgGenerationEntryPointTests(unittest.IsolatedAsyncioTestCase):
+    async def test_missing_table_records_trigger_a_targeted_repair_in_both_modes(self):
+        manuscript = '<!-- page_type: content -->\n# Counts\n|Year|Count|\n|---|---|\n|2020|1234.5|\n|2021|0.625|'
+        omitted = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720"><text x="100" y="200">2020 1234.5</text></svg>'
+        complete = omitted.replace('</svg>', '<text x="100" y="240">2021 0.625</text></svg>')
+        for mode in ('sequential', 'page_parallel'):
+            with self.subTest(mode=mode), TemporaryDirectory() as directory:
+                provider = SimpleNamespace(chat=AsyncMock(side_effect=[LLMResponse(content=omitted), LLMResponse(content=complete)]))
+                generator = svg_executor.generate_svg_pages if mode == 'sequential' else svg_executor.generate_svg_pages_parallel
+                kwargs = {} if mode == 'sequential' else {'mode': mode}
+                results = [result async for result in generator('', manuscript, Path(directory), provider, 'test-model', max_critic_attempts=0, enable_visual_critic=False, **kwargs)]
+                self.assertEqual(len(results), 1)
+                self.assertEqual(provider.chat.await_count, 2)
+                messages = provider.chat.call_args.args[0]
+                self.assertIn('source_table_values_missing', '\n'.join(message.content for message in messages if message.role=='user'))
+
+    def test_selected_table_values_are_checked_as_visible_content(self):
+        source = '| Year | Count |\n|---|---|\n|2020|1,234.50|\n|2021|0.625|'
+        omitted = '<svg xmlns="http://www.w3.org/2000/svg"><text>2020 1234.5</text><rect x="2021" width="0.625"/></svg>'
+        report = svg_executor._validate_source_table_values(omitted, source)
+        self.assertFalse(report.passed)
+        self.assertIn('2021', report.violations[0].detail)
+        complete = omitted.replace('</svg>', '<text>2021 0.625</text></svg>')
+        self.assertTrue(svg_executor._validate_source_table_values(complete, source).passed)
+
     async def test_text_collisions_are_repaired_without_style_review(self):
         overlap = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720"><text x="100" y="200" font-size="20">First paragraph</text><text x="100" y="202" font-size="20">Second paragraph</text></svg>'
         with TemporaryDirectory() as directory:

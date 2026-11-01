@@ -2001,7 +2001,9 @@ def _generation_static_report(
     used_paper_figures: dict[str, int],
     required_icon: str | None,
     include_general_svg_checks: bool,
+    page_content: str = "",
 ) -> CriticReport:
+    source_report = _validate_source_table_values(svg_content, page_content)
     if not include_general_svg_checks:
         report = check_svg(svg_content, critic_config)
         violations = [v for v in report.violations if v.rule in {
@@ -2009,8 +2011,9 @@ def _generation_static_report(
             "filter_requires_raster_fallback", "forbidden_element", "xml_parse",
             "text_line_overlap", "text_overlap", "shape_covers_text",
         }]
-        return CriticReport(passed=not violations, violations=violations)
+        return _merge_reports(CriticReport(passed=not violations, violations=violations), source_report)
     reports = [
+        source_report,
         _validate_paper_figure_refs(
             svg_content,
             allowed_figures=allowed_figures,
@@ -2025,6 +2028,53 @@ def _generation_static_report(
     if include_general_svg_checks:
         reports.insert(0, check_svg(svg_content, critic_config))
     return _merge_reports(*reports)
+
+
+def _validate_source_table_values(svg_content: str, page_content: str) -> CriticReport:
+    """Keep numeric records selected into the manuscript's tables visible."""
+    from decimal import Decimal
+    import unicodedata
+
+    def values(text: str) -> dict:
+        text = unicodedata.normalize('NFKC', text).replace('−', '-')
+        result = {}
+        pattern = r'(?<![A-Za-z0-9_.])[-+]?\d+(?:[, \u2009\u202f]\d{3})*(?:\.\d+)?(?:[eE][-+]?\d+)?(?![A-Za-z0-9_.])'
+        for match in re.finditer(pattern, text):
+            raw = match.group()
+            result[Decimal(re.sub(r'[,\s]', '', raw))] = raw
+        return result
+
+    rows = []
+    in_table = False
+    for line in page_content.splitlines():
+        if re.fullmatch(r'\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*', line):
+            in_table = True
+        elif in_table and '|' in line:
+            rows.append(line)
+        else:
+            in_table = False
+    expected = values('\n'.join(rows))
+    if not expected:
+        return CriticReport(passed=True)
+    try:
+        root = ET.fromstring(svg_content)
+    except ET.ParseError:
+        return CriticReport(passed=True)
+    visible = []
+    for element in root.iter():
+        if _local_tag(element.tag) == 'text':
+            visible.append(''.join(element.itertext()))
+        if element.get('data-latex'):
+            visible.append(element.get('data-latex'))
+    present = values('\n'.join(visible))
+    missing = [raw for value, raw in expected.items() if value not in present]
+    if not missing:
+        return CriticReport(passed=True)
+    return CriticReport(passed=False, violations=[Violation(
+        rule='source_table_values_missing', severity='error',
+        detail='Selected source-table values are missing from the visible slide: ' + ', '.join(missing) +
+               '. Recompose the table or chart to retain the complete selected records and their labels.',
+    )])
 
 
 def _static_attempt_limit_for_report(
@@ -2650,6 +2700,7 @@ async def generate_svg_pages(
                         used_paper_figures=used_paper_figures,
                         required_icon=required_icon,
                         include_general_svg_checks=max_critic_attempts > 0,
+                        page_content=page_content,
                     )
                     static_attempt_limit = _static_attempt_limit_for_report(
                         max_critic_attempts,
@@ -3983,6 +4034,7 @@ async def _generate_parallel_page(
                 used_paper_figures={},
                 required_icon=required_icon,
                 include_general_svg_checks=max_critic_attempts > 0,
+                page_content=str(page_input["page_content"]),
             )
             static_attempt_limit = _static_attempt_limit_for_report(
                 max_critic_attempts,

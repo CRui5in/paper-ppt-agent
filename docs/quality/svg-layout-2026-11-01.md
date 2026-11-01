@@ -47,3 +47,11 @@ The second pass exported all nine samples natively, but inspecting the SVGs stil
 Design generation now includes a focused visual-evidence review before drawing. It replaces unsupported visual treatments with supported relationships or milestone timelines. The patcher changes only visual fields, preserving slide titles, roles, source content, and document sections. Assigned figure inventory is supplied separately from the proposed specification. An unapplied review is recorded in debug output.
 
 The evaluation script records the Git revision and source hashes at startup. `--recheck` reruns rendering and native audits without API calls, allowing different sample sets to be measured with the same checker. Validation before the next corpus run: 72 tests passed.
+
+## Mixed inline layout and selected table records
+
+The third pass exported all 27 pages natively. Remaining defects included paragraphs whose mixed sizes or inline scripts disabled wrapping, content obscured by later shapes, and a source table reduced to a few rows.
+
+Paragraph flow now preserves script offsets and mixed font sizes during wrapping. Base symbols stay with their scripts. Numeric values selected into manuscript tables are checked against visible text and equation metadata, separately from SVG coordinates. Missing records trigger targeted repair in both sequential and parallel paths. This detects omissions; it does not establish every semantic claim or row-to-value association.
+
+Writing guidance preserves ties and comparison conditions when summarizing tables. Validation: 76 tests passed. The evaluator can reuse design briefs and replay existing initial SVGs, sending only detected repairs to the model. This isolates renderer and repair changes from new layout generation.

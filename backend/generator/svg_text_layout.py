@@ -156,6 +156,7 @@ class TextRun:
     y: float
     line: int
     chunk: int = 0
+    script_shift: float = 0.0
 
 
 def text_anchor_offsets(runs: list[TextRun]) -> dict[int, float]:
@@ -196,6 +197,7 @@ def text_runs(element: ET.Element, inherited: dict[str, str] | None = None) -> l
     y = number(element.get("y"))
     line = 0
     chunk = 0
+    script_shift = 0.0
 
     def emit(raw: str | None, attrs: dict[str, str]) -> None:
         nonlocal x
@@ -203,11 +205,11 @@ def text_runs(element: ET.Element, inherited: dict[str, str] | None = None) -> l
             return
         text = re.sub(r"[\t\r\n ]+", " ", raw)
         if text:
-            runs.append(TextRun(text, dict(attrs), x, y, line, chunk))
+            runs.append(TextRun(text, dict(attrs), x, y, line, chunk, script_shift))
             x += measure_text(text, attrs)
 
     def visit(node: ET.Element, styles: dict[str, str], is_root: bool = False) -> None:
-        nonlocal x, y, line, chunk
+        nonlocal x, y, line, chunk, script_shift
         attrs = dict(styles)
         attrs.update({key: value for key, value in node.attrib.items() if key in TEXT_ATTRIBUTES})
         parent_size = number(styles.get('font-size'), 16)
@@ -234,6 +236,7 @@ def text_runs(element: ET.Element, inherited: dict[str, str] | None = None) -> l
             shift = -number(shift_value)
         if shift:
             y += shift
+            script_shift += shift
             line += 1
         emit(node.text, attrs)
         for child in node:
@@ -242,6 +245,7 @@ def text_runs(element: ET.Element, inherited: dict[str, str] | None = None) -> l
             emit(child.tail, attrs)
         if shift:
             y -= shift
+            script_shift -= shift
             line += 1
 
     visit(element, inherited or {}, True)
@@ -252,15 +256,20 @@ def paragraph_fragments(element: ET.Element, inherited: dict[str, str] | None = 
     """Return logical paragraph content, retaining nested styles and word spaces."""
     fragments: list[tuple[str, dict[str, str]]] = []
     previous_line: int | None = None
+    previous_shift = 0.0
     for run in text_runs(element, inherited):
         text = run.text
-        if run.line != previous_line:
+        if run.line != previous_line and not (run.script_shift or previous_shift):
             text = text.lstrip()
             if fragments and text and fragments[-1][0][-1:].isascii() and fragments[-1][0][-1:].isalnum() and text[0].isascii() and text[0].isalnum():
                 fragments.append((" ", {}))
         if text:
-            fragments.append((text, run.attrs))
+            attrs = dict(run.attrs)
+            if run.script_shift:
+                attrs['baseline-shift'] = f'{-run.script_shift:g}'
+            fragments.append((text, attrs))
         previous_line = run.line
+        previous_shift = run.script_shift
     return fragments
 
 
@@ -281,7 +290,7 @@ def wrap_fragments(fragments: list[tuple[str, dict[str, str]]], width: float, ba
         if token.isspace() and not current:
             continue
         size = measure_text(token, attrs)
-        closing = unicodedata.category(token[0]) in {"Pe", "Pf"} or token[0] in "，。、；：！？%"
+        closing = unicodedata.category(token[0]) in {"Pe", "Pf"} or token[0] in "，。、；：！？%" or bool(attrs.get('baseline-shift'))
         following = 0.0
         if index + 1 < len(tokens):
             next_text, next_attrs = tokens[index + 1]
@@ -289,6 +298,10 @@ def wrap_fragments(fragments: list[tuple[str, dict[str, str]]], width: float, ba
                 following = measure_text(next_text, next_attrs)
         if token.isascii() and token.isalpha() and index + 2 < len(tokens) and tokens[index + 1][0].isspace() and tokens[index + 2][0][:1].isdigit():
             following = sum(measure_text(t, a) for t, a in tokens[index + 1:index + 3])
+        for script_text, script_attrs in tokens[index+1:]:
+            if not script_attrs.get('baseline-shift'):
+                break
+            following += measure_text(script_text, script_attrs)
         if current and current_width + size + following > width and not closing:
             while current and current[-1][0].isspace():
                 current.pop()
@@ -342,15 +355,13 @@ def _paragraph_layouts(root: ET.Element):
             descendants = list(element.iter())[1:]
             if element.get("text-anchor", inherited.get("text-anchor", "start")) != "start" or element.get("transform"):
                 break
-            if any(child.get("baseline-shift") or child.get("transform") or number(child.get("dy")) < 0 for child in descendants):
+            if any(child.get("transform") or number(child.get("dy")) < 0 for child in descendants):
                 break
             runs = text_runs(element, inherited)
             if not runs:
                 continue
             first = runs[0]
-            size = number(first.attrs.get("font-size"), 16)
-            if any(abs(number(run.attrs.get("font-size"), size) - size) > 0.01 for run in runs):
-                break
+            size = max(number(run.attrs.get("font-size"), 16) for run in runs)
             available = x + width - first.x
             if available <= 0:
                 break
@@ -358,14 +369,14 @@ def _paragraph_layouts(root: ET.Element):
             if not lines:
                 continue
             line_height = number(element.get("data-line-height"), size * 1.5)
-            baselines = sorted({run.y for run in runs})
+            baselines = sorted({run.y - run.script_shift for run in runs})
             if len(baselines) > 1 and element.get("data-line-height") is None:
                 line_height = min(max(size * 1.2, baselines[1] - baselines[0]), size * 1.6)
             baseline = max(first.y, cursor) if cursor is not None else first.y
             last_baseline = baseline + (len(lines) - 1) * line_height
             cursor = last_baseline + line_height + number(owner.get("data-paragraph-gap"))
             glyph_bottom = max(
-                baseline + index * line_height + _glyph_vertical_bounds(text, attrs)[1]
+                baseline + index * line_height + _glyph_vertical_bounds(text, attrs)[1] - number(attrs.get('baseline-shift'))
                 for index, line in enumerate(lines) for text, attrs in line if text.strip()
             )
             plans.append({"element": element, "first": first, "lines": lines, "baseline": baseline,
@@ -410,7 +421,7 @@ def reflow_declared_paragraphs(root: ET.Element) -> int:
                 span = ET.SubElement(element, namespace + "tspan", {"x": f"{first.x:g}", "y": f"{plan['baseline'] + index * plan['line_height']:g}"})
                 last = None
                 for text, attrs in line:
-                    styles = {k: v for k, v in attrs.items() if k in TEXT_ATTRIBUTES and element.get(k) != v}
+                    styles = {k: v for k, v in attrs.items() if k in TEXT_ATTRIBUTES | {'baseline-shift'} and element.get(k) != v}
                     if last is not None and last.attrib == styles:
                         last.text = (last.text or "") + text
                     else:

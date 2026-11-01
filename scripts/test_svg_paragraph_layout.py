@@ -67,6 +67,28 @@ class NestedTextTests(unittest.TestCase):
 
 
 class ParagraphLayoutTests(unittest.TestCase):
+    def test_wrapping_keeps_an_inline_script_with_its_base(self):
+        width = measure_text('Long x', {'font-size':'18'}) + .1
+        root = ET.fromstring(SVG.format(f'<g data-role="body" data-textbox="100 180 {width} 180">'
+            '<text x="100" y="204" font-size="18">Long x<tspan baseline-shift="sub" font-size="12">123</tspan></text></g>'))
+        reflow_declared_paragraphs(root)
+        lines = [signature(''.join(line.itertext())) for line in next(root.iter(NS+'text'))]
+        self.assertIn('x123', lines)
+
+    def test_mixed_size_paragraphs_wrap_and_preserve_scripts(self):
+        root = ET.fromstring(SVG.format('<g data-role="body" data-textbox="100 180 180 220">'
+            '<text x="100" y="204" font-size="18">A value x<tspan baseline-shift="sub" font-size="12">i</tspan>'
+            ' with a <tspan font-size="20" font-weight="bold">larger label</tspan> and a complete explanation that needs wrapping.</text></g>'))
+        original = signature(''.join(root.itertext()))
+        self.assertGreater(reflow_declared_paragraphs(root), 0)
+        text = next(root.iter(NS+'text'))
+        self.assertLessEqual(_bounds(text)[2], 280.1)
+        self.assertEqual(signature(''.join(root.itertext())), original)
+        self.assertTrue([e for e in text.iter() if e.get('baseline-shift')])
+        first = ET.tostring(root)
+        reflow_declared_paragraphs(root)
+        self.assertEqual(ET.tostring(root), first)
+
     def test_inline_emphasis_shares_the_complete_text_anchor(self):
         for anchor in ('middle', 'end'):
             with self.subTest(anchor=anchor):

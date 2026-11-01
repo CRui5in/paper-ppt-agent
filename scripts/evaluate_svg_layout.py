@@ -34,7 +34,7 @@ from backend.generator.svg_to_pptx.builder import create_pptx
 from backend.generator.visual_critic import render_svg_to_png
 from backend.llm import LLMMessage, LLMResponse, TokenUsage
 from backend.orchestrator.strategist_agent import create_design_spec
-from backend.orchestrator.svg_executor import generate_svg_pages_parallel
+from backend.orchestrator.svg_executor import generate_svg_pages_parallel, _validate_source_table_values
 
 
 def source_excerpts(path: Path) -> tuple[str, dict]:
@@ -61,6 +61,7 @@ class EvaluationProvider:
         self.client, self.semaphore, self.directory = client, semaphore, directory
         self.stage = 'manuscript'
         self.calls: list[dict] = []
+        self.replay_svg: Path | None = None
 
     async def chat(self, messages, model, **kwargs):
         index = len(self.calls) + 1
@@ -68,6 +69,15 @@ class EvaluationProvider:
         self.calls.append(entry)
         payload = [{'role': message.role, 'content': message.content} for message in messages]
         (self.directory / f'prompt_{index:02d}.json').write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf8')
+        if self.stage == 'svg' and self.replay_svg and not any(message.role == 'assistant' for message in messages):
+            page = next((re.search(r'## Page (\d+)/', message.content) for message in reversed(messages) if re.search(r'## Page (\d+)/', message.content)), None)
+            if page:
+                source_path = self.replay_svg / self.directory.name / 'svg_output' / f'slide_{int(page.group(1)):03d}.svg'
+                entry.update(replayed_from=str(source_path), seconds=0)
+                content = '```svg\n' + source_path.read_text(encoding='utf8') + '\n```'
+                (self.directory / f'response_{index:02d}.md').write_text(content, encoding='utf8')
+                (self.directory / 'calls.json').write_text(json.dumps(self.calls, indent=2), encoding='utf8')
+                return LLMResponse(content=content)
         async with self.semaphore:
             started = time.perf_counter()
             response = await self.client.chat.completions.create(
@@ -89,6 +99,8 @@ class EvaluationProvider:
 
 def render_and_audit(directory: Path) -> list[dict]:
     reports, images = [], []
+    fixture_path = directory / 'fixture.json'
+    fixture_pages = json.loads(fixture_path.read_text(encoding='utf8'))['pages'] if fixture_path.exists() else []
     for path in sorted((directory / 'svg_output').glob('*.svg')):
         prepared = prepare_svg_file_content_for_render(path)
         png = render_svg_to_png(prepared)
@@ -98,6 +110,9 @@ def render_and_audit(directory: Path) -> list[dict]:
             with Image.open(image_path) as image:
                 images.append(image.convert('RGB').copy())
         report = check_svg(prepared).to_dict()
+        page_index = int(path.stem.rsplit('_', 1)[-1]) - 1
+        if page_index < len(fixture_pages):
+            report['source_coverage'] = _validate_source_table_values(prepared, fixture_pages[page_index]['body']).to_dict()
         reports.append({'page': path.stem, **report})
     if images:
         sheet = Image.new('RGB', (max(image.width for image in images), sum(image.height for image in images)), 'white')
@@ -106,8 +121,8 @@ def render_and_audit(directory: Path) -> list[dict]:
             sheet.paste(image, (0, offset))
             offset += image.height
         sheet.save(directory / 'contact_sheet.png')
-    create_pptx(sorted((directory / 'svg_output').glob('*.svg')), directory / 'samples.pptx')
     (directory / 'geometry.json').write_text(json.dumps(reports, ensure_ascii=False, indent=2), encoding='utf8')
+    create_pptx(sorted((directory / 'svg_output').glob('*.svg')), directory / 'samples.pptx')
     return reports
 
 
@@ -130,6 +145,7 @@ async def evaluate_one(item: dict, args, client, semaphore) -> dict:
                 'The first content page explains the method; the second explains evidence or results. '
                 'Use the source title and author metadata. Include an equation or a compact numeric table when the excerpts provide one. '
                 'Keep values, units, comparison conditions, and mathematical notation faithful to the cited source pages. '
+                'Describe comparisons at the metric and evaluation-condition level, preserving ties and tradeoffs. '
                 'Make each page coherent and concise, with enough information to test the rendering of real research material.'),
             LLMMessage.user(source),
             ], args.model, max_tokens=5000)
@@ -141,9 +157,13 @@ async def evaluate_one(item: dict, args, client, semaphore) -> dict:
         (directory / 'fixture.json').write_text(json.dumps(fixture, ensure_ascii=False, indent=2), encoding='utf8')
         (directory / 'manuscript.md').write_text(manuscript, encoding='utf8')
         provider.stage = 'design'
-        design = await create_design_spec(manuscript, provider, args.model, language='zh', debug_dir=directory / 'debug')
+        if args.reuse_designs:
+            design = (args.reuse_designs / item['id'] / 'design_spec.md').read_text(encoding='utf8')
+        else:
+            design = await create_design_spec(manuscript, provider, args.model, language='zh', debug_dir=directory / 'debug')
         (directory / 'design_spec.md').write_text(design, encoding='utf8')
         provider.stage = 'svg'
+        provider.replay_svg = args.replay_svg
         critic_events = []
         async def on_critic(*event):
             critic_events.append({'page': event[0], 'attempt': event[1], 'report': event[2].to_dict()})
@@ -167,7 +187,8 @@ async def evaluate_one(item: dict, args, client, semaphore) -> dict:
         (directory / 'fidelity.json').write_text(json.dumps(json_response(review.content), ensure_ascii=False, indent=2), encoding='utf8')
         audit = json.loads((directory / 'samples.export_audit.json').read_text(encoding='utf8'))
         summary.update(status='generated', slides=len(reports), export=audit['summary'],
-            geometry_errors=sum(report['error_count'] for report in reports), calls=len(provider.calls))
+            geometry_errors=sum(report['error_count'] for report in reports),
+            source_coverage_errors=sum(report.get('source_coverage',{}).get('error_count',0) for report in reports), calls=len(provider.calls))
     except Exception as error:
         summary.update(status='failed', error=f'{type(error).__name__}: {error}')
     (directory / 'summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding='utf8')
@@ -186,7 +207,8 @@ async def main(args):
             directory = args.output / item['id']
             try:
                 reports = render_and_audit(directory)
-                results.append({'id': item['id'], 'geometry_errors': sum(report['error_count'] for report in reports), 'status': 'passed'})
+                results.append({'id': item['id'], 'geometry_errors': sum(report['error_count'] for report in reports),
+                    'source_coverage_errors': sum(report.get('source_coverage',{}).get('error_count',0) for report in reports), 'status': 'passed'})
             except Exception as error:
                 results.append({'id': item['id'], 'status': 'failed', 'error': f'{type(error).__name__}: {error}'})
         (args.output/'recheck.json').write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding='utf8')
@@ -199,6 +221,8 @@ async def main(args):
     run = {'started_at': datetime.now(timezone.utc).isoformat(), 'git_revision': revision,
            'model': args.model, 'thinking': 'disabled', 'concurrency': args.concurrency,
            'reuse_fixtures': str(args.reuse_fixtures) if args.reuse_fixtures else None,
+           'reuse_designs': str(args.reuse_designs) if args.reuse_designs else None,
+           'replay_svg': str(args.replay_svg) if args.replay_svg else None,
            'source_hashes': {str(path.relative_to(repository)).replace('\\','/'): hashlib.sha256(path.read_bytes()).hexdigest() for path in source_paths}}
     (args.output/'run.json').write_text(json.dumps(run, ensure_ascii=False, indent=2), encoding='utf8')
     key = os.environ.get('DEEPSEEK_API_KEY') or getpass.getpass('API key (not saved): ')
@@ -221,4 +245,6 @@ if __name__ == '__main__':
     parser.add_argument('--limit', type=int)
     parser.add_argument('--reuse-fixtures', type=Path, help='Reuse prior manuscripts for a controlled SVG comparison')
     parser.add_argument('--recheck', action='store_true', help='Rerender and audit existing SVGs without model calls')
+    parser.add_argument('--reuse-designs', type=Path, help='Reuse prior design briefs for a controlled layout comparison')
+    parser.add_argument('--replay-svg', type=Path, help='Replay existing initial SVGs and send only detected repairs to the model')
     asyncio.run(main(parser.parse_args()))
