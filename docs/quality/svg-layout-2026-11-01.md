@@ -39,3 +39,11 @@ Validation after these fixes: 66 tests passed. The corpus script is `scripts/eva
 - 69 unit tests passed, and the original 41-slide native export passed again after the anchor change.
 
 The second corpus pass reuses the first pass's manuscript fixtures (`--reuse-fixtures`) to separate SVG changes from new source summarization.
+
+## Visual-evidence review
+
+The second pass exported all nine samples natively, but inspecting the SVGs still found invented annual trend curves and stacked observations specified by the planner from qualitative prose. Adding a material field to the design brief did not resolve that contradiction.
+
+Design generation now includes a focused visual-evidence review before drawing. It replaces unsupported visual treatments with supported relationships or milestone timelines. The patcher changes only visual fields, preserving slide titles, roles, source content, and document sections. Assigned figure inventory is supplied separately from the proposed specification. An unapplied review is recorded in debug output.
+
+The evaluation script records the Git revision and source hashes at startup. `--recheck` reruns rendering and native audits without API calls, allowing different sample sets to be measured with the same checker. Validation before the next corpus run: 72 tests passed.

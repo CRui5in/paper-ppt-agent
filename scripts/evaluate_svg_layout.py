@@ -18,6 +18,8 @@ from pathlib import Path
 import re
 import sys
 import time
+import subprocess
+from datetime import datetime, timezone
 import xml.etree.ElementTree as ET
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -178,6 +180,27 @@ async def main(args):
     corpus = json.loads(args.corpus.read_text(encoding='utf8'))
     if args.limit:
         corpus = corpus[:args.limit]
+    if args.recheck:
+        results = []
+        for item in corpus:
+            directory = args.output / item['id']
+            try:
+                reports = render_and_audit(directory)
+                results.append({'id': item['id'], 'geometry_errors': sum(report['error_count'] for report in reports), 'status': 'passed'})
+            except Exception as error:
+                results.append({'id': item['id'], 'status': 'failed', 'error': f'{type(error).__name__}: {error}'})
+        (args.output/'recheck.json').write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding='utf8')
+        return
+    repository = Path(__file__).resolve().parents[1]
+    revision = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=repository, text=True, capture_output=True, check=True).stdout.strip()
+    source_paths = [*repository.glob('backend/**/*.py'), *repository.glob('backend/orchestrator/prompts/*.md'),
+                    repository/'assets/references/shared-standards-essential.md',
+                    repository/'assets/templates/design_spec_reference.md', Path(__file__).resolve()]
+    run = {'started_at': datetime.now(timezone.utc).isoformat(), 'git_revision': revision,
+           'model': args.model, 'thinking': 'disabled', 'concurrency': args.concurrency,
+           'reuse_fixtures': str(args.reuse_fixtures) if args.reuse_fixtures else None,
+           'source_hashes': {str(path.relative_to(repository)).replace('\\','/'): hashlib.sha256(path.read_bytes()).hexdigest() for path in source_paths}}
+    (args.output/'run.json').write_text(json.dumps(run, ensure_ascii=False, indent=2), encoding='utf8')
     key = os.environ.get('DEEPSEEK_API_KEY') or getpass.getpass('API key (not saved): ')
     client = AsyncOpenAI(api_key=key, base_url=args.base_url, max_retries=0, timeout=240)
     try:
@@ -197,4 +220,5 @@ if __name__ == '__main__':
     parser.add_argument('--concurrency', type=int, default=3)
     parser.add_argument('--limit', type=int)
     parser.add_argument('--reuse-fixtures', type=Path, help='Reuse prior manuscripts for a controlled SVG comparison')
+    parser.add_argument('--recheck', action='store_true', help='Rerender and audit existing SVGs without model calls')
     asyncio.run(main(parser.parse_args()))
