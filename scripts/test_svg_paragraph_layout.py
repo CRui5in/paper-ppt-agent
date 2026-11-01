@@ -131,6 +131,9 @@ class ParagraphLayoutTests(unittest.TestCase):
         card = '<g transform="translate(0 20)"><rect x="40" y="252" width="560" height="380" fill="#fff"/></g>'
         self.assertNotIn('content_area_overflow', {v.rule for v in check_svg(SVG.format(card+footer)).violations})
         self.assertIn('content_area_overflow', {v.rule for v in check_svg(SVG.format(card.replace('380','410')+footer)).violations})
+        below_footer = '<text x="100" y="690" font-size="18">Content below the footer</text>'
+        self.assertIn('content_area_overflow', {v.rule for v in check_svg(SVG.format(below_footer+footer)).violations})
+        self.assertNotIn('content_area_overflow', {v.rule for v in check_svg(SVG.format(footer)).violations})
 
     def test_capacity_uses_last_line_glyphs_instead_of_estimated_descent(self):
         root = ET.fromstring(SVG.format('<g data-role="body" data-textbox="100 180 300 90">'

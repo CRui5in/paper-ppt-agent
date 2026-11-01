@@ -36,6 +36,14 @@ class SvgTextGeometryTests(unittest.TestCase):
         self.assertIsNone(_apply_svg_repair_response(reply, source))
         self.assertIn('100 180 200 60', source)
 
+    def test_repair_preserves_existing_equations_for_edits_and_complete_svg_responses(self):
+        source = _identify_svg_elements(SVG.format(r'<g data-latex="x^2" data-math-box="100 180 200 60"/>'))
+        target = next(ET.fromstring(source).iter(NS+'g')).get('data-editor-id')
+        for response in (json.dumps({'edits':[{'target':target,'remove':True}]}), SVG.format('<text>Equation omitted</text>')):
+            errors = []
+            self.assertIsNone(_apply_svg_repair_response(response, source, errors))
+            self.assertIn('Retain the existing equation', errors[0])
+
     def test_identified_xml_edits_preserve_other_geometry_and_canvas(self):
         source = _identify_svg_elements(SVG.format('<text x="100" y="200">Keep me</text><rect x="80" y="180" width="300" height="60"/>'))
         root = ET.fromstring(source)

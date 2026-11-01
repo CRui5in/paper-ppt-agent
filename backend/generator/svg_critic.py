@@ -1338,9 +1338,11 @@ def _check_default_content_area_overflow(
     cw, ch = canvas
     content_top = 100.0
     footer_tops = []
+    footer_elements = set()
     for group in _iter_all(root):
         if _strip_ns(group.tag) != "g" or group.get("data-role", group.get("id")) != "footer":
             continue
+        footer_elements.update(group.iter())
         for element in group.iter():
             tag = _strip_ns(element.tag)
             if tag == "text":
@@ -1358,8 +1360,10 @@ def _check_default_content_area_overflow(
     slack = 2.0
 
     for _order, text_el, bbox in text_boxes:
+        if text_el in footer_elements:
+            continue
         x, y, w, h = bbox
-        if y < content_top or y >= content_bottom:
+        if y < content_top:
             continue
         if y + h <= content_bottom + slack:
             continue
@@ -1378,6 +1382,8 @@ def _check_default_content_area_overflow(
         )
 
     for element in _iter_all(root):
+        if element in footer_elements:
+            continue
         if _strip_ns(element.tag) not in {"rect", "image"}:
             continue
         bbox = _shape_bbox(element, geometry)
@@ -1388,7 +1394,7 @@ def _check_default_content_area_overflow(
             continue
         if w < 80 or h < 32:
             continue
-        if y < content_top or y >= content_bottom:
+        if y < content_top:
             continue
         if y + h <= content_bottom + slack:
             continue

@@ -937,11 +937,28 @@ def _svg_repair_messages(svg: str, page_content: str, report: CriticReport,
 
 def _apply_svg_repair_response(response: str, svg: str, errors: list[str] | None = None) -> str | None:
     """Apply a complete set of identified XML edits atomically."""
+    def validate(root):
+        original = ET.fromstring(svg)
+        equations = Counter(element.get('data-latex') for element in original.iter() if element.get('data-latex'))
+        retained = Counter(element.get('data-latex') for element in root.iter() if element.get('data-latex'))
+        if equations - retained:
+            raise ValueError('Retain the existing equation expressions in visible, positive-sized math boxes')
+        from backend.generator.svg_finalize.render_math import render_math_in_tree
+        render_math_in_tree(root)
+        return ET.tostring(root, encoding='unicode')
+
     try:
         raw = re.sub(r'^\s*```(?:json)?\s*|\s*```\s*$', '', response.strip())
         payload = json.loads(raw)
     except (ValueError, TypeError):
-        return _extract_svg(response)
+        candidate = _extract_svg(response)
+        if candidate:
+            try:
+                return validate(ET.fromstring(candidate))
+            except (ValueError, ET.ParseError) as error:
+                if errors is not None:
+                    errors.append(str(error))
+        return None
     try:
         edits = payload['edits']
         if not isinstance(edits, list) or not edits:
@@ -992,9 +1009,7 @@ def _apply_svg_repair_response(response: str, svg: str, errors: list[str] | None
                 target.extend(list(wrapper))
         if _local_tag(root.tag) != 'svg' or root.get('viewBox') != original_viewbox:
             raise ValueError('The assigned canvas must be preserved')
-        from backend.generator.svg_finalize.render_math import render_math_in_tree
-        render_math_in_tree(root)
-        return ET.tostring(root, encoding='unicode')
+        return validate(root)
     except (KeyError, TypeError, ValueError, ET.ParseError) as error:
         if errors is not None:
             errors.append(str(error))
@@ -2132,7 +2147,7 @@ def _generation_static_report(
             "paragraph_capacity", "out_of_bounds", "text_overflow_in_container",
             "filter_requires_raster_fallback", "forbidden_element", "xml_parse",
             "text_line_overlap", "text_overlap", "shape_covers_text",
-            "equation_overlaps_text",
+            "equation_overlaps_text", "content_area_overflow",
         }]
         return _merge_reports(CriticReport(passed=not violations, violations=violations), source_report)
     reports = [
@@ -2976,7 +2991,8 @@ async def generate_svg_pages(
                         if after_quality > before_quality:
                             repair_errors.append('The proposed edits increased outstanding defects. Recompose the current page using these candidate findings:\n' + candidate_report.to_prompt_block(output_format='edits'))
                             repaired = None
-                        elif after_quality < before_quality and not candidate_report.passed:
+                        elif (after_quality <= before_quality and not candidate_report.passed
+                              and _svg_for_model(repaired) != _svg_for_model(svg_content)):
                             static_attempt_limit = max(static_attempt_limit, min(3, critic_attempt + 1))
                 repair_feedback = ''
                 _write_generation_response_debug(project_dir, prefix="repair", page_num=page_num,
@@ -4314,7 +4330,8 @@ async def _generate_parallel_page(
                 if after_quality > before_quality:
                     repair_errors.append('The proposed edits increased outstanding defects. Recompose the current page using these candidate findings:\n' + candidate_report.to_prompt_block(output_format='edits'))
                     repaired = None
-                elif after_quality < before_quality and not candidate_report.passed:
+                elif (after_quality <= before_quality and not candidate_report.passed
+                      and _svg_for_model(repaired) != _svg_for_model(svg_content)):
                     static_attempt_limit = max(static_attempt_limit, min(3, critic_attempt + 1))
         repair_feedback = ''
         _write_generation_response_debug(project_dir, prefix="parallel_repair", page_num=page_num,

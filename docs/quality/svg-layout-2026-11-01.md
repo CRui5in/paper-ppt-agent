@@ -91,3 +91,9 @@ Validation: 86 tests passed. Entry-point tests exercise partial improvement, a c
 Geometry checks now compose SVG affine transforms and inherited text styles before measuring canvas overflow, text collisions, local containers, occluding shapes, and equation/text intersections. Measurements stay separate from the authored tree. Footer checks follow the declared footer, including transformed footer lines; pages without a footer no longer receive an invented 100px footer band.
 
 Validation: 88 tests passed. New regressions cover translated occluders, transformed equations, nested scale with inherited font size, and translated footer boundaries. Remaining visual defects are still checked independently of export success.
+
+## Footer occupancy and equation retention
+
+Inspecting the replay PNGs found a relocated footer drawn through a diagram, despite a zero-error report. The check now includes content beginning below the footer boundary and excludes the footer's own elements. Footer occupancy is part of basic geometry repair. Changed candidates with equal defect counts can receive another bounded edit, since one repaired region can expose another at the same count. Repeated identical candidates still stop.
+
+Both edit-list and complete-SVG repairs retain existing mathematical expressions and validate their renderability before acceptance. Validation: 89 tests passed, including content entirely below the footer and equation deletion in both response formats.
