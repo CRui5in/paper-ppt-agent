@@ -336,8 +336,58 @@ def _font_size_of(el: ET.Element, inherited: float) -> float:
     return inherited
 
 
-def _text_bbox(el: ET.Element, font_size: float) -> tuple[float, float, float, float]:
+class _Geometry:
+    """World coordinates for one parsed SVG; authoring attributes stay intact."""
+
+    def __init__(self, root):
+        from .svg_text_layout import TEXT_ATTRIBUTES, _bounds, number, text_runs
+        from .svg_to_pptx.utils import identity_matrix, multiply_matrices, parse_transform_matrix, transform_point
+
+        self.matrices = {}
+        self.boxes = {}
+        self.anchors = {}
+        self.font_sizes = {}
+
+        def visit(element, parent_matrix, inherited):
+            matrix = multiply_matrices(parent_matrix, parse_transform_matrix(element.get('transform', '')))
+            self.matrices[element] = matrix
+            attrs = dict(inherited)
+            attrs.update({k: v for k, v in element.attrib.items() if k in TEXT_ATTRIBUTES})
+            for declaration in element.get('style', '').split(';'):
+                name, separator, value = declaration.partition(':')
+                if separator and name.strip() in TEXT_ATTRIBUTES:
+                    attrs[name.strip()] = value.strip()
+            box = None
+            if _strip_ns(element.tag) == 'text':
+                bounds = _bounds(element, attrs)
+                self.font_sizes[element] = number(attrs.get('font-size'), 16)
+                if bounds:
+                    x, y, right, bottom = bounds
+                    box = (x, y, right-x, bottom-y)
+                runs = text_runs(element, attrs)
+                if runs:
+                    self.anchors[element] = transform_point(matrix, runs[0].x, runs[0].y - self.font_sizes[element] * .4)
+            else:
+                box = _shape_bbox(element)
+            if box is not None:
+                self.boxes[element] = self.transform_box(element, box)
+            for child in element:
+                visit(child, matrix, attrs)
+        visit(root, identity_matrix(), {})
+
+    def transform_box(self, element, box):
+        from .svg_to_pptx.utils import transform_point
+        x, y, width, height = box
+        points = [transform_point(self.matrices[element], px, py)
+                  for px, py in ((x,y),(x+width,y),(x,y+height),(x+width,y+height))]
+        left, top = min(p[0] for p in points), min(p[1] for p in points)
+        return left, top, max(p[0] for p in points)-left, max(p[1] for p in points)-top
+
+
+def _text_bbox(el: ET.Element, font_size: float, geometry=None) -> tuple[float, float, float, float]:
     """Measure every styled run, including parent text and descendant tails."""
+    if geometry is not None and el in geometry.boxes:
+        return geometry.boxes[el]
     from .svg_text_layout import _bounds
 
     box = _bounds(el, {"font-size": str(font_size)})
@@ -376,7 +426,7 @@ def _element_identifier(el: ET.Element) -> str:
     return _strip_ns(el.tag)
 
 
-def _check_equation_text_overlap(root, text_boxes, violations):
+def _check_equation_text_overlap(root, text_boxes, violations, geometry=None):
     from .svg_finalize.render_math import math_content_bounds
 
     for element in root.iter():
@@ -384,6 +434,8 @@ def _check_equation_text_overlap(root, text_boxes, violations):
             continue
         try:
             box = math_content_bounds(element)
+            if geometry is not None:
+                box = geometry.transform_box(element, box)
         except (ValueError, TypeError):
             continue
         descendants = {id(child) for child in element.iter()}
@@ -467,6 +519,7 @@ def check_svg(svg_content: str, config: CriticConfig | None = None) -> CriticRep
         )
 
     canvas = _parse_viewbox(root)
+    geometry = _Geometry(root)
     ordered_elements = list(_iter_all(root))
     element_order = {id(el): index for index, el in enumerate(ordered_elements)}
     filter_defs = {
@@ -583,7 +636,7 @@ def check_svg(svg_content: str, config: CriticConfig | None = None) -> CriticRep
         if _strip_ns(el.tag) != "text":
             continue
         # Inherit font-size of nearest ancestor if not set.
-        font_size = _font_size_of(el, 16.0)
+        font_size = geometry.font_sizes.get(el, _font_size_of(el, 16.0))
         text = _text_of(el)
         if not text:
             continue
@@ -601,7 +654,7 @@ def check_svg(svg_content: str, config: CriticConfig | None = None) -> CriticRep
                     element=_element_identifier(el),
                 )
             )
-        bbox = _text_bbox(el, font_size)
+        bbox = _text_bbox(el, font_size, geometry)
         text_boxes.append((element_order[id(el)], el, bbox))
 
         # Out-of-bounds.
@@ -672,6 +725,7 @@ def check_svg(svg_content: str, config: CriticConfig | None = None) -> CriticRep
             text_boxes,
             canvas,
             violations,
+            geometry,
         )
 
     # 4. Text-to-text overlap (coarse; tolerates small padding).
@@ -761,7 +815,7 @@ def check_svg(svg_content: str, config: CriticConfig | None = None) -> CriticRep
     # SVG root background, which we infer from the first full-canvas <rect>
     # if present, otherwise assume white.
     if canvas:
-        bg_layers = _collect_background_layers(root, canvas)
+        bg_layers = _collect_background_layers(root, canvas, geometry)
         for _, el, bbox in text_boxes:
             text_color = _resolve_text_color(el)
             if text_color is None:
@@ -792,7 +846,7 @@ def check_svg(svg_content: str, config: CriticConfig | None = None) -> CriticRep
     # are placed on top of prose. It only considers shapes that appear later in
     # document order, so normal backgrounds drawn before their labels are not
     # flagged.
-    covering_shapes = _collect_covering_shapes(root, element_order)
+    covering_shapes = _collect_covering_shapes(root, element_order, geometry)
     for text_order, text_el, text_bbox in text_boxes:
         for shape_order, shape_el, shape_bbox in covering_shapes:
             if shape_order <= text_order:
@@ -820,10 +874,10 @@ def check_svg(svg_content: str, config: CriticConfig | None = None) -> CriticRep
     #     but overflow a local card or column.
     if canvas:
         _check_text_container_overflow(
-            root, text_boxes, element_order, canvas, violations
+            root, text_boxes, element_order, canvas, violations, geometry
         )
 
-    _check_equation_text_overlap(root, text_boxes, violations)
+    _check_equation_text_overlap(root, text_boxes, violations, geometry)
 
     # 4f. Empty bullet detector: a bullet marker without a nearby text line
     #     usually means finalization dropped or misplaced the bullet content.
@@ -976,6 +1030,7 @@ def _resolve_text_color(el: ET.Element) -> str | None:
 def _collect_background_layers(
     root: ET.Element,
     canvas: tuple[float, float],
+    geometry=None,
 ) -> list[tuple[tuple[float, float, float, float], str]]:
     """Collect filled rects ordered front-to-back (later in document = on top)."""
     layers: list[tuple[tuple[float, float, float, float], str]] = []
@@ -997,10 +1052,7 @@ def _collect_background_layers(
                 hex_color = _normalize_hex(m.group(1))
         if hex_color is None or len(hex_color) != 6:
             continue
-        x = _float_attr(el, "x", 0.0)
-        y = _float_attr(el, "y", 0.0)
-        w = _float_attr(el, "width", 0.0)
-        h = _float_attr(el, "height", 0.0)
+        x, y, w, h = _shape_bbox(el, geometry)
         if w <= 0 or h <= 0:
             continue
         layers.append(((x, y, w, h), hex_color))
@@ -1049,13 +1101,14 @@ def _contrast_ratio(fg_hex: str, bg_hex: str) -> float:
 def _collect_covering_shapes(
     root: ET.Element,
     element_order: dict[int, int],
+    geometry=None,
 ) -> list[tuple[int, ET.Element, tuple[float, float, float, float]]]:
     """Collect simple visible shapes that can cover earlier text."""
     shapes: list[tuple[int, ET.Element, tuple[float, float, float, float]]] = []
     for el in _iter_all(root):
         if not _is_visible_filled_shape(el):
             continue
-        bbox = _shape_bbox(el)
+        bbox = _shape_bbox(el, geometry)
         if bbox is None:
             continue
         x, y, w, h = bbox
@@ -1095,9 +1148,11 @@ def _is_visible_filled_shape(el: ET.Element) -> bool:
     return True
 
 
-def _shape_bbox(el: ET.Element) -> tuple[float, float, float, float] | None:
+def _shape_bbox(el: ET.Element, geometry=None) -> tuple[float, float, float, float] | None:
+    if geometry is not None:
+        return geometry.boxes.get(el)
     tag = _strip_ns(el.tag)
-    if tag == "rect":
+    if tag in {"rect", "image"}:
         x = _float_attr(el, "x", 0.0)
         y = _float_attr(el, "y", 0.0)
         w = _float_attr(el, "width", 0.0)
@@ -1114,6 +1169,9 @@ def _shape_bbox(el: ET.Element) -> tuple[float, float, float, float] | None:
         rx = _float_attr(el, "rx", 0.0)
         ry = _float_attr(el, "ry", 0.0)
         return cx - rx, cy - ry, rx * 2, ry * 2
+    if tag == 'line':
+        x1, y1, x2, y2 = [_float_attr(el, key) for key in ('x1','y1','x2','y2')]
+        return min(x1,x2), min(y1,y2), abs(x1-x2), abs(y1-y2)
     return None
 
 
@@ -1166,6 +1224,7 @@ def _collect_text_containers(
     root: ET.Element,
     element_order: dict[int, int],
     canvas: tuple[float, float],
+    geometry=None,
 ) -> list[tuple[int, ET.Element, tuple[float, float, float, float]]]:
     """Collect filled rects that can act as local text containers."""
     cw, ch = canvas
@@ -1173,7 +1232,7 @@ def _collect_text_containers(
     for el in _iter_all(root):
         if _strip_ns(el.tag) != "rect" or not _is_visible_filled_shape(el):
             continue
-        bbox = _shape_bbox(el)
+        bbox = _shape_bbox(el, geometry)
         if bbox is None:
             continue
         x, y, w, h = bbox
@@ -1194,8 +1253,9 @@ def _check_text_container_overflow(
     element_order: dict[int, int],
     canvas: tuple[float, float],
     violations: list[Violation],
+    geometry=None,
 ) -> None:
-    containers = _collect_text_containers(root, element_order, canvas)
+    containers = _collect_text_containers(root, element_order, canvas, geometry)
     if not containers:
         return
 
@@ -1205,6 +1265,8 @@ def _check_text_container_overflow(
             continue
         anchor_x = _float_attr(text_el, "x", 0.0)
         anchor_y = _float_attr(text_el, "y", 0.0) - _font_size_of(text_el, 16.0) * 0.4
+        if geometry is not None:
+            anchor_x, anchor_y = geometry.anchors.get(text_el, (anchor_x, anchor_y))
         owner: tuple[int, ET.Element, tuple[float, float, float, float]] | None = None
         owner_area = float("inf")
         for container in containers:
@@ -1270,34 +1332,29 @@ def _check_default_content_area_overflow(
     text_boxes: list[tuple[int, ET.Element, tuple[float, float, float, float]]],
     canvas: tuple[float, float],
     violations: list[Violation],
+    geometry=None,
 ) -> None:
-    """Catch content crossing the declared footer, with a legacy fallback."""
+    """Catch content crossing the page's actual footer."""
     cw, ch = canvas
     content_top = 100.0
-    content_bottom = ch - 100.0
     footer_tops = []
     for group in _iter_all(root):
         if _strip_ns(group.tag) != "g" or group.get("data-role", group.get("id")) != "footer":
             continue
-        if group.get("transform"):
-            continue
         for element in group.iter():
             tag = _strip_ns(element.tag)
-            if element.get("transform"):
-                continue
-            if tag == "line":
-                top = min(_float_attr(element, "y1"), _float_attr(element, "y2"))
-            elif tag == "text":
-                top = _text_bbox(element, _font_size_of(element, 16))[1]
+            if tag == "text":
+                top = _text_bbox(element, _font_size_of(element, 16), geometry)[1]
             else:
-                box = _shape_bbox(element)
+                box = _shape_bbox(element, geometry)
                 if box is None:
                     continue
                 top = box[1]
             if ch / 2 < top < ch:
                 footer_tops.append(top)
-    if footer_tops:
-        content_bottom = min(footer_tops)
+    if not footer_tops:
+        return
+    content_bottom = min(footer_tops)
     slack = 2.0
 
     for _order, text_el, bbox in text_boxes:
@@ -1323,7 +1380,7 @@ def _check_default_content_area_overflow(
     for element in _iter_all(root):
         if _strip_ns(element.tag) not in {"rect", "image"}:
             continue
-        bbox = _shape_bbox(element)
+        bbox = _shape_bbox(element, geometry)
         if bbox is None:
             continue
         x, y, w, h = bbox

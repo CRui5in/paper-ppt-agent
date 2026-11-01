@@ -112,7 +112,25 @@ class ParagraphLayoutTests(unittest.TestCase):
         crosses = '<rect x="40" y="252" width="560" height="425" fill="#FFFFFF"/>'
         self.assertNotIn('content_area_overflow', {v.rule for v in check_svg(SVG.format(fits + footer)).violations})
         self.assertIn('content_area_overflow', {v.rule for v in check_svg(SVG.format(crosses + footer)).violations})
-        self.assertIn('content_area_overflow', {v.rule for v in check_svg(SVG.format(fits)).violations})
+        self.assertNotIn('content_area_overflow', {v.rule for v in check_svg(SVG.format(fits)).violations})
+
+    def test_nested_transforms_move_shapes_text_and_equations_in_the_same_geometry_space(self):
+        source = '<text x="100" y="200" font-size="18">Explanation</text>'
+        shape = '<g transform="translate(400 0)"><rect x="80" y="175" width="300" height="50" fill="#fff"/></g>'
+        self.assertNotIn('shape_covers_text', {v.rule for v in check_svg(SVG.format(source+shape)).violations})
+        moved = '<g transform="translate(400 0)">'+source+'</g>'+shape
+        self.assertIn('shape_covers_text', {v.rule for v in check_svg(SVG.format(moved)).violations})
+        equation = '<g transform="translate(400 0)"><g data-latex="x^2" data-math-box="100 180 200 80"/></g>'
+        label = '<text x="500" y="225" font-size="18">Explanation</text>'
+        self.assertIn('equation_overlaps_text', {v.rule for v in check_svg(SVG.format(equation+label)).violations})
+
+    def test_scaled_inherited_text_and_translated_footer_use_world_bounds(self):
+        text = '<g font-size="30" transform="translate(1200 0)"><g transform="scale(2)"><text x="0" y="100">Overflow</text></g></g>'
+        self.assertIn('out_of_bounds', {v.rule for v in check_svg(SVG.format(text)).violations})
+        footer = '<g data-role="footer" transform="translate(0 40)"><line x1="40" y1="620" x2="1240" y2="620"/></g>'
+        card = '<g transform="translate(0 20)"><rect x="40" y="252" width="560" height="380" fill="#fff"/></g>'
+        self.assertNotIn('content_area_overflow', {v.rule for v in check_svg(SVG.format(card+footer)).violations})
+        self.assertIn('content_area_overflow', {v.rule for v in check_svg(SVG.format(card.replace('380','410')+footer)).violations})
 
     def test_capacity_uses_last_line_glyphs_instead_of_estimated_descent(self):
         root = ET.fromstring(SVG.format('<g data-role="body" data-textbox="100 180 300 90">'

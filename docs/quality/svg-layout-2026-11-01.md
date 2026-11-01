@@ -85,3 +85,9 @@ Validation: 85 tests passed, including escaped fragments, preserved LaTeX, and i
 The replay exposed a repair-control defect: partial fixes were accepted after one attempt, and a valid but worse candidate could replace the previous page. Repair now measures outstanding source records, geometry defects, and paragraph capacity pressure before accepting a candidate. Improvements can receive a follow-up, bounded to three basic repair calls. A rejected edit gets one correction request containing the actual validation error; the original page stays current. Unchanged results retain the existing single-pass bound.
 
 Validation: 86 tests passed. Entry-point tests exercise partial improvement, a capacity regression, invalid edit targets, bounded unchanged results, and continuation of the deck in both sequential and parallel modes.
+
+## SVG transform-aware checks
+
+Geometry checks now compose SVG affine transforms and inherited text styles before measuring canvas overflow, text collisions, local containers, occluding shapes, and equation/text intersections. Measurements stay separate from the authored tree. Footer checks follow the declared footer, including transformed footer lines; pages without a footer no longer receive an invented 100px footer band.
+
+Validation: 88 tests passed. New regressions cover translated occluders, transformed equations, nested scale with inherited font size, and translated footer boundaries. Remaining visual defects are still checked independently of export success.
