@@ -169,3 +169,11 @@ The user clarified that fixed headers, body/footer regions, component dimensions
 The source catalog is now included only when an actual manuscript table exists. It is optional provenance, not a required paper schema or a mandatory chart format. The analysis prompts organize the paper's actual purpose, reasoning, support, and contribution rather than presuming an architecture/experiment/performance sequence. Evaluation fixture generation selects two coherent source sections rather than requiring method/results sections.
 
 The catalog-only first-generation pass exported all 27 pages natively, but retained geometry defects and unsupported qualitative curves. Its invalid model-assisted review on one paper also obscured that paper's successful geometry/export artifacts in the summary. These results do not establish a quality fix; the source catalog remains a faithful input aid, separate from visual-quality claims.
+
+## Read-only copy measurements before SVG generation
+
+The runtime still asked the designer to render the current page's information completely, while the design brief separately selected visible copy and speaker notes. The runtime now preserves the selected copy's facts and meaning, rather than treating all supporting source prose as on-screen material.
+
+Before the SVG request, selected copy receives measured unwrapped glyph advances using an explicit 18px reference font. Selected Markdown tables receive maximum header/cell advances per column and row counts. The designer can scale these measurements with its chosen typography when allocating regions. The measurements add no paper sections and perform no post-generation text movement, resizing, repair, or fallback. Empty/missing selected copy adds no measurement block.
+
+Validation: 92 tests passed. New cases cover exact values and units, inequalities, literal identifiers, empty copy versus speaker notes, table-column widths, and font-size scaling. Layout conventions and the original reference template remain intact. The next run reuses the same nine manuscript/design pairs to isolate the first SVG request's measurement input.

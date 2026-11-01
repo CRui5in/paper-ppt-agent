@@ -31,6 +31,7 @@ from backend.orchestrator.manuscript import (
     strip_page_type_metadata,
 )
 from backend.orchestrator.source_records import page_records, records_context
+from backend.orchestrator.copy_metrics import copy_metrics_context
 from backend.usage.tracker import reset_usage_context, set_usage_context
 
 # `[[FIG:fig_007_p9_page]]` style tokens emitted by the research agent.
@@ -178,8 +179,8 @@ def _factual_rendering_guardrails(page_type: str) -> str:
         return ""
     return (
         "\n## Information Fidelity\n"
-        "- Render the current page's information completely, with exact values, "
-        "units, notation, and comparison conditions.\n"
+        "- Preserve exact values, units, notation, and comparison conditions "
+        "in the selected visible copy.\n"
         "- Encode quantitative comparisons with consistent scales and precise data "
         "labels. Keep retrieval and provenance metadata in speaker notes.\n"
     )
@@ -707,7 +708,7 @@ def _dynamic_text_layout_block(
         "Size paragraph boxes with their neighboring visuals. Write continuous "
         "text with inline emphasis; font metrics and the declared box width "
         "determine wrapping. Reserve line-height, padding, and caption space."
-    )
+    ) + '\n\n' + copy_metrics_context(page_design_block)
 
 
 def _write_generation_response_debug(
