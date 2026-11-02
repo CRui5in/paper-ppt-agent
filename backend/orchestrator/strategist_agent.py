@@ -17,6 +17,7 @@ from backend.orchestrator.manuscript import (
 logger = logging.getLogger(__name__)
 
 PROMPT_PATH = Path(__file__).parent / "prompts" / "strategist.md"
+VISUAL_DESIGN_PROMPT = Path(__file__).resolve().parents[2] / "assets/agent_skills/paper-ppt-generate/references/visual-design.md"
 MAX_DESIGN_SPEC_ATTEMPTS = 2
 MAX_DESIGN_SPEC_CONTINUATIONS = 2
 
@@ -377,7 +378,10 @@ async def create_design_spec(
     Returns:
         Design specification markdown (design_spec.md content).
     """
-    system_prompt = PROMPT_PATH.read_text(encoding="utf-8")
+    system_prompt = "\n\n".join((
+        PROMPT_PATH.read_text(encoding="utf-8"),
+        VISUAL_DESIGN_PROMPT.read_text(encoding="utf-8"),
+    ))
 
     # Load the design spec reference template
     ref_path = settings.templates_dir / "design_spec_reference.md"

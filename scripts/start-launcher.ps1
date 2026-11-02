@@ -56,7 +56,7 @@ function L([string]$Key) {
     subtitle             = @{ en = "Local development launcher";                                  zh = "本地开发启动器" }
     checkingPrereq       = @{ en = "Checking prerequisites";                                       zh = "正在检查前置依赖" }
     checkingRuntime      = @{ en = "AI coding agents (optional - only used by Agent mode)";         zh = "AI 开发者工具（可选 - 仅 Agent 模式使用）" }
-    syncBackend          = @{ en = "Syncing backend dependencies (uv)";                             zh = "同步后端依赖 (uv)" }
+    syncBackend          = @{ en = "Syncing dependencies and updating Agent runtimes (uv)";           zh = "同步依赖并更新 Agent 运行时 (uv)" }
     installFrontend      = @{ en = "Installing frontend dependencies (npm)";                        zh = "安装前端依赖 (npm)" }
     starting             = @{ en = "Starting Paper PPT Agent";                                     zh = "正在启动 Paper PPT Agent" }
     allPrereqReady       = @{ en = "All required prerequisites are ready.";                         zh = "所有前置依赖已就绪。" }
@@ -478,7 +478,8 @@ function Launch-Dev {
   Write-Step (L syncBackend)
   Push-Location $root
   try {
-    & uv sync --locked
+    # Refresh both Agent SDKs and their bundled CLI runtimes on startup.
+    & uv sync --upgrade-package openai-codex --upgrade-package openai-codex-cli-bin --upgrade-package claude-agent-sdk
     if ($LASTEXITCODE -ne 0) { throw "uv sync failed (code $LASTEXITCODE)" }
   } catch {
     Pop-Location

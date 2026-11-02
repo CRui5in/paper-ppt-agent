@@ -18,7 +18,7 @@ Exact viewBox, margins, content area, and footer clearance. Follow an assigned t
 
 Define palette roles, contrast, typography character, and the visual treatment that suits this material and audience. Develop the selected preset into a visual identity for the material. Colors should retain consistent meanings; use additional distinguishable colors when a visualization needs them.
 
-Compose the cover from the supplied title and metadata, using display typography, color, depth, and balanced negative space. Choose ornament for the deck's aesthetic, mood, and visual balance. Its shape and placement serve the composition.
+Compose the cover from the supplied title and metadata, using display typography, color, depth, and balanced negative space. Decide whether ornament improves this composition. If it does, specify a coherent motif with its anchor, extent, shape language, stroke weights, spacing, palette, and recurrence on structural pages. Give the executor a resolved visual direction rather than a list of decorative primitives.
 
 On explanatory pages, use the manuscript's relationships and source figures to define scientific geometry and annotations.
 
@@ -67,7 +67,7 @@ For every counted page, use a heading `#### Slide NN - Title` and include:
 - `Layout Family`: a short descriptive name for the proposed composition. Choose a name that describes this page's composition.
 - `Density`: based on this page's material and visual share.
 - `Content`: ready-to-draw visible copy grouped by the planned regions. Use the available region sizes and readable typography to choose the amount of material.
-- `Design brief`: the composition and reading order, with bounds and text layout dimensions for the selected copy. Describe the geometry and source assets used on the page.
+- `Design brief`: the main reading point and supporting evidence, their composition and reading order, with bounds and text layout dimensions for the selected copy. Describe the geometry and source assets used on the page. For structural pages, explain how the deck motif is placed or why a typography-led composition is sufficient.
 - `Speaker notes`: supporting explanations and source detail for oral delivery.
 
 For a page with an explanatory visual, add `Visual relationship` to describe what its placement or encoding explains, and `Visual material` to identify the source material used. Include the selected cells, labels, values, or notation in `Content` as needed by that composition.

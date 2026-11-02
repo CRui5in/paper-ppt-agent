@@ -17,6 +17,7 @@ validates SVGs, finalizes them, and exports PPTX.
 2. Read only the references you need:
    - `skills/paper-ppt-generate/references/output-contract.md` for required files and SVG rules.
    - `skills/paper-ppt-generate/references/slide-authoring.md` before writing SVG.
+   - `skills/paper-ppt-generate/references/visual-design.md` before planning the visual system or writing SVG; apply its composition and finish criteria to every page.
    - `skills/paper-ppt-generate/references/writing.md` before writing manuscripts, speaker notes, or reports.
    - `skills/paper-ppt-research/SKILL.md` when external research is enabled.
    - `skills/paper-ppt-deep-research/SKILL.md` when deep research is enabled.

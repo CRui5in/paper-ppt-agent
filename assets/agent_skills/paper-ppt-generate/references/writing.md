@@ -3,6 +3,7 @@
 Apply these rules to manuscripts, speaker notes, and user-facing reports in the requested language.
 
 - Choose the opening and structure from the material: explain a concept, work through a derivation, describe a method, compare evidence, or present a result. Keep planning labels separate from the visible text.
+- On explanatory pages, connect the visible statements so the audience can follow the operation, reasoning, or comparison. Retain the specific evidence and conditions that explain the point; avoid a row of isolated labels or generic claims whose substance exists only in speaker notes.
 - Preserve facts, attribution, terminology, comparisons, negation, conditions, units, precision, and uncertainty. These take priority over style preferences.
 - Base comparisons on the reported metric, task, and evaluation conditions. Preserve ties and tradeoffs when summarizing a table, and state the result at that scope.
 - State applicability conditions directly. Include a limitation where it changes the conclusion, evidence interpretation, or correct use of the result; retain it beside a claim when that claim depends on it.

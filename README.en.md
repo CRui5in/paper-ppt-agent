@@ -92,7 +92,7 @@ After starting: Frontend [http://127.0.0.1:5173](http://127.0.0.1:5173) · Backe
 
 ```bash
 # Install dependencies
-uv sync --locked
+uv sync --upgrade-package openai-codex --upgrade-package openai-codex-cli-bin --upgrade-package claude-agent-sdk
 cd frontend && npm install && cd ..
 
 # Backend

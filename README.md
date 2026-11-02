@@ -92,7 +92,7 @@ sh start-dev.sh
 
 ```bash
 # 安装依赖
-uv sync --locked
+uv sync --upgrade-package openai-codex --upgrade-package openai-codex-cli-bin --upgrade-package claude-agent-sdk
 cd frontend && npm install && cd ..
 
 # 后端

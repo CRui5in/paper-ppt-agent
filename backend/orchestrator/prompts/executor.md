@@ -14,7 +14,7 @@ Choose region sizes and spacing from the content. Alignment, whitespace, shared 
 
 Build the visible page from the brief's `Content` and assigned assets, preserving values, units, notation, and comparison conditions. The page manuscript supplies the supporting detail. Place explanations beside the figures, equations, and diagram elements they explain; carry oral elaboration in the speaker notes.
 
-Choose ornament for visual balance, atmosphere, and the deck's aesthetic. Use color, shape, proportion, depth, and negative space to support the composition.
+Follow the design specification's coherent motif when ornament is useful. Resolve its proportion, curvature, spacing, layering, and relationship to the text as a single composition. Keep unused space quiet when no additional visual is needed.
 
 Every factual detail conveyed by a graphic comes from the supplied material. Keep source figure references attached to their corresponding original asset.
 
@@ -75,7 +75,7 @@ Use the supported drawing and styling vocabulary in the SVG Technical Standards.
 
 When a template skeleton is supplied, preserve its brand assets, transforms, fixed chrome, and content boundaries. Fill its editable regions with the current page's composition and replace its placeholders from the slide plan.
 
-Compose covers from the supplied title and metadata. Develop a focal point through display typography, shape, color, depth, and spatial rhythm. Use ornament where it improves the composition.
+Compose covers from the supplied title and metadata. Develop a focal point through display typography, shape, color, depth, and spatial rhythm. Use the documented motif or a complete typography-led composition; do not add unrelated decorative fragments to occupy blank areas.
 
 Follow the planned page role: title and metadata on covers, ordered items on TOCs, the common divider style on chapter pages, explanations and evidence on content pages, and a focused closing message. Use chapter indices for chapter labels and slide numbers for footer pagination.
 

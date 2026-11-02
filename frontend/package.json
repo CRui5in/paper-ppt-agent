@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "test:runtime-errors": "node --test scripts/test-runtime-errors.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

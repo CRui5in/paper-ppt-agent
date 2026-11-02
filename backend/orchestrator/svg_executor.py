@@ -72,6 +72,7 @@ CLIP_RECT_RE = re.compile(
 )
 
 PROMPT_PATH = Path(__file__).parent / "prompts" / "executor.md"
+VISUAL_DESIGN_PROMPT = Path(__file__).resolve().parents[2] / "assets/agent_skills/paper-ppt-generate/references/visual-design.md"
 
 # Default number of static critic checks per page, including the first
 # post-generation check. Paragraph capacity is checked independently of review.
@@ -167,7 +168,7 @@ def _drop_paper_figure_tokens_for_structural_page(page_content: str) -> str:
 
 def _page_role_guidance(page_type: str) -> str:
     descriptions = {
-        "cover": "Compose the opening page from the supplied title, metadata, and unlabeled abstract ornament, with a focal point and typography suited to the deck's visual identity.",
+        "cover": "Compose the opening page from the supplied title and metadata, with a clear typographic hierarchy and balanced negative space. Optional ornament follows the deck's coherent visual motif.",
         "toc": "Present the complete ordered chapter/list items as the table of contents.",
         "chapter": "Use the common chapter-divider identity with the planned chapter index, title, and subtitle.",
         "ending": "Compose the planned closing message in the deck's visual identity.",
@@ -2464,7 +2465,10 @@ async def generate_svg_pages(
     retry_failed_pages: bool = False,
 ) -> AsyncIterator[tuple[int, str]]:
     """Generate SVG code for each slide page sequentially."""
-    system_prompt = PROMPT_PATH.read_text(encoding="utf-8")
+    system_prompt = "\n\n".join((
+        PROMPT_PATH.read_text(encoding="utf-8"),
+        VISUAL_DESIGN_PROMPT.read_text(encoding="utf-8"),
+    ))
 
     standards_path = settings.references_dir / "shared-standards-essential.md"
     if not standards_path.exists():
@@ -3697,7 +3701,10 @@ async def _generate_parallel_page(
     visual_critic_config: VisualCriticConfig | None,
     template_skeletons: dict[str, str] | None,
 ) -> tuple[int, str]:
-    system_prompt = PROMPT_PATH.read_text(encoding="utf-8")
+    system_prompt = "\n\n".join((
+        PROMPT_PATH.read_text(encoding="utf-8"),
+        VISUAL_DESIGN_PROMPT.read_text(encoding="utf-8"),
+    ))
     page_num = int(page_input["page_num"])
     if "resumed_svg" in page_input:
         return page_num, page_input["resumed_svg"]

@@ -30,7 +30,11 @@ from backend.config import CANVAS_FORMATS, PROJECT_ROOT, settings
 from backend.generator.project_manager import get_notes, get_svg_files, init_project
 from backend.generator.svg_finalize import finalize_project
 from backend.generator.svg_to_pptx import create_pptx
-from backend.generator.template_agent import _events_from_sdk_message
+from backend.generator.template_agent import (
+    _claude_result_error_message,
+    _codex_turn_error_message,
+    _events_from_sdk_message,
+)
 from backend.orchestrator.manuscript import auto_slide_range, page_type_budget, page_type_budget_guidance
 from backend.runtime import aoffload, arun, awrite_text
 from backend.runtime.resource_gates import heavy_stage_slot
@@ -370,6 +374,8 @@ class PersistentAgentSession:
             job = session_manager.get_job(self._job_id)
             if job is None:
                 return
+            if isinstance(message, Exception):
+                message = AgentProgressEvent("agent", "error", str(message) or type(message).__name__, job.progress)
             if isinstance(message, AgentProgressEvent):
                 for payload, updates in payloads_from_progress_event(
                     self._job_id, job, message
@@ -595,6 +601,7 @@ class PersistentAgentSession:
         interrupt_sent = False
         hit_turn_limit = False
         soft_interrupted = False
+        result_seen = False
         async def _interrupt_when_requested() -> None:
             nonlocal interrupt_sent, pending_feedback, soft_interrupted
             while self._active or self._cancel_event.is_set():
@@ -641,6 +648,8 @@ class PersistentAgentSession:
                     return _ClaudeResponseOutcome(feedback=pending_feedback)
 
                 self._capture_session_id(message)
+                if message.__class__.__name__ == "ResultMessage":
+                    result_seen = True
 
                 if (
                     (soft_interrupted or self._cancel_event.is_set())
@@ -648,6 +657,9 @@ class PersistentAgentSession:
                 ):
                     continue
 
+                error = _claude_result_error_message(message)
+                if error:
+                    raise RuntimeError(error)
                 self._emit(message)
                 if _is_claude_turn_limit_result(message):
                     hit_turn_limit = True
@@ -680,6 +692,9 @@ class PersistentAgentSession:
 
         if soft_interrupted and pending_feedback is None:
             pending_feedback = self._drain_user_message()
+
+        if not result_seen and not soft_interrupted and not self._cancel_event.is_set():
+            raise RuntimeError("Claude Code Agent stream ended without a result. Check the connection and retry.")
 
         return _ClaudeResponseOutcome(
             feedback=pending_feedback,
@@ -860,13 +875,14 @@ class PersistentAgentSession:
                                 await asyncio.sleep(_AGENT_INTERRUPT_POLL_SECONDS)
                                 continue
                             self._interrupt_event.clear()
-                            await turn.interrupt()
                             turn_interrupted = True
+                            await turn.interrupt()
                             self._emit(_agent_paused_event())
                             return
 
                     interrupt_watcher = asyncio.create_task(_interrupt_codex_when_requested())
                     try:
+                        completed = False
                         async for event in _iter_agent_stream_with_timeout(
                             turn.stream(),
                             _agent_turn_idle_timeout(),
@@ -874,10 +890,18 @@ class PersistentAgentSession:
                             if self._cancel_event.is_set():
                                 await turn.interrupt()
                                 break
+                            if not turn_interrupted:
+                                error = _codex_turn_error_message(event)
+                                if error:
+                                    raise RuntimeError(error)
+                            if str(getattr(event, "method", "")) == "turn/completed":
+                                completed = True
                             self._emit(event)
                             queued_feedback = self._drain_user_message()
                             if queued_feedback is not None:
                                 await turn.steer(TextInput(_live_feedback_prompt(queued_feedback)))
+                        if not completed and not turn_interrupted and not self._cancel_event.is_set():
+                            raise RuntimeError("Codex Agent stream ended without a completed turn. Check the connection and retry.")
                     except TimeoutError:
                         try:
                             await turn.interrupt()
@@ -892,6 +916,8 @@ class PersistentAgentSession:
                     if turn_interrupted:
                         self._accepting_feedback = True
                         continue
+                    if self._cancel_event.is_set():
+                        break
                     if self._export_gate is not None:
                         export_gate_attempts += 1
                         self._emit(
@@ -4041,6 +4067,8 @@ def _agent_icon_policy() -> dict[str, Any]:
 
 def _agent_layout_policy() -> dict[str, Any]:
     return {
+        "visual_quality_reference": "skills/paper-ppt-generate/references/visual-design.md",
+        "visual_quality_requirement": "Read the visual quality reference before planning or authoring. Resolve optional ornament as a coherent deck motif; preserve substantive evidence, reading order, and readable figure/text proportions.",
         "generation_phase": "design_per_slide",
         "region_plan_required": False,
         "layout_designer": "executor_per_slide",
@@ -4156,7 +4184,7 @@ def _agent_factual_rendering_policy() -> dict[str, Any]:
     return {
         "source_precision_required": True,
         "rules": [
-            "Use unlabeled abstract geometry for ornament. Build explanatory content from the page manuscript and source figures, and use the design brief for visual treatment. Preserve scientific spatial geometry from its source figure.",
+            "Ornament is optional and abstract; follow the visual quality reference for its composition and finish. Build explanatory content from the page manuscript and source figures, and use the design brief for visual treatment. Preserve scientific spatial geometry from its source figure.",
             "Preserve supplied metrics, sample sizes, dates, model settings, and supported claims. Charts may derive plot positions and readable scale ticks from supplied values, keeping scale guides distinct from observations.",
             "Preserve the source number and unit exactly unless the slide explicitly shows a transparent derivation.",
             "Do not compress exact counts into shorthand unless that exact notation appears in the source.",

@@ -5,6 +5,15 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### 修复
+
+- 普通模式与 Agent 模式共用视觉构图规范：装饰采用统一母题和明确的曲率、间距、层次要求，避免用波浪线、点阵、圆环零散填空；同时加强内容主次、图文对应和留白要求。
+- Codex SDK 改用 PyPI 稳定版，移除固定 Git commit；启动器每次启动时更新 Codex、Claude Agent SDK 及配套 CLI，其他依赖沿用锁文件。
+- Codex 回合失败和 Claude Code 错误结果立即终止任务，保留模型、登录、权限和额度等原始错误，避免误报为 SVG 为空或反复尝试导出。
+- 错误提示框显示问题原因和处理建议，支持展开和复制完整错误。
+
 ## [1.0.2] - 2026-07-20
 
 🛠️ Codex Agent 运行时兼容性补丁。

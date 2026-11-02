@@ -91,6 +91,10 @@ Evaluate:
 - Geometry: text collisions, clipping, container overflow, and alignment of related elements.
 - Reading order: grouping, hierarchy, and the association between labels and visuals.
 - Figures and charts: readable detail, complete content, accurate visual scales, and correspondence with the title and caption.
+- Visual finish: a coherent decorative motif, controlled curve spacing and stroke weights, deliberate endpoints/edge crops, and a clear hierarchy between ornament and content. Flag disconnected wave strips, dot grids, ring clusters, or arbitrary crossing strokes used as filler when their combination fragments the composition. Suggest consolidation, better geometry, or removal of the specific fragments.
+- Content composition: a readable primary explanation or figure, nearby supporting annotations, and region proportions suited to the actual text and evidence.
+
+Simple lines, a restrained repeated motif, and quiet whitespace can be complete designs. Do not flag a page merely for being simple. Distinguish decoration from data points, map contours, graph nodes, and explanatory connectors.
 
 Report concrete visible defects with their location and a useful correction.
 Use error for defects that impair reading or make a figure/chart misleading.
