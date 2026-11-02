@@ -1,0 +1,7 @@
+# Standard LaTeX delimiter support
+
+Task `1379f653` stopped while typesetting the initial page 11 expression `\lVert B_l\rVert_2 \leqslant 1`. The installed Mathtext renderer supports `\Vert` and `\leqslant`, but rejects LaTeX's `\lVert`/`\rVert` delimiter aliases. The analogous `\lvert`/`\rvert` aliases also fail.
+
+The vector typesetter now lowers these standard left/right delimiter aliases to the renderer's equivalent double/single-bar commands. Conversion matches complete control sequences, preserves escaped backslashes and literal `\text{...}` content, and leaves other commands intact. The original expression stays in SVG metadata and its title. No prompt, manuscript, source figure, layout, or unsupported-expression recovery behavior changed. The rendering signature version was advanced so prepared equations can be regenerated using the updated typesetter.
+
+Validation: 115 tests passed. The five new tests cover the reported norm, absolute values, nested and stretchy delimiters, literal command names, source retention, idempotent rendering, preview paths, and native PPTX export. The task's retained initial page 11 was also prepared and rendered in an isolated test directory, visually inspected, and exported natively with a passed audit. Its original SHA-256 remained `309feb24ebd0fc11dbe7713ab6fda330c5f94d329979d6f0c3c5933f97a6bd7d`. Verification artifacts: `.test-runtime/math-delimiters-1379f653/`.

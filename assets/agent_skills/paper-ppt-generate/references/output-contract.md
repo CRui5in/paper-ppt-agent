@@ -56,14 +56,14 @@ Conditionally required before authoring any deck output:
   "layout_qa": {
     "region_plans_followed": true,
     "text_capacity_preflight": true,
-    "occupancy_or_wrapping_repairs": [3, 7],
+    "initial_layout_findings": [],
     "remaining_limitations": []
   },
   "slide_authoring": {
     "mode": "direct_per_slide",
     "multi_slide_generator_used": false,
     "direct_files": ["slide_001.svg", "slide_002.svg"],
-    "notes": "Each slide was authored from its own claim, evidence, and layout."
+    "notes": "Each slide was authored from its planned content, evidence, and composition."
   },
   "visual_qa": "passed|skipped|failed",
   "notes": ["short summary"]
@@ -85,4 +85,5 @@ SVG requirements:
 - Every slide SVG must be directly authored as its own file. Multi-slide generator programs, loops, shared renderers, slide registries, and template expansion are forbidden.
 - Preserve source number precision and units; do not introduce K/M/B shorthand or rounded metrics unless the source uses them.
 - Do not include `<style>`, `class=`, masks, clip paths, script tags, event handlers, remote network URLs, or `foreignObject`.
+- Optional filters are limited to simple convertible drop shadows attached directly to one shape. Group filters, text glow, complex blur effects, and offset duplicate rectangles used as shadows are prohibited.
 - Do not use text glyphs (letters, emoji, Unicode symbols, arrows, stars) as fake icons. Use existing local icon assets or omit the icon.

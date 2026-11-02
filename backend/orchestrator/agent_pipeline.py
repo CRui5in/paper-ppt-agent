@@ -30,7 +30,11 @@ from backend.config import CANVAS_FORMATS, PROJECT_ROOT, settings
 from backend.generator.project_manager import get_notes, get_svg_files, init_project
 from backend.generator.svg_finalize import finalize_project
 from backend.generator.svg_to_pptx import create_pptx
-from backend.generator.template_agent import _events_from_sdk_message
+from backend.generator.template_agent import (
+    _claude_result_error_message,
+    _codex_turn_error_message,
+    _events_from_sdk_message,
+)
 from backend.orchestrator.manuscript import auto_slide_range, page_type_budget, page_type_budget_guidance
 from backend.runtime import aoffload, arun, awrite_text
 from backend.runtime.resource_gates import heavy_stage_slot
@@ -370,6 +374,8 @@ class PersistentAgentSession:
             job = session_manager.get_job(self._job_id)
             if job is None:
                 return
+            if isinstance(message, Exception):
+                message = AgentProgressEvent("agent", "error", str(message) or type(message).__name__, job.progress)
             if isinstance(message, AgentProgressEvent):
                 for payload, updates in payloads_from_progress_event(
                     self._job_id, job, message
@@ -595,6 +601,7 @@ class PersistentAgentSession:
         interrupt_sent = False
         hit_turn_limit = False
         soft_interrupted = False
+        result_seen = False
         async def _interrupt_when_requested() -> None:
             nonlocal interrupt_sent, pending_feedback, soft_interrupted
             while self._active or self._cancel_event.is_set():
@@ -641,6 +648,8 @@ class PersistentAgentSession:
                     return _ClaudeResponseOutcome(feedback=pending_feedback)
 
                 self._capture_session_id(message)
+                if message.__class__.__name__ == "ResultMessage":
+                    result_seen = True
 
                 if (
                     (soft_interrupted or self._cancel_event.is_set())
@@ -648,6 +657,9 @@ class PersistentAgentSession:
                 ):
                     continue
 
+                error = _claude_result_error_message(message)
+                if error:
+                    raise RuntimeError(error)
                 self._emit(message)
                 if _is_claude_turn_limit_result(message):
                     hit_turn_limit = True
@@ -680,6 +692,9 @@ class PersistentAgentSession:
 
         if soft_interrupted and pending_feedback is None:
             pending_feedback = self._drain_user_message()
+
+        if not result_seen and not soft_interrupted and not self._cancel_event.is_set():
+            raise RuntimeError("Claude Code Agent stream ended without a result. Check the connection and retry.")
 
         return _ClaudeResponseOutcome(
             feedback=pending_feedback,
@@ -860,13 +875,14 @@ class PersistentAgentSession:
                                 await asyncio.sleep(_AGENT_INTERRUPT_POLL_SECONDS)
                                 continue
                             self._interrupt_event.clear()
-                            await turn.interrupt()
                             turn_interrupted = True
+                            await turn.interrupt()
                             self._emit(_agent_paused_event())
                             return
 
                     interrupt_watcher = asyncio.create_task(_interrupt_codex_when_requested())
                     try:
+                        completed = False
                         async for event in _iter_agent_stream_with_timeout(
                             turn.stream(),
                             _agent_turn_idle_timeout(),
@@ -874,10 +890,18 @@ class PersistentAgentSession:
                             if self._cancel_event.is_set():
                                 await turn.interrupt()
                                 break
+                            if not turn_interrupted:
+                                error = _codex_turn_error_message(event)
+                                if error:
+                                    raise RuntimeError(error)
+                            if str(getattr(event, "method", "")) == "turn/completed":
+                                completed = True
                             self._emit(event)
                             queued_feedback = self._drain_user_message()
                             if queued_feedback is not None:
                                 await turn.steer(TextInput(_live_feedback_prompt(queued_feedback)))
+                        if not completed and not turn_interrupted and not self._cancel_event.is_set():
+                            raise RuntimeError("Codex Agent stream ended without a completed turn. Check the connection and retry.")
                     except TimeoutError:
                         try:
                             await turn.interrupt()
@@ -892,6 +916,8 @@ class PersistentAgentSession:
                     if turn_interrupted:
                         self._accepting_feedback = True
                         continue
+                    if self._cancel_event.is_set():
+                        break
                     if self._export_gate is not None:
                         export_gate_attempts += 1
                         self._emit(
@@ -1154,44 +1180,11 @@ def _load_agent_session_id(project_dir: Path) -> str | None:
         return None
 
 
-def _build_agent_contract_repair_prompt(
-    project_dir: Path,
-    violations: list[str],
-) -> str:
-    rendered = "\n".join(f"- {item}" for item in violations)
-    return f"""The backend rejected the deck's slide-authoring or SVG contract.
-
-Detected violations:
-{rendered}
-
-Repair the existing workspace without changing the requested narrative or slide count:
-- Read `agent_task.json.agent_policy.slide_authoring_policy`.
-- Delete every multi-slide generator program you created.
-- Rewrite every affected `svg_output/slide_###.svg` directly, one explicitly named file at a time.
-- Do not use a loop, slide list/registry, shared renderer, template expansion, or a program that emits multiple SVGs.
-- Keep only deck-level visual tokens shared: palette, typography, margins, and recurring chrome.
-- Re-evaluate each slide's claim, evidence, paper figure, layout, whitespace, and Chinese wrapping independently.
-- Fix every listed out-of-bounds, card overflow, line collision, or text-capacity violation by changing the layout, container size, line breaks, table columns, or wording. Do not merely shrink all text.
-- Remove disallowed SVG constructs such as `<style>`, `class=`, `mask`, `filter`, `clipPath`, `foreignObject`, scripts, event handlers, or remote URLs. Put fill/stroke/font attributes directly on each SVG element instead of using CSS classes.
-- Before finishing each slide, verify `text_right <= region_right`, `last_baseline + font_size*0.25 <= region_bottom`, and every table column has enough width for its longest visible cell.
-- Preserve exact source numbers and units; remove K/M/B shorthand unless it appears verbatim in the paper.
-- Ensure every content slide has a well-designed layout.
-- Update `agent_report.json.slide_authoring` to:
-  - `mode`: `direct_per_slide`
-  - `multi_slide_generator_used`: false
-  - `direct_files`: every final `slide_###.svg`
-  - `notes`: a concise description of how page-specific compositions were chosen.
-
-Validation and rendering scripts may read all slides, but they must not write or regenerate slide SVGs.
-Finish only after the generator files are removed and every final slide is directly authored.
-"""
-
-
 def _write_agent_contract_warnings(project_dir: Path, violations: list[str]) -> None:
     if not violations:
         return
     payload = {
-        "status": "exported_with_contract_warnings",
+        "status": "initial_generation_findings",
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "violations": violations,
     }
@@ -1472,118 +1465,16 @@ def _agent_generation_contract_violations(
     ]
 
 
-async def _repair_agent_generation_contracts_if_needed(
-    project_dir: Path,
-    runtime: str,
-    agent_config: dict[str, Any],
-) -> Any:
+async def _report_agent_initial_contracts(project_dir: Path) -> Any:
+    """Record the initial artifacts without starting another authoring session."""
     svg_files = get_svg_files(project_dir, source="output")
     violations = _agent_generation_contract_violations(project_dir, svg_files)
     if not violations:
         return
-
+    _write_agent_contract_warnings(project_dir, violations)
     yield AgentProgressEvent(
-        "generation",
-        "progress",
-        "Agent generation contract failed; requesting a direct per-slide repair...",
-        0.68,
-        data={
-            "generation_mode": "agent",
-            "contract": "direct_per_slide_authoring",
-            "violations": violations,
-        },
-    )
-    repair_session = PersistentAgentSession(
-        project_dir,
-        runtime,
-        agent_config,
-        resume_session_id=_load_agent_session_id(project_dir),
-    )
-    repair_session.set_bridge_mode()
-    try:
-        await repair_session.start(
-            _build_agent_contract_repair_prompt(project_dir, violations)
-        )
-        async for message in repair_session:
-            if isinstance(message, AgentProgressEvent):
-                yield message
-                continue
-            usage_event = _update_agent_usage_totals(repair_session._usage_totals, message)
-            if usage_event is not None:
-                yield usage_event
-            if runtime == "codex":
-                item_event = _codex_item_progress_event(
-                    message,
-                    str(getattr(message, "method", "") or ""),
-                )
-                if item_event is not None:
-                    yield item_event
-            else:
-                for sdk_event in _agent_sdk_events_from_message(message):
-                    text = str(sdk_event.get("message") or "").strip()
-                    if text:
-                        yield AgentProgressEvent(
-                            "agent",
-                            "progress",
-                            text,
-                            0.68,
-                            data={
-                                "runtime": "claude_code",
-                                "agent_event": sdk_event,
-                            },
-                        )
-                if message.__class__.__name__ == "ResultMessage" and bool(
-                    getattr(message, "is_error", False)
-                ):
-                    if _is_claude_turn_limit_result(message):
-                        continue
-                    result = str(getattr(message, "result", "") or "Agent repair failed.")
-                    raise RuntimeError(result)
-        if repair_session.session_id:
-            _save_agent_session(project_dir, repair_session.session_id)
-    finally:
-        await repair_session.close()
-
-    repaired_svg_files = get_svg_files(project_dir, source="output")
-    remaining_authoring = _agent_slide_authorship_violations(
-        project_dir,
-        svg_files=repaired_svg_files,
-    )
-    if remaining_authoring:
-        rendered = "\n- ".join(remaining_authoring)
-        raise RuntimeError(
-            "Agent still violated the direct-authoring contract after "
-            f"one repair turn:\n- {rendered}"
-        )
-    remaining_layout = _agent_layout_contract_violations(repaired_svg_files)
-    if remaining_layout:
-        _write_agent_contract_warnings(project_dir, remaining_layout)
-        yield AgentProgressEvent(
-            "generation",
-            "progress",
-            (
-                "Agent still has SVG/layout contract warnings after repair; "
-                "continuing export with warnings recorded."
-            ),
-            0.72,
-            data={
-                "generation_mode": "agent",
-                "contract": "svg_layout_quality",
-                "warnings": remaining_layout,
-                "export_will_continue": True,
-            },
-        )
-        return
-    yield AgentProgressEvent(
-        "generation",
-        "progress",
-            "Agent repaired direct authoring and SVG contract violations.",
-        0.72,
-        data={
-            "generation_mode": "agent",
-            "contract": "direct_per_slide_authoring",
-            "repaired": True,
-        },
+        "generation", "progress", "Initial generation checks reported artifact or layout findings.", 0.68,
+        data={"generation_mode": "agent", "phase": "initial_generation", "violations": violations},
     )
 
 
@@ -1804,12 +1695,8 @@ async def run_agent_pipeline(request: Any):
 
         # Session is now in direct mode — feedback turns broadcast via
         # session_manager.record_event directly.  Proceed to finalization.
-        async for repair_event in _repair_agent_generation_contracts_if_needed(
-            project_dir,
-            runtime,
-            agent_config,
-        ):
-            yield repair_event
+        async for diagnostic_event in _report_agent_initial_contracts(project_dir):
+            yield diagnostic_event
 
         svg_files = get_svg_files(project_dir, source="output")
         _validate_agent_artifacts(project_dir, svg_files, total_slides_hint)
@@ -2022,12 +1909,8 @@ async def run_agent_feedback_pipeline(
             yield event
         return
 
-    async for repair_event in _repair_agent_generation_contracts_if_needed(
-        project_dir,
-        runtime,
-        agent_config,
-    ):
-        yield repair_event
+    async for diagnostic_event in _report_agent_initial_contracts(project_dir):
+        yield diagnostic_event
 
     svg_files = get_svg_files(project_dir, source="output")
     _validate_agent_artifacts(project_dir, svg_files, total_hint)
@@ -3999,16 +3882,17 @@ Workspace contract:
 - First read `agent_task.json`.
 - The current working directory is the generated workspace. If you need to open the skill file manually, read `{skill_path}` and follow its output contract.
 - Do not call this application's legacy provider pipeline or ask for external model API keys.
-- User intent priority: `agent_task.json.presentation.user_instruction` is the highest product requirement after hard export validity. The SVG/PPTX output files are a technical wrapper for this app, not a reason to override the user's requested visual direction. If the user asks for no SVG, image-only, GPT-image-style, or "more beautiful", preserve that goal by making an image-led, polished deck inside valid SVG slide wrappers; do not reply that the output contract wins over the user.
+- User intent priority: follow `agent_task.json.presentation.user_instruction` within export-valid artifacts. For an explicit image-led request, compose local/generated raster assets inside valid SVG slide wrappers. For "more beautiful", improve hierarchy, spacing, typography, and composition according to the selected style.
+- Writing contract: read `skills/paper-ppt-generate/references/writing.md` before writing manuscripts, speaker notes, or reports. Organize each page around the material it presents and the audience's understanding. Retain material uncertainty and applicability conditions; keep planning notes in research files.
 - Use subagents/parallel work when the runtime supports it. When deep research is enabled, SubAgents are required unless the Task/SubAgent tool is unavailable or fails.
 - External research: {external}. Deep research: {deep}. Agent post-generation review: {review}.
 - Deck budget contract: {detail_profile["slide_count_guidance"]} The detail selector affects only slide count and source/summary retrieval budgets. It does not set per-slide density, bullet count, evidence count, typography, or layout.
 - Structural contract: slide 1 is the cover and slide 2 is a mandatory table of contents whose chapter titles match the final chapter plan. Count structural pages separately and use the remaining content-slide budget to choose chapter boundaries.
 - Chapter contract: use at most {detail_profile["page_type_budget"]["chapter"]} chapter dividers. Chapters are presentation-level sections, not paper subsection headings; local method parts, result groups, and discussion points belong on content slides.
 - Per-slide authoring contract: author every `svg_output/slide_###.svg` directly as a separate file. Do not create or run a Python/JavaScript/TypeScript/shell/PowerShell/batch/Ruby program that generates multiple slides. Do not use loops, a `SLIDES`/maker registry, shared `base_svg`/`title`/card rendering functions, or template expansion to emit the deck. Shared palette, typography, margins, and recurring chrome may be documented, but each slide must have an explicit layout and SVG markup chosen from that slide's claim and evidence. Read-only validation/render/export scripts remain allowed.
-- Layout contract: design each slide's spatial layout when generating that slide. Build from aligned rectangular regions first; content slides should normally occupy 65-85% of the content area and avoid empty quadrants or detached bottom callouts. Wrap dynamically from each region's actual width, font size, visual share, and content density. Keep line edges, baselines, captions, and padding inside the final boxes. Size table columns from their longest visible cells.
+- Layout contract: design each slide's spatial layout from its text and visual material. Use aligned regions and consistent spacing. Declare each paragraph's text box and write continuous text with inline emphasis; the renderer wraps it using font metrics. Reserve separate space for paragraphs, figures, captions, header labels, and titles. Keep content inside its assigned boxes and size table columns from their cells.
 - Continuity contract: before writing a chapter slide, read at most the two most recent earlier chapter-slide SVGs. Before writing a content slide, read at most the two most recent earlier content-slide SVGs, skipping cover, TOC, chapter, and ending slides. Use them for style continuity only; the current manuscript remains authoritative.
-- Factual rendering contract: preserve exact source numbers, notation, precision, and units. Do not abbreviate, invent, or round metrics, chart axes, ticks, dates, sample sizes, or settings. Mark derived values explicitly and show their source inputs/calculation nearby. Evidence-card ids and retrieval snippets are private grounding, not visible slide copy.
+- Factual rendering contract: preserve exact source numbers, notation, precision, and units. Preserve metrics, dates, sample sizes, settings, and their precision. Charts may derive plot positions and readable scale ticks from supplied values, keeping scale guides distinct from observations. Mark derived values explicitly and show their source inputs/calculation nearby. Evidence-card ids and retrieval snippets are private grounding, not visible slide copy.
 - Icon contract: icons are optional decorative/semantic visual aids. Add them only when they make the slide clearer or more polished, such as repeated semantic labels, process steps, comparison dimensions, legends, or diagram nodes. Before using icons, define a small vocabulary in `design_spec.md` (concept -> existing local SVG file -> size/style/color). Use filesystem commands against `agent_task.json.paths.icons` to list and match available `.svg` files directly; do not use icon search scripts, icon metadata files, `index_meta.json`, or vector indexes. Reuse the same icon for the same concept, keep to one icon family/style, and color icons with the template/deck palette. Avoid scattering one-off icons or multi-color icon accents across unrelated slides. Never use letters, initials, ASCII/Unicode symbols, emoji, dingbats, or decorative characters as icon substitutes; omit the icon or use a non-icon shape if no matching asset exists.
 - SubAgent contract: do not split work just to satisfy ordinary slide count or budget selection. When deep research is enabled, launch focused research SubAgents if the Task tool is available; use separate readers for background/related work, method, experiments, and critique when the paper is complex. When Agent review is enabled, run one focused review SubAgent after the first full deck is drafted; it should review the whole deck for layout overflow, missing assets, icon-policy violations, and narrative gaps instead of checking pages one by one. If you skip a required deep-research or review SubAgent, write a concrete reason in `agent_report.json.subagents`; the main Agent must merge results and keep final narrative/design consistency.
 - External research contract: if external research is enabled, use the `{_RESEARCH_SKILL_NAME}` skill after reading the paper. You, not the backend, must choose search queries from paper understanding before calling its script/API helpers. It is mandatory to produce `research/raw_external_results.json`, `research/sources.json`, and `research/brief.md` before writing any manuscript, design specification, notes, report, or slide SVG. Read `research/external_search_summary.json` before sampling raw results. Sparse or zero directly relevant external results are acceptable when `research/sources.json` records a concrete limitation; do not repeat searches merely to satisfy the gate or increase counts. For web results, open/read relevant pages deeply enough to understand the source; do not cite titles/snippets alone.
@@ -4183,6 +4067,8 @@ def _agent_icon_policy() -> dict[str, Any]:
 
 def _agent_layout_policy() -> dict[str, Any]:
     return {
+        "visual_quality_reference": "skills/paper-ppt-generate/references/visual-design.md",
+        "visual_quality_requirement": "Read the visual quality reference before planning or authoring. Resolve optional ornament as a coherent deck motif; preserve substantive evidence, reading order, and readable figure/text proportions.",
         "generation_phase": "design_per_slide",
         "region_plan_required": False,
         "layout_designer": "executor_per_slide",
@@ -4195,32 +4081,24 @@ def _agent_layout_policy() -> dict[str, Any]:
             "ppt169": {"x": 40, "y": 100, "w": 1200, "h": 520},
         },
         "occupancy_target": {
-            "content_slides": "65-85% of the content area should be meaningfully occupied",
-            "structural_slides": "sparse by design; do not force content density",
+            "content_slides": "Size regions from their text and figures; use whitespace for separation and hierarchy",
+            "structural_slides": "Text follows the page role; visual density follows the selected composition",
         },
-        "layout_families": [
-            "figure-left-text-right",
-            "text-left-figure-right",
-            "full-bleed-image-overlay",
-            "kpi-dashboard",
-            "full-width-chart-with-notes",
-            "comparison-table-callout",
-            "two-column-evidence",
-            "three-card-grid",
-            "four-quadrant-matrix",
-            "process-flow-with-evidence",
-            "hero-title-plus-callouts",
-            "timeline-horizontal",
-            "numbered-steps",
+        "layout_family_authority": "Open vocabulary of composition suggestions; the executor chooses geometry within explicit template boundaries.",
+        "composition_tools": [
+            "position, scale, and typography for hierarchy and comparison",
+            "native paths, curves, shapes, and connectors for relationships",
+            "direct labels and annotations for figures, plots, and equations",
+            "alignment, whitespace, shared axes, and containers for grouping",
         ],
         "balance_rules": [
-            "Use a shared grid and 24-40px gutters between major regions.",
-            "Avoid empty quadrants, floating short bullet lists, and bottom callouts detached from the main grid.",
-            "For sparse content, enlarge the supported figure, convert bullets into grouped callouts, or draw a simple paper-supported mechanism diagram.",
-            "For image+text pages, reserve the figure frame first, preserve aspect ratio inside that frame, and make the text column use comparable vertical rhythm.",
-            "Visual depth is required: use simple drop shadows directly on individual card shapes, plus gradients and accent bars. Never simulate shadows with offset translucent duplicate rectangles, never apply filters to groups, and never use text glow or complex blur filters because they can rasterize the entire PPT slide.",
-            "Every card/panel should have an accent element and proper inner padding — not just a plain flat rect with a stroke border.",
-            "Use large bold numbers with small gray labels for KPI/metrics. Use color-coded status indicators. Use accent callout boxes with tinted backgrounds for key takeaways.",
+            "Align related elements; choose regions and spacing from the page's reading order and content.",
+            "Use native paths, curves, connectors, spatial grouping, and direct labels to reveal the relationship in the material. Open whitespace can separate ideas.",
+            "Choose a main visual or typographic composition from the material; containers are optional grouping tools.",
+            "Fit the complete figure at a readable size and its natural aspect ratio, then arrange explanations and direct annotations around it.",
+            "Establish hierarchy through typography, contrast, alignment, and spacing. Use shadows, gradients, or accent bars when they serve the selected style or clarify grouping; flat layouts are valid. Optional shadows must be simple convertible drop shadows attached directly to one shape. Group filters, text glow, complex blur effects, and offset duplicate rectangles used as shadows are prohibited.",
+            "Give each card/panel clear grouping and proper inner padding; use accent elements when they clarify the content.",
+            "Use emphasis, labels, and grouping where they clarify the current page's evidence or explanation. Choose the layout from its material.",
         ],
         "text_wrapping": {
             "mode": "dynamic_per_region",
@@ -4255,7 +4133,7 @@ def _agent_layout_policy() -> dict[str, Any]:
             ),
         },
         "forbidden": [
-            "invented chart axes or ticks used only to fill empty space",
+            "invented observations, missing series, or numeric scales on qualitative diagrams",
             "paper figure stretching instead of fit-inside-frame aspect preservation",
             "paragraph text placed in a narrow right-edge region without a width budget",
             "bottom cards whose final text baseline falls below the card",
@@ -4283,7 +4161,7 @@ def _agent_slide_authoring_policy() -> dict[str, Any]:
             "Loops, slide arrays, maker registries, shared base_svg/title/card rendering functions, or template expansion used to emit multiple slides.",
             "A single script that writes manuscript.md, design_spec.md, agent_report.json, notes, and the complete slide deck in one run.",
             "Treating repeated card grids or a shared page skeleton as evidence that the slide was independently designed.",
-            "`<style>` blocks, `class=` attributes, `mask`, `filter`, `clipPath`, `foreignObject`, scripts, event handlers, or remote image/icon URLs in final SVGs.",
+            "`<style>` blocks, `class=` attributes, `mask`, `clipPath`, `foreignObject`, scripts, event handlers, or remote image/icon URLs in final SVGs; group filters, text glow, and complex blur effects. Simple convertible drop shadows attached directly to one shape are allowed.",
         ],
         "allowed_tools": [
             "Scripts for source extraction, research retrieval, read-only SVG inspection, validation, rendering, and PPTX export.",
@@ -4306,7 +4184,8 @@ def _agent_factual_rendering_policy() -> dict[str, Any]:
     return {
         "source_precision_required": True,
         "rules": [
-            "Do not invent metrics, chart ticks, axes, sample sizes, dates, model settings, or causal claims.",
+            "Ornament is optional and abstract; follow the visual quality reference for its composition and finish. Build explanatory content from the page manuscript and source figures, and use the design brief for visual treatment. Preserve scientific spatial geometry from its source figure.",
+            "Preserve supplied metrics, sample sizes, dates, model settings, and supported claims. Charts may derive plot positions and readable scale ticks from supplied values, keeping scale guides distinct from observations.",
             "Preserve the source number and unit exactly unless the slide explicitly shows a transparent derivation.",
             "Do not compress exact counts into shorthand unless that exact notation appears in the source.",
             "Derived values must be marked as derived and show the source inputs or calculation nearby.",

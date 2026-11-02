@@ -332,6 +332,10 @@ def repair_svg_file(svg_path: Path) -> int:
         parses_now = False
 
     if parses_now:
+        from ..svg_text_layout import normalize_inline_scripts
+        root = ET.fromstring(repaired)
+        if normalize_inline_scripts(root):
+            repaired = ET.tostring(root, encoding='unicode')
         if repaired != content:
             svg_path.write_text(repaired, encoding="utf-8")
             return 1
@@ -356,6 +360,10 @@ def repair_svg_file(svg_path: Path) -> int:
         except Exception:
             return 0
 
+    from ..svg_text_layout import normalize_inline_scripts
+    root = ET.fromstring(repaired)
+    if normalize_inline_scripts(root):
+        repaired = ET.tostring(root, encoding='unicode')
     if repaired != content:
         svg_path.write_text(repaired, encoding="utf-8")
         return 1

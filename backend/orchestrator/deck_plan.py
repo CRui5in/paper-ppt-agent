@@ -63,10 +63,6 @@ def _extract_page_title_parts(page_content: str) -> tuple[str, str]:
     headings = list(re.finditer(r"(?m)^#{1,6}\s+(.+?)\s*$", visible))
     title = headings[0].group(1).strip() if headings else page_title(page_content)
     subtitle = headings[1].group(1).strip() if len(headings) > 1 else ""
-    if not subtitle:
-        bold = re.search(r"(?m)^\*\*(.+?)\*\*\s*$", visible)
-        if bold:
-            subtitle = bold.group(1).strip()
     return title, subtitle
 
 
@@ -119,7 +115,7 @@ def _density(page_type: str, block: str) -> str:
     if explicit:
         return explicit
     if page_type == "cover":
-        return "light cover: title, metadata, and a modest context/accent treatment; avoid dense article content"
+        return "title and metadata; visual density follows the cover composition"
     if page_type in {"chapter", "toc", "ending"}:
         return "minimal structural"
     return "page-derived: balance manuscript substance, evidence, and visual share"
@@ -281,7 +277,7 @@ def slide_plan_markdown(plan: DeckPlan, page_num: int) -> str:
         f"- Title: {slide.title}",
         f"- Subtitle: {slide.subtitle or '(none)'}",
         f"- Style family: {slide.style_family}",
-        f"- Layout family: {slide.layout_family}",
+        f"- Layout family (composition suggestion): {slide.layout_family}",
         f"- Density target: {slide.density}",
     ]
     if slide.chapter_label:

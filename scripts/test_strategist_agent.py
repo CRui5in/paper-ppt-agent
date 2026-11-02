@@ -58,6 +58,14 @@ def response(text: str, reason: str = "stop") -> LLMResponse:
 
 
 class StrategistGenerationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_content_design_is_returned_without_an_automatic_review_rewrite(self):
+        manuscript = MANUSCRIPT.replace('page_type: toc', 'page_type: content')
+        design = COMPLETE.replace('Agenda', 'Method').replace('**Type**: toc', '**Type**: content')
+        provider = SimpleNamespace(chat=AsyncMock(return_value=response(design)))
+        result = await strategist.create_design_spec(manuscript, provider, 'deepseek-flash')
+        self.assertEqual(result, design)
+        self.assertEqual(provider.chat.await_count, 1)
+
     def setUp(self):
         self.budgets = patch.multiple(
             strategist.settings,

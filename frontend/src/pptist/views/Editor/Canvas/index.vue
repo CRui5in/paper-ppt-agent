@@ -66,7 +66,11 @@
       <div 
         class="viewport" 
         ref="viewportRef"
-        :style="{ transform: `scale(${canvasScale})` }"
+        :style="{
+          transform: `scale(${canvasScale})`,
+          width: viewportStyles.width + 'px',
+          height: viewportStyles.height + 'px',
+        }"
       >
         <MouseSelection 
           v-if="mouseSelectionVisible"
@@ -390,5 +394,6 @@ provide(injectKeySlideScale, canvasScale)
   top: 0;
   left: 0;
   transform-origin: 0 0;
+  overflow: hidden;
 }
 </style>

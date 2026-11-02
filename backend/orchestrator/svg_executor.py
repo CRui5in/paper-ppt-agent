@@ -1,11 +1,4 @@
-"""SVG Executor agent: generates SVG page code from design spec.
-
-The executor runs a page-by-page generation loop. Each page is checked by
-the static :mod:`backend.generator.svg_critic` before being accepted. If
-the critic finds violations, a targeted repair prompt is fed back to the
-LLM (bounded retries, with slightly lower temperature on each retry) so
-that regeneration is *informed* rather than blind.
-"""
+"""Generate each SVG once and report its first-pass layout diagnostics."""
 
 from __future__ import annotations
 
@@ -37,7 +30,10 @@ from backend.orchestrator.manuscript import (
     split_manuscript_pages,
     strip_page_type_metadata,
 )
+from backend.orchestrator.source_records import page_records, records_context
+from backend.orchestrator.copy_metrics import copy_metrics_context
 from backend.usage.tracker import reset_usage_context, set_usage_context
+from backend.orchestrator.checkpoints import GenerationCheckpoints
 
 # `[[FIG:fig_007_p9_page]]` style tokens emitted by the research agent.
 FIG_TOKEN_RE = re.compile(r"\[\[FIG:([A-Za-z0-9_\-]+)\]\]")
@@ -76,22 +72,20 @@ CLIP_RECT_RE = re.compile(
 )
 
 PROMPT_PATH = Path(__file__).parent / "prompts" / "executor.md"
+VISUAL_DESIGN_PROMPT = Path(__file__).resolve().parents[2] / "assets/agent_skills/paper-ppt-generate/references/visual-design.md"
 
 # Default number of static critic checks per page, including the first
-# post-generation check. 0 disables review entirely.
+# post-generation check. Paragraph capacity is checked independently of review.
 DEFAULT_MAX_CRITIC_ATTEMPTS = 0
 
 # Maximum number of prior same-type SVGs used as continuity references.
 MAX_PRIOR_PAGES_IN_CONTEXT = 2
 
-# Initial response plus bounded same-page retries when no SVG can be extracted.
-MAX_SVG_EXTRACTION_ATTEMPTS = 3
 SVG_GENERATION_MAX_TOKENS = max(8192, int(settings.svg_generation_max_tokens or 16384))
 SVG_GENERATION_MAX_TOKENS_CEILING = max(
     SVG_GENERATION_MAX_TOKENS,
     int(settings.svg_generation_max_tokens_ceiling or 32768),
 )
-SVG_REPAIR_MAX_TOKENS = max(4096, int(settings.svg_repair_max_tokens or 8192))
 MAX_DESIGN_SECTION_CHARS = 1800
 STRUCTURAL_PAGE_TYPES = frozenset({"cover", "chapter", "toc", "ending"})
 
@@ -173,189 +167,56 @@ def _drop_paper_figure_tokens_for_structural_page(page_content: str) -> str:
 
 
 def _page_role_guidance(page_type: str) -> str:
-    if page_type in STRUCTURAL_PAGE_TYPES:
-        if page_type == "toc":
-            return (
-                "- Page role boundary: render this as a table-of-contents page. "
-                "Use the title and the planned chapter/list items in order; do "
-                "not replace the list with a decorative title-only page.\n"
-                "- Content boundary: do not introduce template/example diagrams, "
-                "workflow charts, model architecture blocks, or non-TOC explanatory "
-                "visuals. Decoration is fine only when it does not become content.\n"
-                "- Chrome rule: if page numbering is visible, place it in the "
-                "footer only. Do not add top-left section/chapter/page counter labels."
-            )
-        guidance = (
-            "- Page role boundary: render this as a minimal structural page. "
-            "Use the title, an optional short subtitle/key phrase, and sparse "
-            "native SVG decoration only. Do not add paper figures, charts, "
-            "multi-column evidence blocks, or detailed bullet grids.\n"
-            "- Chrome rule: if page numbering is visible, place it in the "
-            "footer only. Do not add top-left section/chapter/page counter "
-            "labels."
-        )
-        if page_type == "chapter":
-            guidance += (
-                "\n- Chapter consistency: reuse the same chapter-divider layout "
-                "for every chapter page in this deck; only change the chapter "
-                "number, title, and optional subtitle/key phrase."
-            )
-        return guidance
-    return (
-        "- Page role boundary: render this as a content page. Do not use a "
-        "chapter-divider layout, oversized chapter numerals, or transition "
-        "slide treatment.\n"
-        "- Chrome rule: if page numbering is visible, place it in the footer "
-        "only. Do not add top-left section/chapter/page counter labels."
-    )
-
-
-def _structural_page_override_block(page_type: str) -> str:
-    if page_type not in STRUCTURAL_PAGE_TYPES:
-        return ""
-    if page_type == "cover":
-        return (
-            "\n## Structural Page Override\n"
-            "- This override is stronger than any design-spec content-elements list for this page.\n"
-            "- Render the cover as a lightweight title/meta slide: title, optional subtitle, "
-            "available authors/source/venue/date, a few short context/thesis lines, "
-            "template chrome, and sparse background decoration.\n"
-            "- Do not render extracted paper figures or turn the cover into a detailed "
-            "background, contribution, metric, result, or evidence slide.\n"
-        )
-    if page_type == "toc":
-        return (
-            "\n## Structural Page Override\n"
-            "- This override is stronger than decorative structural defaults for this page.\n"
-            "- Render the table of contents as title plus ordered chapter/list items from "
-            "the current manuscript or Page Design Contract.\n"
-            "- Only render the TOC title, list items, and restrained decorative chrome; "
-            "do not render template/sample diagrams or process-flow illustrations.\n"
-            "- Do not add paper figures, metrics, evidence cards, charts, KPI strips, or "
-            "dense article-content sections.\n"
-        )
-    consistency = (
-        "\n- For chapter pages, keep the same divider layout across all chapter "
-        "slides. Vary only the section number, title, and optional subtitle/key phrase."
-        if page_type == "chapter"
-        else ""
-    )
-    return (
-        "\n## Structural Page Override\n"
-        "- This override is stronger than any manuscript body text or design-spec "
-        "content-elements list for this page.\n"
-        "- Render only the structural role: title, optional short subtitle/key phrase, "
-        "template chrome, and sparse background decoration.\n"
-        "- Do not render content sections named `核心问题`, `本章看点`, `主要结果`, "
-        "question lists, KPI strips, cards/panels, figures, charts, or mini-agendas "
-        "on chapter/ending pages."
-        f"{consistency}\n"
-    )
+    descriptions = {
+        "cover": "Compose the opening page from the supplied title and metadata, with a clear typographic hierarchy and balanced negative space. Optional ornament follows the deck's coherent visual motif.",
+        "toc": "Present the complete ordered chapter/list items as the table of contents.",
+        "chapter": "Use the common chapter-divider identity with the planned chapter index, title, and subtitle.",
+        "ending": "Compose the planned closing message in the deck's visual identity.",
+    }
+    return descriptions.get(page_type, "Develop the page's explanation and evidence into a readable visual composition.")
 
 
 def _factual_rendering_guardrails(page_type: str) -> str:
     if page_type in STRUCTURAL_PAGE_TYPES:
-        if page_type == "toc":
-            return (
-                "\n## Factual Rendering Guardrails\n"
-                "- TOC pages may render only the planned chapter/list item titles and optional "
-                "short descriptors. Do not add metrics, evidence snippets, figures, charts, "
-                "workflow diagrams, model architecture blocks, or template example graphics.\n"
-            )
-        return (
-            "\n## Factual Rendering Guardrails\n"
-            "- Structural pages must not add metrics, charts, evidence cards, source snippets, "
-            "or retrieved-memory text. Render only title/meta/subtitle-level content.\n"
-        )
+        return ""
     return (
-        "\n## Factual Rendering Guardrails\n"
-        "- Visible facts must come from the current page manuscript or Page Design Contract.\n"
-        "- Use Slide Context only to clarify this page's claim; do not introduce extra facts from it.\n"
-        "- Slide Context and evidence anchors are private grounding. Do not print card IDs, "
-        "section headings, raw snippets, or evidence-memory blocks as visible slide cards.\n"
-        "- Do not introduce new visible numbers, dates, percentages, sample sizes, ranks, "
-        "or axis tick values while drawing native SVG visuals.\n"
-        "- Preserve exact numeric precision from the page inputs. Do not round values "
-        "or invent chart scales unless they appear in the current page manuscript or Page Design Contract.\n"
-        "- If an exact chart would need invented ticks or interpolated values, draw a "
-        "qualitative diagram, ranked list, or bar comparison without numeric scale ticks.\n"
+        "\n## Information Fidelity\n"
+        "- Preserve exact values, units, notation, and comparison conditions "
+        "in the selected visible copy.\n"
+        "- Encode quantitative comparisons with consistent scales and precise data "
+        "labels. Keep retrieval and provenance metadata in speaker notes.\n"
     )
 
 
 def _layout_generation_guardrails(page_type: str, has_paper_figure: bool) -> str:
     if page_type in STRUCTURAL_PAGE_TYPES:
         return (
-            "\n## Layout Generation Guardrails\n"
-            "- Structural pages use centered or lightly asymmetric title composition only. "
-            "Do not create dense grids, figure/text splits, or bottom evidence callouts.\n"
+            "\n## Page Composition\n"
+            "- Compose the planned title, metadata, agenda, or closing message using "
+            "the deck's structural-page visual identity.\n"
         )
-
     figure_note = (
-        "- This page has a paper figure assignment: reserve the figure box first, then "
-        "calculate the final visible image rectangle from the actual aspect ratio before "
-        "allocating any text. Fit text/caption/callout regions around that rectangle. "
-        "Use a balanced image/text split "
-        "such as figure-left/text-right or figure-top/notes-bottom. Keep the figure "
-        "and text regions visually comparable in height; avoid a large blank quadrant.\n"
-        "- Do not center a small ratio-preserving image inside an oversized frame. "
-        "The visible image should occupy most of the reserved frame and normally fill "
-        "one inner dimension. If it would not, revise the region composition first.\n"
-        "- The assigned figure box height is a hard cap. The rendered image, its "
-        "caption, and any nearby callout text must fit inside the reserved region; "
-        "do not let a tall image push the next text block downward.\n"
-        if has_paper_figure
-        else "- If no paper figure is assigned, use a balanced text/diagram/card layout "
-        "rather than a sparse bullet list floating in empty space.\n"
+        "- Fit the complete assigned figure at its natural aspect ratio and a readable "
+        "visible size. Arrange direct annotations, captions, and explanation around it; "
+        "choose placement from its role in the argument.\n"
+        if has_paper_figure else
+        "- Build the explanation from native SVG geometry and type where useful. "
+        "A diagram, chart, comparison, or open text composition can carry the page.\n"
     )
     return (
-        "\n## Layout Generation Guardrails\n"
-        "- Design the page layout from explicit rectangular regions before drawing details. "
-        "Choose one stable family from the Slide Plan's layout family, or pick the most "
-        "suitable: figure-left-text-right, text-left-figure-right, two-column-evidence, "
-        "three-card-grid, kpi-dashboard, process-flow-with-evidence, "
-        "comparison-table-callout, full-width-chart-with-notes, hero-title-plus-callouts, "
-        "four-quadrant-matrix, timeline-horizontal, or full-bleed-image-overlay.\n"
-        "- Use shared gutters of 24-40px and align region edges. Content slides should "
-        "meaningfully occupy about 65-85% of the content area without edge crowding.\n"
-        "- Keep content boxes inside the content area; the footer band is not layout space.\n"
-        "- Avoid free-floating bullets, detached bottom callouts, and large blank bands. "
-        "A callout should align with the same column or span a clear full-width grid row.\n"
+        "\n## Page Composition\n"
+        "- Choose a visual relationship and reading order for this material. Treat the "
+        "planned layout family as a starting idea, with freedom inside explicit template "
+        "boundaries. Use paths, connectors, spatial grouping, and direct labels when "
+        "they make the relationship visible.\n"
+        "- Match the deck's palette, typography, and recurring chrome. Size regions "
+        "from their content, align related elements, and use whitespace deliberately.\n"
         f"{figure_note}"
-        "- **Visual depth is required**: flat pages without elevation look unfinished. "
-        "Use only a simple drop shadow directly on one shape. Do not simulate shadows "
-        "with offset translucent duplicate rectangles. Never put a filter on `<g>`, "
-        "and never use blur/glow filters on text; those rasterize the "
-        "whole PPT slide. Use gradients for backgrounds, header bars, and overlays "
-        "(`linearGradient` / `radialGradient`). Use accent top-bars or left-borders on cards "
-        "(4px colored rect). Use subtle decorative elements: rotated small shapes as corner "
-        "accents, gradient divider lines, brand-color orbs/circles.\n"
-        "- **Card design**: cards/panels may use a simple per-shape shadow and should have an accent element "
-        "(top-bar or left-border), and proper inner padding. Do not use plain flat rectangles "
-        "with just a stroke border.\n"
-        "- **Visual hierarchy**: use large bold numbers (36-48px) with small gray labels for "
-        "KPI/metrics. Use color-coded status (green=positive, red=negative, yellow=warning). "
-        "Use accent callout boxes with light tinted backgrounds (`fill-opacity=\"0.08\"`) and "
-        "colored left borders for key takeaways.\n"
-        "- **Color rules**: 60-30-10 rule (primary 60%, secondary 30%, accent 10%). "
-        "Maximum 4 colors per page. Use monochromatic opacity variations for chart series, "
-        "not rainbow colors.\n"
-        "- Wrap text dynamically from each actual region width, font size, and visual "
-        "share. Let ordinary non-final lines use most of their box width; avoid "
-        "conservative early breaks. Use semantic breaks and allow light raggedness.\n"
-        "- Text-box contract: place visible body/caption/callout text in an explicit "
-        "rectangle and keep every line inside it. Prefer wrapping related "
-        "text in `<g data-textbox=\"x y w h\" data-role=\"body|caption|callout|heading\">`; "
-        "keep headings and body paragraphs in separate groups. `data-*` attributes "
-        "are invisible and help post-processing preserve your intended boxes.\n"
-        "- Inline emphasis is allowed inside a sentence with `<tspan fill=\"...\">`, "
-        "but the complete sentence still belongs to one text box and must wrap as "
-        "a paragraph. Do not split an emphasized keyword into an isolated floating "
-        "line unless the phrase genuinely wraps there.\n"
-        "- While drawing text, keep baselines, descenders, padding, and right edges "
-        "inside the final region boxes.\n"
-        "- For tables, determine column widths from the longest visible label/cell first, "
-        "then place rows. Keep method names separate from numeric columns and right-align "
-        "numbers; never rely on guessed x positions that can overlap.\n"
+        "- Put each continuous body paragraph with inline tspan emphasis in a "
+        "`<g data-role=\"body\" data-textbox=\"x y w h\">` for measured wrapping. "
+        "Diagram labels, headings, and data labels may use directly positioned text.\n"
+        "- Check text capacity, label collisions, connector endpoints, and table column "
+        "widths before returning the SVG. Keep essential content clear of the footer.\n"
     )
 
 
@@ -367,6 +228,37 @@ def _paper_figure_keys(figures: list[dict]) -> set[str]:
         if key:
             keys.add(key)
     return keys
+
+
+def _explicit_figure_owners(pages: list[str], inventory: list[dict] | None) -> dict[str, int]:
+    """Reserve source figures for their explicit manuscript placements first."""
+    owners, captions = {}, {}
+    for page, content in enumerate(pages, 1):
+        if _classify_page_type(content) in STRUCTURAL_PAGE_TYPES:
+            continue
+        _, explicit_figures, _ = _resolve_fig_tokens(content, inventory)
+        for figure in explicit_figures:
+            caption = _caption_signature(str(figure.get('caption') or ''))
+            owner = page
+            if caption:
+                owner = captions.setdefault((caption, figure.get('page_number')), page)
+            owners.setdefault(Path(str(figure['path'])).stem, owner)
+    for figure in inventory or []:
+        caption = _caption_signature(str(figure.get('caption') or ''))
+        signature = (caption, figure.get('page_number'))
+        if signature in captions:
+            owners.setdefault(Path(str(figure['path'])).stem, captions[signature])
+    return owners
+
+
+def _honor_figure_owners(figures: list[dict], owners: dict[str, int], page: int,
+                         content: str, rejected: list[str]) -> tuple[list[dict], str]:
+    deferred = {key for key in _paper_figure_keys(figures) if key in owners and owners[key] != page}
+    if not deferred:
+        return figures, content
+    rejected.extend(f'{key}: assigned to manuscript slide {owners[key]}' for key in sorted(deferred))
+    return ([figure for figure in figures if Path(str(figure['path'])).stem not in deferred],
+            _remove_paper_reference_lines(content, deferred))
 
 
 def _remove_paper_reference_lines(content: str, disallowed_keys: set[str]) -> str:
@@ -816,91 +708,25 @@ def _figure_guidance_block(
     *,
     source: str = "manuscript",
 ) -> str:
-    """Constrain real paper-figure hrefs without limiting native SVG visuals."""
-    rejected = rejected or []
+    """Expose assigned assets with their actual captions and dimensions."""
+    lines = ["## Paper Figure Assets"]
     if not used:
-        lines = [
-            "## Paper Figure Guidance\n"
-            "- This slide does not contain an explicit paper-figure token. "
-            "Do not invent a paper-figure `<image href>` path. This restriction "
-            "applies only to extracted paper figures; native SVG diagrams, charts, "
-            "and visual treatments remain available."
-        ]
-        for item in rejected:
-            lines.append(
-                f"- Rejected paper figure token: {item}. Do not use its href; "
-                "summarize the idea with native SVG or omit the image."
-            )
-        return "\n".join(lines)
-
-    lines = ["## Paper Figure Guidance"]
-    if source == "design_spec":
-        lines.append(
-            "- The design spec explicitly assigns the following paper figure(s) to this slide. "
-            "Include them unless the slide would become unreadable; preserve the listed aspect ratio."
-        )
-    if len(used) > 2:
-        lines.append(
-            "- This slide has more paper-figure candidates than can fit cleanly. "
-            "Render at most 2 paper figures, choose the most central ones, and "
-            "summarize the rest as native SVG text or omit them."
-        )
+        lines.append("- Assigned paper figures: none.")
     for fig in used:
-        path = fig.get("path") or ""
-        cap = (fig.get("caption") or "").strip().replace("\n", " ")
-        if len(cap) > 160:
-            cap = cap[:157] + "..."
-
-        dim_info = ""
-        w = int(fig.get("natural_width") or 0)
-        h = int(fig.get("natural_height") or 0)
-        if w > 0 and h > 0:
-            dim_info = f" actual dimensions: {w}x{h} (ratio {w / h:.2f});"
-        else:
+        path = str(fig.get("path") or "")
+        caption = str(fig.get("caption") or "").strip().replace("\n", " ")
+        width, height = int(fig.get("natural_width") or 0), int(fig.get("natural_height") or 0)
+        if not (width and height):
             try:
-                img_path = Path(path)
-                if img_path.exists():
-                    with Image.open(img_path) as img:
-                        w, h = img.size
-                        ratio = w / h
-                        dim_info = f" actual dimensions: {w}x{h} (ratio {ratio:.2f});"
-            except Exception:
+                with Image.open(path) as image:
+                    width, height = image.size
+            except (OSError, ValueError):
                 pass
-
-        lines.append(
-            f"- Allowed paper figure href: \"{path}\";{dim_info} caption: {cap}"
-        )
-    lines.append(
-        "Use only the listed hrefs for extracted paper figures. Never substitute "
-        "a different paper-figure href, reuse one from another slide, or invent "
-        "a paper-figure path. This does not restrict native SVG visuals."
-    )
-    lines.append(
-        "- Generation-time figure safety: place each paper figure as a complete, "
-        "scaled image inside the slide canvas. Do not oversize it and hide parts "
-        "off-canvas. Avoid `clip-path` for paper figures unless the image box and "
-        "the visible clip are nearly the same size. If only one panel of a "
-        "composite source figure is needed, redraw that panel as native SVG "
-        "instead of cropping a huge source image."
-    )
-    lines.append(
-        "- Caption safety: if multiple paper images are shown, caption them "
-        "separately or use a topic caption without combining figure/table "
-        "numbers. If the visible number inside the image may differ from the "
-        "inventory caption, omit the number in the slide caption."
-    )
+        dimensions = f"; {width}x{height}px; ratio {width / height:.4f}" if width and height else ""
+        lines.append(f'- Assigned href: "{path}"{dimensions}; caption: {caption}')
+    if rejected:
+        lines.append("- Unavailable references: " + "; ".join(rejected))
     return "\n".join(lines)
-
-
-# -- Dynamic text layout & image layout helpers -------------------------------
-
-# Content area defaults for PPT 16:9 (may be overridden by design_spec)
-_DEFAULT_CONTENT_AREA = {"x": 40, "y": 100, "width": 1200, "height": 520}
-
-
-# Regex to identify structural elements in manuscript Markdown
-_HEADING_RE = re.compile(r"^(#{1,3})\s+(.+)$", re.MULTILINE)
-_BULLET_RE = re.compile(r"^[\s]*[-*•]\s+(.+)$", re.MULTILINE)
 
 
 def _dynamic_text_layout_block(
@@ -909,48 +735,13 @@ def _dynamic_text_layout_block(
     *,
     has_paper_figure: bool,
 ) -> str:
-    """Describe page-local wrapping without fixed character-capacity heuristics."""
-    text = manuscript_page.strip()
-    headings = _HEADING_RE.findall(text)
-    bullets = _BULLET_RE.findall(text)
-    region_widths = [
-        int(float(value))
-        for value in re.findall(r"(?i)\bw\s*=\s*(\d+(?:\.\d+)?)", page_design_block)
-        if float(value) > 0
-    ]
-    width_note = (
-        f"The page contract exposes region widths from {min(region_widths)}px to "
-        f"{max(region_widths)}px; wrap each region independently."
-        if region_widths
-        else "No reliable text width is precomputed; choose final regions first, then wrap against them."
-    )
-    visual_note = (
-        "A paper figure is assigned, so reserve its final frame before sizing the remaining text regions."
-        if has_paper_figure
-        else "No paper figure is assigned, so text and native SVG visuals may share the content area according to the page argument."
-    )
+    """Keep paragraph measurement local to the designer's chosen regions."""
     return (
-        "## Dynamic Text Layout\n"
-        f"- Page structure: {len(headings)} heading(s), {len(bullets)} bullet(s), "
-        f"about {len(text)} source characters.\n"
-        f"- {width_note}\n"
-        f"- {visual_note}\n"
-        "- Do not use a fixed characters-per-line target. Let ordinary non-final "
-        "lines occupy roughly 65-90% of their actual text-box width.\n"
-        "- Sparse pages may use larger type and wider measures. Text-heavy pages may "
-        "use smaller type, tighter spacing, or more columns when readable.\n"
-        "- Preserve sentence-level colored emphasis for important keywords; do not "
-        "isolate a colored word onto its own line unless the phrase naturally wraps.\n"
-        "- Use explicit invisible text boxes for body, caption, and callout paragraphs: "
-        "`<g data-textbox=\"x y w h\" data-role=\"body\">...text lines...</g>`. "
-        "Heading/subheading text must use its own `data-role=\"heading\"` box, not "
-        "the body paragraph box.\n"
-        "- For each text box, choose line breaks after the final x/y/w/h are known. "
-        "A line is invalid if its estimated right edge exceeds `x + w`, even if the "
-        "slide otherwise looks spacious.\n"
-        "- Break at semantic punctuation or phrase boundaries. Light raggedness is "
-        "acceptable; repair only real clipping, overlap, or clearly wasteful wrapping."
-    )
+        "## Paragraph Layout\n"
+        "Size paragraph boxes with their neighboring visuals. Write continuous "
+        "text with inline emphasis; font metrics and the declared box width "
+        "determine wrapping. Reserve line-height, padding, and caption space."
+    ) + '\n\n' + copy_metrics_context(page_design_block)
 
 
 def _write_generation_response_debug(
@@ -1006,26 +797,6 @@ def _is_max_token_limit_error(exc: BaseException) -> bool:
     return any(term in text for term in token_terms) and any(term in text for term in limit_terms)
 
 
-def _completion_near_limit(response: LLMResponse, requested_max_tokens: int) -> bool:
-    usage = response.usage
-    if usage is None or requested_max_tokens <= 0:
-        return False
-    return usage.completion_tokens >= int(requested_max_tokens * 0.96)
-
-
-def _svg_response_looks_truncated(content: str) -> bool:
-    text = content.strip()
-    if "</svg>" in text:
-        return False
-    return "<svg" in text or text.endswith((">", "/>", "</g>", "</text>", "</rect>"))
-
-
-def _next_higher_svg_max_tokens(current: int) -> int:
-    if current >= SVG_GENERATION_MAX_TOKENS_CEILING:
-        return current
-    return min(SVG_GENERATION_MAX_TOKENS_CEILING, max(current + 2048, current * 2))
-
-
 def _next_lower_svg_max_tokens(current: int) -> int:
     if current <= 4096:
         return current
@@ -1043,8 +814,9 @@ async def _chat_svg_generation(
     debug_prefix: str,
     page_num: int,
     attempt: int,
-) -> tuple[LLMResponse, int]:
-    requested_max_tokens = max_tokens
+) -> tuple[LLMResponse, int | None]:
+    budget = getattr(llm, "artifact_max_tokens", None)
+    requested_max_tokens = budget(model, max_tokens) if callable(budget) else max_tokens
     while True:
         snapshot = set_usage_context(
             stage="generation",
@@ -1060,7 +832,7 @@ async def _chat_svg_generation(
             )
         except BaseException as exc:
             reset_usage_context(snapshot)
-            if _is_max_token_limit_error(exc):
+            if requested_max_tokens is not None and _is_max_token_limit_error(exc):
                 lowered = _next_lower_svg_max_tokens(requested_max_tokens)
                 _write_generation_response_debug(
                     project_dir,
@@ -1084,12 +856,25 @@ async def _chat_svg_generation(
                 attempt=attempt,
                 content=response.content,
                 max_tokens=requested_max_tokens,
+                note=f"finish_reason={response.finish_reason or 'unknown'}; reasoning_tokens={response.reasoning_tokens}; "
+                     f"completion_tokens={response.usage.completion_tokens if response.usage else 'unknown'}",
             )
+            if response.finish_reason == "length":
+                raise RuntimeError(
+                    f"Page {page_num} generation reached the provider's total output limit "
+                    f"(finish_reason=length, reasoning_tokens={response.reasoning_tokens}, "
+                    f"completion_tokens={response.usage.completion_tokens if response.usage else 'unknown'}, "
+                    f"visible_characters={len(response.content)})."
+                )
+            if not response.content.strip():
+                raise RuntimeError(f"Page {page_num} generation returned an empty final response "
+                                   f"(finish_reason={response.finish_reason or 'unknown'}, "
+                                   f"reasoning_tokens={response.reasoning_tokens}).")
             return response, requested_max_tokens
 
 
 def _normalize_obvious_short_text_lines(svg: str, page_design_block: str) -> str:
-    """Wrap overlong text without merging intentional line breaks."""
+    """Prepare fonts, equations, and explicitly declared text layouts."""
     try:
         root = ET.fromstring(svg)
     except ET.ParseError:
@@ -1097,15 +882,64 @@ def _normalize_obvious_short_text_lines(svg: str, page_design_block: str) -> str
     namespace = _namespace_uri(root.tag)
     if namespace:
         ET.register_namespace("", namespace)
-    regions = _merged_text_regions(root, page_design_block)
-    if not regions:
-        return svg
+    from backend.generator.svg_finalize.render_math import render_math_in_tree
+    from backend.generator.svg_finalize.normalize_fonts import normalize_text_fonts_in_tree
+    from backend.generator.svg_text_layout import reflow_declared_paragraphs, layout_text_groups, normalize_inline_scripts
+    from backend.generator.svg_text_flow import layout_text_flows
 
-    changed = _wrap_overlong_text_elements(root, regions)
+    fonts_normalized = normalize_text_fonts_in_tree(root)
+    math_rendered = render_math_in_tree(root) + normalize_inline_scripts(root)
+    paragraphs_reflowed = layout_text_flows(root) + reflow_declared_paragraphs(root) + layout_text_groups(root)
+    if not math_rendered and not paragraphs_reflowed and not fonts_normalized:
+        return _identify_svg_elements(svg)
+    return _identify_svg_elements(ET.tostring(root, encoding="unicode"))
 
-    if not changed:
+
+def _identify_svg_elements(svg: str) -> str:
+    root = ET.fromstring(svg)
+    reserved = {element.get('data-editor-id') for element in root.iter() if element.get('data-editor-id')}
+    used = set()
+    counter = 1
+
+    def visit(element):
+        nonlocal counter
+        current = element.get('data-editor-id')
+        if not current or current in used:
+            while f'e{counter}' in used or f'e{counter}' in reserved:
+                counter += 1
+            current = f'e{counter}'
+            counter += 1
+            element.set('data-editor-id', current)
+            reserved.add(current)
+        used.add(current)
+        if element.get('data-latex') is None:
+            for child in element:
+                visit(child)
+    visit(root)
+    return ET.tostring(root, encoding='unicode')
+
+
+def _svg_for_model(svg: str) -> str:
+    """Keep authoring metadata in repair context, not generated glyph paths."""
+    try:
+        root = ET.fromstring(svg)
+    except ET.ParseError:
         return svg
-    return ET.tostring(root, encoding="unicode")
+    changed = False
+    from backend.generator.svg_finalize.render_math import math_expression
+    for element in root.iter():
+        expression = math_expression(element)
+        if expression is None:
+            continue
+        element.text = None
+        for child in list(element):
+            element.remove(child)
+        element.attrib.pop('data-math-rendered', None)
+        element.attrib.pop('data-latex', None)
+        namespace = element.tag.split('}', 1)[0] + '}' if element.tag.startswith('{') else ''
+        ET.SubElement(element, namespace + 'desc', {'data-math': 'latex'}).text = expression
+        changed = True
+    return ET.tostring(root, encoding='unicode') if changed else svg
 
 
 def _merged_text_regions(root: ET.Element, page_design_block: str) -> list[dict[str, float]]:
@@ -1195,6 +1029,8 @@ def _wrap_overlong_text_elements(root: ET.Element, regions: list[dict[str, float
             continue
         if element.attrib.get("text-anchor") or "transform" in element.attrib:
             continue
+        if _has_positioned_text_children(element):
+            continue
         text = _element_text(element)
         if len(text) < 4:
             continue
@@ -1242,7 +1078,7 @@ def _has_positioned_text_children(element: ET.Element) -> bool:
     for child in element.iter():
         if child is element:
             continue
-        if any(attr in child.attrib for attr in ("x", "y", "dx", "dy")):
+        if any(attr in child.attrib for attr in ("x", "y", "dx", "dy", "baseline-shift")):
             return True
     return False
 
@@ -1266,22 +1102,9 @@ def _explicit_or_best_text_region(
 
 
 def _styled_text_fragments(element: ET.Element) -> list[tuple[str, dict[str, str]]]:
-    fragments: list[tuple[str, dict[str, str]]] = []
+    from backend.generator.svg_text_layout import paragraph_fragments
 
-    def add(text: str | None, attrs: dict[str, str] | None = None) -> None:
-        if text:
-            fragments.append((text, attrs or {}))
-
-    add(element.text, {})
-    for child in list(element):
-        attrs = {
-            key: value
-            for key, value in child.attrib.items()
-            if key not in {"x", "y", "dx", "dy"}
-        }
-        add(child.text, attrs)
-        add(child.tail, {})
-    return fragments
+    return paragraph_fragments(element)
 
 
 def _styled_tokens(
@@ -1539,7 +1362,7 @@ def _is_reflowable_inline_text(element: ET.Element) -> bool:
     for child in element.iter():
         if child is element:
             continue
-        if any(attr in child.attrib for attr in ("x", "y", "dx", "dy")):
+        if any(attr in child.attrib for attr in ("x", "y", "dx", "dy", "baseline-shift")):
             return False
     return True
 
@@ -1887,126 +1710,19 @@ def _format_svg_number(value: float) -> str:
 
 
 def _figure_layout_guidance(used_figures: list[dict]) -> str:
-    """For each paper figure, recommend layout based on its aspect ratio.
-
-    When multiple images share a page, compute a height budget so the total
-    stays within the content area.
-    """
+    """Supply image geometry; the designer decides composition."""
     if not used_figures:
         return ""
-    ca_y = _DEFAULT_CONTENT_AREA["y"]
-    ca_w = _DEFAULT_CONTENT_AREA["width"]
-    ca_h = _DEFAULT_CONTENT_AREA["height"]
-    ca_bottom = ca_y + ca_h
-
-    lines = ["## Image Layout Recommendations"]
-    lines.append(
-        "Hard bounds for paper figures: keep the visible image box within "
-        "x=0..1260 and y=80..640; preferred content area is x=40..1240, "
-        "y=100..620. The image's rendered width/height must be the actual "
-        "visible size, not a larger off-canvas source hidden by clipping."
-    )
-
-    # Collect image metadata
-    fig_meta: list[dict] = []
+    lines = ["## Assigned Image Geometry"]
     for fig in used_figures:
-        path = fig.get("path") or ""
-        meta: dict = {"stem": Path(path).stem if path else "unknown"}
+        path = Path(str(fig.get("path") or ""))
         try:
-            img_path = Path(path)
-            if img_path.exists():
-                with Image.open(img_path) as img:
-                    w, h = img.size
-                    meta["w"], meta["h"], meta["ratio"] = w, h, w / h
-        except Exception:
-            pass
-        fig_meta.append(meta)
-
-    # Single image: original logic, capped to content area
-    if len(fig_meta) == 1:
-        m = fig_meta[0]
-        r = m.get("ratio")
-        if r is not None:
-            img_h_at_full_w = int(ca_w / r)
-            if r > 1.2 and img_h_at_full_w <= ca_h:
-                # Top-bottom: image fits at full width
-                img_w, img_h = ca_w, img_h_at_full_w
-                txt_h = ca_h - img_h - 20
-                lines.append(
-                    f"- {m['stem']}: ratio={r:.2f}, "
-                    f"recommended=top-bottom, "
-                    f"image={img_w}x{img_h}, text_area={ca_w}x{txt_h}, "
-                    f"safe_box=(40,{ca_y},{img_w},{img_h})"
-                )
-            else:
-                # Left-right: either ratio <= 1.2, or image too tall at full width
-                img_h, img_w = ca_h, int(ca_h * r)
-                txt_w = ca_w - img_w - 20
-                # If text area too narrow (<280px), cap image to 70% height
-                if txt_w < 280:
-                    img_h = int(ca_h * 0.7)
-                    img_w = int(img_h * r)
-                    txt_w = ca_w - img_w - 20
-                if r > 1.2:
-                    lines.append(
-                        f"- {m['stem']}: ratio={r:.2f}, "
-                        f"recommended=left-right (image too tall for top-bottom), "
-                        f"image={img_w}x{img_h}, text_area={txt_w}x{ca_h}, "
-                        f"safe_box=({40 + txt_w + 20},{ca_y},{img_w},{img_h})"
-                    )
-                else:
-                    lines.append(
-                        f"- {m['stem']}: ratio={r:.2f}, "
-                        f"recommended=left-right, "
-                        f"image={img_w}x{img_h}, text_area={txt_w}x{ca_h}, "
-                        f"safe_box=({40 + txt_w + 20},{ca_y},{img_w},{img_h})"
-                    )
-        else:
-            lines.append(f"- {m['stem']}: unable to read dimensions")
-
-    # Multiple images: compute shared height budget
-    else:
-        n = len(fig_meta)
-        text_reserve = 150
-        available = ca_h - text_reserve - 20 * n
-        per_img_max = max(80, available // n) if n > 0 else ca_h
-
-        lines.append(
-            f"Multi-image page ({n} images): "
-            f"each image max {per_img_max}px height, "
-            f"content area bottom = y{ca_bottom}. "
-            f"After images, reserve at least {text_reserve}px for text."
-        )
-
-        running_y = ca_y
-        for m in fig_meta:
-            r = m.get("ratio")
-            if r is not None:
-                if r > 1.2:
-                    img_w = ca_w
-                    img_h = min(int(ca_w / r), per_img_max)
-                else:
-                    img_h = min(ca_h, per_img_max)
-                    img_w = int(img_h * r)
-                lines.append(
-                    f"- {m['stem']}: ratio={r:.2f}, "
-                    f"image={img_w}x{img_h}, "
-                    f"y_start={running_y}, y_end={running_y + img_h}. "
-                    "Do not crop; if it cannot fit at this size, use a native "
-                    "summary visual instead."
-                )
-                running_y += img_h + 20
-            else:
-                lines.append(f"- {m['stem']}: unable to read dimensions")
-                running_y += per_img_max + 20
-
-        remaining = ca_bottom - running_y
-        lines.append(
-            f"Text starts at y={running_y}, "
-            f"max height={remaining}px, "
-            f"must not exceed y={ca_bottom}"
-        )
-
+            with Image.open(path) as image:
+                width, height = image.size
+            lines.append(f"- {path.stem}: {width}x{height}px; aspect ratio {width / height:.4f}.")
+        except (OSError, ValueError):
+            lines.append(f"- {path.stem}: dimensions unavailable.")
+    lines.append("Fit complete figures at readable sizes within the page's assigned regions.")
     return "\n".join(lines)
 
 
@@ -2348,7 +2064,17 @@ def _generation_static_report(
     used_paper_figures: dict[str, int],
     required_icon: str | None,
     include_general_svg_checks: bool,
+    page_content: str = "",
 ) -> CriticReport:
+    if not include_general_svg_checks:
+        report = check_svg(svg_content, critic_config)
+        violations = [v for v in report.violations if v.rule in {
+            "paragraph_capacity", "out_of_bounds", "text_overflow_in_container",
+            "filter_requires_raster_fallback", "forbidden_element", "xml_parse",
+            "text_line_overlap", "text_overlap", "shape_covers_text",
+            "equation_overlaps_text", "content_area_overflow",
+        }]
+        return CriticReport(passed=not violations, violations=violations)
     reports = [
         _validate_paper_figure_refs(
             svg_content,
@@ -2366,11 +2092,73 @@ def _generation_static_report(
     return _merge_reports(*reports)
 
 
-def _static_attempt_limit_for_report(
-    max_critic_attempts: int,
-    report: CriticReport | None,
-) -> int:
-    return max(0, int(max_critic_attempts))
+def _validate_source_table_values(svg_content: str, page_content: str) -> CriticReport:
+    """Keep numeric records selected into the manuscript's tables visible."""
+    from decimal import Decimal
+    import unicodedata
+
+    def values(text: str) -> dict:
+        text = unicodedata.normalize('NFKC', text).replace('−', '-')
+        result = {}
+        pattern = r'(?<![A-Za-z0-9_.])[-+]?\d+(?:[, \u2009\u202f]\d{3})*(?:\.\d+)?(?:[eE][-+]?\d+)?(?![A-Za-z0-9_.])'
+        for match in re.finditer(pattern, text):
+            raw = match.group()
+            result[Decimal(re.sub(r'[,\s]', '', raw))] = raw
+        return result
+
+    rows = []
+    in_table = False
+    for line in page_content.splitlines():
+        if re.fullmatch(r'\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*', line):
+            in_table = True
+        elif in_table and '|' in line:
+            rows.append(line)
+        else:
+            in_table = False
+    expected = values('\n'.join(rows))
+    if not expected:
+        return CriticReport(passed=True)
+    try:
+        root = ET.fromstring(svg_content)
+    except ET.ParseError:
+        return CriticReport(passed=True)
+    visible = []
+    for element in root.iter():
+        if _local_tag(element.tag) == 'text':
+            visible.append(''.join(element.itertext()))
+        if element.get('data-latex'):
+            visible.append(element.get('data-latex'))
+    present = values('\n'.join(visible))
+    missing = [raw for value, raw in expected.items() if value not in present]
+    if not missing:
+        return CriticReport(passed=True)
+    return CriticReport(passed=False, violations=[Violation(
+        rule='source_table_values_missing', severity='error',
+        detail='Selected source-table values are missing from the visible slide: ' + ', '.join(missing) +
+               '. Recompose the table or chart to retain the complete selected records and their labels.',
+    )])
+
+
+async def _report_initial_svg(svg_content, *, page_num, page_title, page_content,
+                              critic_config, allowed_figures, used_paper_figures,
+                              required_icon, include_general_svg_checks, on_critic,
+                              llm, model, style, enable_visual_critic, visual_critic_config):
+    """Observe the first output without sending edits or changing the page."""
+    report = _generation_static_report(svg_content, critic_config=critic_config,
+        allowed_figures=allowed_figures, used_paper_figures=used_paper_figures,
+        required_icon=required_icon, include_general_svg_checks=include_general_svg_checks,
+        page_content=page_content)
+    await _emit_critic(on_critic, page_num, 1, report, None, None,
+                       {"source": "static", "phase": "initial_generation"})
+    if enable_visual_critic:
+        snapshot = set_usage_context(stage="visual_qa", page=page_num, attempt=1)
+        try:
+            outcome = await visual_check(svg_content, llm=llm, model=model, page_num=page_num,
+                page_title=page_title, style=style, config=visual_critic_config)
+        finally:
+            reset_usage_context(snapshot)
+        await _emit_critic(on_critic, page_num, 1, outcome.report, None, None,
+                           _visual_outcome_metadata(outcome))
 
 
 def _pseudo_icon_badge_violations(svg_content: str) -> list[Violation]:
@@ -2451,25 +2239,6 @@ def _merge_reports(*reports: CriticReport) -> CriticReport:
         violations=violations,
         canvas=canvas,
     )
-
-
-def _archive_repair_svg(
-    repair_archive_dir: Path,
-    *,
-    page_num: int,
-    attempt: int,
-    label: str,
-    svg_content: str,
-) -> str | None:
-    """Persist an SVG snapshot for review before/after repair."""
-    try:
-        repair_archive_dir.mkdir(parents=True, exist_ok=True)
-        archive_filename = f"p{page_num:02d}_attempt{attempt}_{label}.svg"
-        archive_path = repair_archive_dir / archive_filename
-        archive_path.write_text(svg_content, encoding="utf-8")
-        return f"svg_archive/repair/{archive_filename}"
-    except OSError:
-        return None
 
 
 def _archive_visual_render(
@@ -2627,6 +2396,48 @@ def _same_type_svg_history_message(
     return "\n".join(parts)
 
 
+def _resume_svg_pages(project_dir: Path, resume: bool) -> dict[int, str]:
+    if not resume:
+        return {}
+    checkpoints = GenerationCheckpoints(project_dir)
+    saved = checkpoints.saved_pages()
+    # Existing jobs predate page checkpoints. Their output directory contains
+    # pages written only after initial rendering and capacity checks succeeded.
+    for path in get_svg_files(project_dir, source="output"):
+        page = slide_index_from_svg_path(path)
+        if page is None:
+            continue
+        if page not in saved:
+            content = path.read_text(encoding="utf-8")
+            ET.fromstring(content)
+            checkpoints.save_page(page, path)
+            saved[page] = content
+    return saved
+
+
+def _saved_initial_svg(project_dir: Path, page: int, resume: bool, retry_failed_pages: bool) -> str | None:
+    if not resume:
+        return None
+    path = project_dir / "svg_initial" / f"slide_{page:03d}.svg"
+    if not path.is_file():
+        return None
+    content = path.read_text(encoding="utf-8")
+    try:
+        ET.fromstring(content)
+        valid_source = True
+    except ET.ParseError:
+        valid_source = False
+    # This function runs only for an explicit continuation request. An
+    # invalid raw response belongs to the previous failed attempt, not to a
+    # completed page checkpoint. Keep its evidence before the new request.
+    if retry_failed_pages or not valid_source:
+        archive = project_dir / "checkpoints" / "attempts" / f"slide_{page:03d}_{uuid.uuid4().hex}.svg"
+        archive.parent.mkdir(parents=True, exist_ok=True)
+        archive.write_text(content, encoding="utf-8")
+        return None
+    return content
+
+
 async def generate_svg_pages(
     design_spec: str,
     manuscript: str,
@@ -2650,9 +2461,14 @@ async def generate_svg_pages(
     visual_critic_config: VisualCriticConfig | None = None,
     template_context: str | None = None,
     template_skeletons: dict[str, str] | None = None,
+    resume: bool = False,
+    retry_failed_pages: bool = False,
 ) -> AsyncIterator[tuple[int, str]]:
     """Generate SVG code for each slide page sequentially."""
-    system_prompt = PROMPT_PATH.read_text(encoding="utf-8")
+    system_prompt = "\n\n".join((
+        PROMPT_PATH.read_text(encoding="utf-8"),
+        VISUAL_DESIGN_PROMPT.read_text(encoding="utf-8"),
+    ))
 
     standards_path = settings.references_dir / "shared-standards-essential.md"
     if not standards_path.exists():
@@ -2677,8 +2493,14 @@ async def generate_svg_pages(
         pass
     svg_output_dir = project_dir / "svg_output"
     svg_output_dir.mkdir(parents=True, exist_ok=True)
-    repair_archive_dir = project_dir / "svg_archive" / "repair"
     used_paper_figures: dict[str, int] = {}
+    figure_owners = _explicit_figure_owners(pages, figure_inventory)
+    resumed_pages = _resume_svg_pages(project_dir, resume)
+    for previous_page, svg in resumed_pages.items():
+        for href in IMAGE_HREF_RE.findall(svg):
+            key = _paper_figure_key_from_href(href)
+            if key is not None:
+                used_paper_figures.setdefault(key, previous_page)
     if max_critic_attempts is None:
         max_critic_attempts = DEFAULT_MAX_CRITIC_ATTEMPTS
     max_critic_attempts = max(0, int(max_critic_attempts))
@@ -2732,6 +2554,10 @@ async def generate_svg_pages(
     for i, page_content in enumerate(pages):
         page_num = i + 1
         if target_pages is not None and page_num not in target_pages:
+            continue
+
+        if page_num in resumed_pages:
+            yield page_num, resumed_pages[page_num]
             continue
 
         page_name = _make_page_name(page_num, page_content)
@@ -2815,6 +2641,9 @@ async def generate_svg_pages(
                 + "\n"
                 + "\n".join(_paper_figure_reference_line(fig) for fig in used_figures)
             )
+        used_figures, rewritten_content = _honor_figure_owners(
+            used_figures, figure_owners, page_num, rewritten_content, rejected_figures,
+        )
         figure_guidance = _figure_guidance_block(
             used_figures,
             rejected_figures,
@@ -2827,7 +2656,6 @@ async def generate_svg_pages(
         icon_guidance = _icon_guidance_block(icon_assignment)
         img_layout = _figure_layout_guidance(used_figures)
         page_role_guidance = _page_role_guidance(page_type)
-        structural_override = _structural_page_override_block(page_type)
         factual_guardrails = _factual_rendering_guardrails(page_type)
         layout_guardrails = _layout_generation_guardrails(
             page_type,
@@ -2861,11 +2689,6 @@ async def generate_svg_pages(
 
         slide_plan_block = slide_plan_markdown(deck_plan, page_num)
         page_design_block = _extract_page_design_block(design_spec, page_num)
-        if is_structural_page:
-            page_design_block = _sanitize_structural_page_design_block(
-                page_design_block,
-                page_type,
-            )
         text_layout = _dynamic_text_layout_block(
             rewritten_content,
             page_design_block,
@@ -2889,13 +2712,13 @@ async def generate_svg_pages(
                 f"{page_design_section}"
                 f"## Page {page_num}/{len(pages)}: {page_name}\n\n"
                 f"{rewritten_content}\n\n"
+                f"{records_context([page_records(page_content, page_num)])}\n\n"
                 f"## Runtime Reminders\n"
                 f"- Style preset: {style}\n"
                 f"- Language: {language}\n"
                 f"- Page type: {page_type}. Use this type only for template selection; do not render metadata comments.\n"
                 f"- Keep all visible text in the requested language.\n"
                 f"{page_role_guidance}\n"
-                f"{structural_override}"
                 f"{factual_guardrails}"
                 f"{layout_guardrails}"
                 f"{text_layout}\n"
@@ -2907,9 +2730,8 @@ async def generate_svg_pages(
                 f"- Keep the SVG compact and editable; target under {SVG_GENERATION_MAX_TOKENS} output tokens.\n"
                 f"- Prefer grouped primitives, reusable styles, and concise text. Avoid huge decorative path dumps or duplicate off-canvas elements.\n\n"
                 f"## Layout Budget\n"
-                f"- Fit content before drawing elements; preferred content area is y=100..620.\n"
-                f"- Paper figures must stay fully visible inside x=0..1260 and y=80..640.\n"
-                f"- If content does not fit, change regions, spacing, or wording before drawing; do not use the footer as content space.\n\n"
+                f"- Follow the design specification's canvas, content boundaries, and footer clearance.\n"
+                f"- Resolve fit through composition, region sizes, and concise wording while preserving substantive content.\n\n"
                 f"Generate the complete SVG code for this page. "
                 f"Output ONLY the SVG code, wrapped in ```svg code block."
                 f"{skeleton_block}"
@@ -2925,259 +2747,34 @@ async def generate_svg_pages(
             pass
 
         generation_max_tokens = SVG_GENERATION_MAX_TOKENS
-        response, generation_max_tokens = await _chat_svg_generation(
-            llm,
-            conversation,
-            model,
-            temperature=0.3,
-            max_tokens=generation_max_tokens,
-            project_dir=project_dir,
-            debug_prefix="executor",
-            page_num=page_num,
-            attempt=1,
-        )
-
-        svg_content = _extract_svg(response.content)
-        for extraction_attempt in range(2, MAX_SVG_EXTRACTION_ATTEMPTS + 1):
-            if svg_content:
-                break
-            if (
-                _completion_near_limit(response, generation_max_tokens)
-                and _svg_response_looks_truncated(response.content)
-            ):
-                generation_max_tokens = _next_higher_svg_max_tokens(generation_max_tokens)
-            conversation.append(LLMMessage.assistant(response.content))
-            conversation.append(
-                LLMMessage.user(
-                    _build_svg_extraction_retry_prompt(
-                        page_num=page_num,
-                        total_pages=len(pages),
-                        page_name=page_name,
-                        page_content=page_content,
-                        attempt=extraction_attempt,
-                    )
-                )
-            )
+        svg_content = _saved_initial_svg(project_dir, page_num, resume, retry_failed_pages)
+        if svg_content is None:
             response, generation_max_tokens = await _chat_svg_generation(
-                llm,
-                conversation,
-                model,
-                temperature=0.2,
-                max_tokens=generation_max_tokens,
-                project_dir=project_dir,
-                debug_prefix="executor",
-                page_num=page_num,
-                attempt=extraction_attempt,
+                llm, conversation, model, temperature=0.3, max_tokens=generation_max_tokens,
+                project_dir=project_dir, debug_prefix="executor", page_num=page_num, attempt=1,
             )
             svg_content = _extract_svg(response.content)
 
         if svg_content:
+            initial_dir = project_dir / "svg_initial"
+            initial_dir.mkdir(parents=True, exist_ok=True)
+            _write_generated_svg(initial_dir, page_num, svg_content)
+            _validate_initial_svg_xml(svg_content, page_num, len(pages))
             svg_content = _normalize_obvious_short_text_lines(svg_content, page_design_block)
-            conversation.append(LLMMessage.assistant(f"```svg\n{svg_content}\n```"))
+            conversation.append(LLMMessage.assistant(f"```svg\n{_svg_for_model(svg_content)}\n```"))
 
             best_svg = svg_content
-            visual_attempts = 0
-            critic_attempt = 1
-            static_attempt_limit = _static_attempt_limit_for_report(
-                max_critic_attempts,
-                None,
+            await _report_initial_svg(
+                svg_content, page_num=page_num, page_title=page_name, page_content=page_content,
+                critic_config=critic_config, allowed_figures=used_figures, used_paper_figures=used_paper_figures,
+                required_icon=required_icon, include_general_svg_checks=max_critic_attempts > 0,
+                on_critic=on_critic, llm=llm, model=model, style=style,
+                enable_visual_critic=enable_visual_critic and visual_qa_max_attempts > 0,
+                visual_critic_config=visual_critic_config,
             )
-            while True:
-                report: CriticReport | None = None
-                report_metadata: CriticMetadata = {"source": "static"}
-                event_attempt = critic_attempt
 
-                if static_attempt_limit > 0:
-                    report = _generation_static_report(
-                        svg_content,
-                        critic_config=critic_config,
-                        allowed_figures=used_figures,
-                        used_paper_figures=used_paper_figures,
-                        required_icon=required_icon,
-                        include_general_svg_checks=max_critic_attempts > 0,
-                    )
-                    static_attempt_limit = _static_attempt_limit_for_report(
-                        max_critic_attempts,
-                        report,
-                    )
-                    if report.passed and max_critic_attempts <= 0:
-                        report = None
-                    report_metadata = {"source": "static"}
-                    event_attempt = critic_attempt
-                    if report is not None and not report.passed and critic_attempt > static_attempt_limit:
-                        archive_rel = _archive_repair_svg(
-                            repair_archive_dir,
-                            page_num=page_num,
-                            attempt=event_attempt,
-                            label="unrepaired",
-                            svg_content=svg_content,
-                        )
-                        if archive_rel:
-                            report_metadata = {
-                                **report_metadata,
-                                "before_archive_path": archive_rel,
-                            }
-                        await _emit_critic(
-                            on_critic,
-                            page_num,
-                            event_attempt,
-                            report,
-                            None,
-                            archive_rel,
-                            report_metadata,
-                        )
-                        best_svg = svg_content
-                        break
-
-                # Visual QA has its own budget. A static critic budget of zero
-                # disables only static checks; it does not disable visual QA.
-                if report is None or report.passed:
-                    if report is not None:
-                        await _emit_critic(
-                            on_critic,
-                            page_num,
-                            event_attempt,
-                            report,
-                            None,
-                            None,
-                            report_metadata,
-                        )
-                    if not enable_visual_critic or visual_attempts >= visual_qa_max_attempts:
-                        best_svg = svg_content
-                        break
-                    visual_attempts += 1
-                    snapshot = set_usage_context(
-                        stage="visual_qa", page=page_num, attempt=visual_attempts
-                    )
-                    try:
-                        visual_outcome = await visual_check(
-                            svg_content,
-                            llm=llm,
-                            model=model,
-                            page_num=page_num,
-                            page_title=page_name,
-                            style=style,
-                            config=visual_critic_config,
-                        )
-                    finally:
-                        reset_usage_context(snapshot)
-                    visual_metadata = _visual_outcome_metadata(
-                        visual_outcome,
-                        repair_archive_dir,
-                        page_num=page_num,
-                        attempt=visual_attempts,
-                    )
-                    event_attempt = visual_attempts
-                    if visual_outcome.report.passed:
-                        await _emit_critic(
-                            on_critic,
-                            page_num,
-                            event_attempt,
-                            visual_outcome.report,
-                            None,
-                            None,
-                            visual_metadata,
-                        )
-                        best_svg = svg_content
-                        break
-                    if not visual_outcome.rendered:
-                        best_svg = svg_content
-                        break
-                    report = visual_outcome.report
-                    report_metadata = visual_metadata
-
-                if report is None:
-                    best_svg = svg_content
-                    break
-
-                # Archive pre-repair SVG for before/after comparison.
-                before_archive_rel = _archive_repair_svg(
-                    repair_archive_dir,
-                    page_num=page_num,
-                    attempt=event_attempt,
-                    label="before",
-                    svg_content=svg_content,
-                )
-
-                repair_prompt_text = (
-                    report.to_prompt_block()
-                    + "\n\nWhen fixing paper-figure violations, resize the image "
-                    "to the visible frame, preserve the source aspect ratio, keep "
-                    "the full rendered image inside x=0..1260 and y=80..640, and "
-                    "remove over-cropping clip paths. Do not swap to an unlisted "
-                    "paper figure href.\n\nReturn the complete corrected SVG only, "
-                    "wrapped in a ```svg code block."
-                )
-                conversation.append(LLMMessage.user(repair_prompt_text))
-                repair_temp = max(0.1, 0.3 - 0.1 * event_attempt)
-                snapshot = set_usage_context(
-                    stage="repair", page=page_num, attempt=event_attempt
-                )
-                try:
-                    response = await llm.chat(
-                        conversation,
-                        model,
-                        temperature=repair_temp,
-                        max_tokens=SVG_REPAIR_MAX_TOKENS,
-                    )
-                finally:
-                    reset_usage_context(snapshot)
-
-                repaired = _extract_svg(response.content)
-                after_archive_rel: str | None = None
-                if repaired:
-                    after_archive_rel = _archive_repair_svg(
-                        repair_archive_dir,
-                        page_num=page_num,
-                        attempt=event_attempt,
-                        label="after",
-                        svg_content=repaired,
-                    )
-                    event_metadata: CriticMetadata = dict(report_metadata)
-                    if before_archive_rel:
-                        event_metadata["before_archive_path"] = before_archive_rel
-                    if after_archive_rel:
-                        event_metadata["after_archive_path"] = after_archive_rel
-                    await _emit_critic(
-                        on_critic,
-                        page_num,
-                        event_attempt,
-                        report,
-                        repair_prompt_text,
-                        before_archive_rel,
-                        event_metadata,
-                    )
-                    svg_content = repaired
-                    best_svg = repaired
-                    conversation.append(
-                        LLMMessage.assistant(f"```svg\n{repaired}\n```")
-                    )
-                    if on_svg_update is not None:
-                        await on_svg_update(page_num, repaired)
-                    if report_metadata.get("source") == "static":
-                        critic_attempt += 1
-                    else:
-                        # Visual QA attempts are counted when the image is
-                        # inspected, so visual repairs do not spend static
-                        # critic budget.
-                        pass
-                else:
-                    event_metadata = dict(report_metadata)
-                    if before_archive_rel:
-                        event_metadata["before_archive_path"] = before_archive_rel
-                    await _emit_critic(
-                        on_critic,
-                        page_num,
-                        event_attempt,
-                        report,
-                        repair_prompt_text,
-                        before_archive_rel,
-                        event_metadata,
-                    )
-                    conversation.append(LLMMessage.assistant(response.content))
-                    break
-
-            _write_generated_svg(svg_output_dir, page_num, best_svg)
+            output_path = _write_generated_svg(svg_output_dir, page_num, best_svg)
+            GenerationCheckpoints(project_dir).save_page(page_num, output_path)
             generated_history[page_num] = (
                 page_type,
                 page_name,
@@ -3192,7 +2789,7 @@ async def generate_svg_pages(
             conversation.append(LLMMessage.assistant(response.content))
             failure_message = (
                 f"Failed to generate parseable SVG for page {page_num}/{len(pages)} "
-                f"({page_name}) after {MAX_SVG_EXTRACTION_ATTEMPTS} attempts"
+                f"({page_name}) on its first generation response"
             )
             raise RuntimeError(failure_message)
 
@@ -3453,110 +3050,6 @@ def _minimal_structural_page_content(page_content: str, page_type: str) -> str:
             lines.append(phrase)
     return "\n\n".join(lines)
 
-
-def _sanitize_structural_page_design_block(
-    block: str,
-    page_type: str,
-) -> str:
-    if page_type not in STRUCTURAL_PAGE_TYPES or not block.strip():
-        return block
-
-    first_line = next((line.strip() for line in block.splitlines() if line.strip()), "")
-    if not first_line.startswith("#"):
-        first_line = f"#### Structural {page_type.title()} Page"
-
-    preserved: list[str] = []
-    if page_type == "toc":
-        forbidden = re.compile(
-            r"(?i)(\[\[FIG:|paper figure|extracted figure|dense article|"
-            r"detailed evidence|detailed result|chart|table|metric|kpi|"
-            r"question list|evidence|bullet grid|template example|sample diagram|"
-            r"workflow diagram|process[-\s]*flow|architecture block|"
-            r"single llm call|autonomous agents)"
-        )
-    elif page_type == "cover":
-        forbidden = re.compile(
-            r"(?i)(\[\[FIG:|paper figure|extracted figure|dense article|"
-            r"detailed evidence|detailed result|multi-column evidence)"
-        )
-    else:
-        forbidden = re.compile(
-            r"(?i)(\[\[FIG:|paper figure|chart|table|metric|kpi|核心问题|本章看点|"
-            r"question list|mini-agenda|agenda grid|evidence|bullet grid)"
-        )
-    allowed_label = re.compile(
-        r"(?i)^\s*[-*]\s*(?:\*\*)?"
-        r"(page type|type|title|subtitle|layout|layout family|style family|"
-        r"visual family|visual treatment|background|composition|typography|"
-        r"color|palette|accent|motif|chrome|footer|spacing|template|"
-        r"metadata|authors|source|venue|date|context|ornament|"
-        r"content|text strategy|region plan)"
-        r"(?:\*\*)?\s*[:：]"
-    )
-    keep_toc_content_lines = False
-    for raw_line in block.splitlines()[1:]:
-        line = raw_line.rstrip()
-        stripped = line.strip()
-        if not stripped:
-            keep_toc_content_lines = False
-            continue
-        if page_type == "toc" and keep_toc_content_lines and STRUCTURAL_LIST_LINE_RE.match(stripped):
-            preserved.append(line)
-            continue
-        if forbidden.search(stripped):
-            continue
-        if allowed_label.search(stripped):
-            preserved.append(line)
-            keep_toc_content_lines = page_type == "toc" and bool(
-                re.match(r"(?i)^\s*[-*]\s*(?:\*\*)?content(?:\*\*)?\s*[:：]", stripped)
-            )
-        else:
-            keep_toc_content_lines = False
-
-    if page_type == "chapter":
-        layout = (
-            "Consistent minimal chapter divider; same layout across all chapter pages; "
-            "only chapter number, title, and optional subtitle/key phrase may change."
-        )
-    elif page_type == "cover":
-        layout = (
-            "Lightweight cover page; title, optional subtitle, available metadata, "
-            "and a modest context/accent treatment."
-        )
-    elif page_type == "toc":
-        layout = (
-            "Table-of-contents page; render the title plus the planned chapter/list "
-            "items in order. Do not introduce evidence, metrics, paper figures, or charts."
-        )
-    else:
-        layout = f"Minimal structural {page_type} page; title plus optional short subtitle/key phrase only."
-    lines = [
-        first_line,
-        "",
-        f"- **Page Type**: {page_type}",
-        f"- **Structural Role**: {layout}",
-    ]
-    if preserved:
-        lines.extend(["", "### Preserved Planner Style Fields", *preserved])
-    if page_type == "cover":
-        boundary = (
-            "- **Content Boundary**: title, optional subtitle, paper metadata, and "
-            "a few short context/thesis lines. No extracted paper figures or dense "
-            "article-content sections."
-        )
-    elif page_type == "toc":
-        boundary = (
-            "- **Content Boundary**: title plus ordered chapter/list items only. "
-            "No paper figures, metrics, evidence cards, charts, or dense article sections."
-        )
-    else:
-        boundary = (
-            "- **Content Boundary**: title and at most one short subtitle/key phrase. "
-            "No cards, KPI strips, question lists, mini-agendas, paper figures, charts, "
-            "or labeled blocks such as `核心问题` / `本章看点`."
-        )
-    lines.extend(["", boundary])
-    return "\n".join(lines)
 
 
 def _template_vars_by_page(pages: list[str]) -> dict[int, dict[str, str]]:
@@ -4070,6 +3563,7 @@ def _prepare_parallel_page_inputs(
     template_vars: dict[str, str] | None = None,
     slide_plan: str = "",
     slide_context: str = "",
+    figure_owners: dict[str, int] | None = None,
 ) -> dict:
     page_name = _make_page_name(page_num, page_content)
     page_type = _classify_page_type(page_content)
@@ -4147,6 +3641,9 @@ def _prepare_parallel_page_inputs(
             + "\n".join(_paper_figure_reference_line(fig) for fig in used_figures)
         )
 
+    used_figures, rewritten_content = _honor_figure_owners(
+        used_figures, figure_owners or {}, page_num, rewritten_content, rejected_figures,
+    )
     duplicate_keys = _paper_figure_keys(used_figures).intersection(claimed_paper_figures)
     if duplicate_keys:
         used_figures = [
@@ -4164,11 +3661,6 @@ def _prepare_parallel_page_inputs(
     claimed_paper_figures.update(_paper_figure_keys(used_figures))
 
     page_design_block = _extract_page_design_block(design_spec, page_num)
-    if is_structural_page:
-        page_design_block = _sanitize_structural_page_design_block(
-            page_design_block,
-            page_type,
-        )
 
     return {
         "page_num": page_num,
@@ -4209,8 +3701,13 @@ async def _generate_parallel_page(
     visual_critic_config: VisualCriticConfig | None,
     template_skeletons: dict[str, str] | None,
 ) -> tuple[int, str]:
-    system_prompt = PROMPT_PATH.read_text(encoding="utf-8")
+    system_prompt = "\n\n".join((
+        PROMPT_PATH.read_text(encoding="utf-8"),
+        VISUAL_DESIGN_PROMPT.read_text(encoding="utf-8"),
+    ))
     page_num = int(page_input["page_num"])
+    if "resumed_svg" in page_input:
+        return page_num, page_input["resumed_svg"]
     total_pages = int(page_input["total_pages"])
     page_name = str(page_input["page_name"])
     page_type = str(page_input["page_type"])
@@ -4227,7 +3724,6 @@ async def _generate_parallel_page(
 
     svg_output_dir = project_dir / "svg_output"
     svg_output_dir.mkdir(parents=True, exist_ok=True)
-    repair_archive_dir = project_dir / "svg_archive" / "repair"
 
     figure_guidance = _figure_guidance_block(
         used_figures,
@@ -4242,7 +3738,6 @@ async def _generate_parallel_page(
     icon_guidance = _icon_guidance_block(icon_assignment)
     img_layout = _figure_layout_guidance(used_figures)
     page_role_guidance = _page_role_guidance(page_type)
-    structural_override = _structural_page_override_block(page_type)
     factual_guardrails = _factual_rendering_guardrails(page_type)
     layout_guardrails = _layout_generation_guardrails(
         page_type,
@@ -4321,13 +3816,13 @@ async def _generate_parallel_page(
             f"{previous_layout_section}\n\n"
             f"## Page {page_num}/{total_pages}: {page_name}\n\n"
             f"{rewritten_content}\n\n"
+            f"{records_context([page_records(str(page_input['page_content']), page_num)])}\n\n"
             f"## Runtime Reminders\n"
             f"- Style preset: {style}\n"
             f"- Language: {language}\n"
             f"- Page type: {page_type}. Use this type only for template selection; do not render metadata comments.\n"
             f"- Keep all visible text in the requested language.\n"
             f"{page_role_guidance}\n"
-            f"{structural_override}"
             f"{factual_guardrails}"
             f"{layout_guardrails}"
             f"{text_layout}\n"
@@ -4339,9 +3834,8 @@ async def _generate_parallel_page(
             f"- Keep the SVG compact and editable; target under {SVG_GENERATION_MAX_TOKENS} output tokens.\n"
             f"- Prefer grouped primitives, reusable styles, and concise text. Avoid huge decorative path dumps or duplicate off-canvas elements.\n\n"
             f"## Layout Budget\n"
-            f"- Fit content before drawing elements; content area is y=100..620.\n"
-            f"- If content does not fit, change regions, spacing, or wording before drawing.\n"
-            f"- Footer (y=660+) is reserved for page number only.\n\n"
+            f"- Follow the design specification's canvas, content boundaries, and footer clearance.\n"
+            f"- Resolve fit through composition, region sizes, and concise wording while preserving substantive content.\n\n"
             f"Generate the complete SVG code for this page. "
             f"Output ONLY the SVG code, wrapped in ```svg code block."
             f"{skeleton_block}"
@@ -4360,49 +3854,11 @@ async def _generate_parallel_page(
         pass
 
     generation_max_tokens = SVG_GENERATION_MAX_TOKENS
-    response, generation_max_tokens = await _chat_svg_generation(
-        llm,
-        conversation,
-        model,
-        temperature=0.3,
-        max_tokens=generation_max_tokens,
-        project_dir=project_dir,
-        debug_prefix="parallel",
-        page_num=page_num,
-        attempt=1,
-    )
-
-    svg_content = _extract_svg(response.content)
-    for extraction_attempt in range(2, MAX_SVG_EXTRACTION_ATTEMPTS + 1):
-        if svg_content:
-            break
-        if (
-            _completion_near_limit(response, generation_max_tokens)
-            and _svg_response_looks_truncated(response.content)
-        ):
-            generation_max_tokens = _next_higher_svg_max_tokens(generation_max_tokens)
-        conversation.append(LLMMessage.assistant(response.content))
-        conversation.append(
-            LLMMessage.user(
-                _build_svg_extraction_retry_prompt(
-                    page_num=page_num,
-                    total_pages=total_pages,
-                    page_name=page_name,
-                    page_content=str(page_input["page_content"]),
-                    attempt=extraction_attempt,
-                )
-            )
-        )
+    svg_content = _saved_initial_svg(project_dir, page_num, page_input.get("resume", False), page_input.get("retry_failed_pages", False))
+    if svg_content is None:
         response, generation_max_tokens = await _chat_svg_generation(
-            llm,
-            conversation,
-            model,
-            temperature=0.2,
-            max_tokens=generation_max_tokens,
-            project_dir=project_dir,
-            debug_prefix="parallel",
-            page_num=page_num,
-            attempt=extraction_attempt,
+            llm, conversation, model, temperature=0.3, max_tokens=generation_max_tokens,
+            project_dir=project_dir, debug_prefix="parallel", page_num=page_num, attempt=1,
         )
         svg_content = _extract_svg(response.content)
 
@@ -4410,199 +3866,29 @@ async def _generate_parallel_page(
         conversation.append(LLMMessage.assistant(response.content))
         failure_message = (
             f"Failed to generate parseable SVG for page {page_num}/{total_pages} "
-            f"({page_name}) after {MAX_SVG_EXTRACTION_ATTEMPTS} attempts"
+            f"({page_name}) on its first generation response"
         )
         raise RuntimeError(failure_message)
 
+    initial_dir = project_dir / "svg_initial"
+    initial_dir.mkdir(parents=True, exist_ok=True)
+    _write_generated_svg(initial_dir, page_num, svg_content)
+    _validate_initial_svg_xml(svg_content, page_num, total_pages)
     svg_content = _normalize_obvious_short_text_lines(svg_content, page_design_block)
-    conversation.append(LLMMessage.assistant(f"```svg\n{svg_content}\n```"))
+    conversation.append(LLMMessage.assistant(f"```svg\n{_svg_for_model(svg_content)}\n```"))
 
     best_svg = svg_content
-    visual_attempts = 0
-    critic_attempt = 1
-    max_critic_attempts = max(0, int(max_critic_attempts))
-    visual_qa_max_attempts = max(0, int(visual_qa_max_attempts or 0))
-    static_attempt_limit = _static_attempt_limit_for_report(
-        max_critic_attempts,
-        None,
+    await _report_initial_svg(
+        svg_content, page_num=page_num, page_title=page_name, page_content=str(page_input["page_content"]),
+        critic_config=critic_config, allowed_figures=used_figures, used_paper_figures={},
+        required_icon=required_icon, include_general_svg_checks=max_critic_attempts > 0,
+        on_critic=on_critic, llm=llm, model=model, style=style,
+        enable_visual_critic=enable_visual_critic and visual_qa_max_attempts > 0,
+        visual_critic_config=visual_critic_config,
     )
 
-    while True:
-        report: CriticReport | None = None
-        report_metadata: CriticMetadata = {"source": "static"}
-        event_attempt = critic_attempt
-
-        if static_attempt_limit > 0:
-            report = _generation_static_report(
-                svg_content,
-                critic_config=critic_config,
-                allowed_figures=used_figures,
-                used_paper_figures={},
-                required_icon=required_icon,
-                include_general_svg_checks=max_critic_attempts > 0,
-            )
-            static_attempt_limit = _static_attempt_limit_for_report(
-                max_critic_attempts,
-                report,
-            )
-            if report.passed and max_critic_attempts <= 0:
-                report = None
-            if report is not None and not report.passed and critic_attempt > static_attempt_limit:
-                archive_rel = _archive_repair_svg(
-                    repair_archive_dir,
-                    page_num=page_num,
-                    attempt=event_attempt,
-                    label="unrepaired",
-                    svg_content=svg_content,
-                )
-                if archive_rel:
-                    report_metadata = {
-                        **report_metadata,
-                        "before_archive_path": archive_rel,
-                    }
-                await _emit_critic(
-                    on_critic,
-                    page_num,
-                    event_attempt,
-                    report,
-                    None,
-                    archive_rel,
-                    report_metadata,
-                )
-                best_svg = svg_content
-                break
-
-        if report is None or report.passed:
-            if report is not None:
-                await _emit_critic(
-                    on_critic,
-                    page_num,
-                    event_attempt,
-                    report,
-                    None,
-                    None,
-                    report_metadata,
-                )
-            if not enable_visual_critic or visual_attempts >= visual_qa_max_attempts:
-                best_svg = svg_content
-                break
-            visual_attempts += 1
-            snapshot = set_usage_context(
-                stage="visual_qa",
-                page=page_num,
-                attempt=visual_attempts,
-            )
-            try:
-                visual_outcome = await visual_check(
-                    svg_content,
-                    llm=llm,
-                    model=model,
-                    page_num=page_num,
-                    page_title=page_name,
-                    style=style,
-                    config=visual_critic_config,
-                )
-            finally:
-                reset_usage_context(snapshot)
-            visual_metadata = _visual_outcome_metadata(visual_outcome)
-            event_attempt = visual_attempts
-            if visual_outcome.report.passed:
-                await _emit_critic(
-                    on_critic,
-                    page_num,
-                    event_attempt,
-                    visual_outcome.report,
-                    None,
-                    None,
-                    visual_metadata,
-                )
-                best_svg = svg_content
-                break
-            if not visual_outcome.rendered:
-                best_svg = svg_content
-                break
-            report = visual_outcome.report
-            report_metadata = visual_metadata
-
-        if report is None:
-            best_svg = svg_content
-            break
-
-        before_archive_rel = _archive_repair_svg(
-            repair_archive_dir,
-            page_num=page_num,
-            attempt=event_attempt,
-            label="before",
-            svg_content=svg_content,
-        )
-        repair_prompt_text = (
-            report.to_prompt_block()
-            + "\n\nWhen fixing paper-figure violations, resize the image "
-            "to the visible frame, preserve the source aspect ratio, keep "
-            "the full rendered image inside x=0..1260 and y=80..640, and "
-            "remove over-cropping clip paths. Do not swap to an unlisted "
-            "paper figure href.\n\nReturn the complete corrected SVG only, wrapped in a ```svg code block."
-        )
-        conversation.append(LLMMessage.user(repair_prompt_text))
-        repair_temp = max(0.1, 0.3 - 0.1 * event_attempt)
-        snapshot = set_usage_context(stage="repair", page=page_num, attempt=event_attempt)
-        try:
-            response = await llm.chat(
-                conversation,
-                model,
-                temperature=repair_temp,
-                max_tokens=SVG_REPAIR_MAX_TOKENS,
-            )
-        finally:
-            reset_usage_context(snapshot)
-
-        repaired = _extract_svg(response.content)
-        if repaired:
-            after_archive_rel = _archive_repair_svg(
-                repair_archive_dir,
-                page_num=page_num,
-                attempt=event_attempt,
-                label="after",
-                svg_content=repaired,
-            )
-            event_metadata: CriticMetadata = dict(report_metadata)
-            if before_archive_rel:
-                event_metadata["before_archive_path"] = before_archive_rel
-            if after_archive_rel:
-                event_metadata["after_archive_path"] = after_archive_rel
-            await _emit_critic(
-                on_critic,
-                page_num,
-                event_attempt,
-                report,
-                repair_prompt_text,
-                before_archive_rel,
-                event_metadata,
-            )
-            svg_content = repaired
-            best_svg = repaired
-            conversation.append(LLMMessage.assistant(f"```svg\n{repaired}\n```"))
-            if on_svg_update is not None:
-                await on_svg_update(page_num, repaired)
-            if report_metadata.get("source") == "static":
-                critic_attempt += 1
-        else:
-            event_metadata = dict(report_metadata)
-            if before_archive_rel:
-                event_metadata["before_archive_path"] = before_archive_rel
-            await _emit_critic(
-                on_critic,
-                page_num,
-                event_attempt,
-                report,
-                repair_prompt_text,
-                before_archive_rel,
-                event_metadata,
-            )
-            conversation.append(LLMMessage.assistant(response.content))
-            break
-
-    _write_generated_svg(svg_output_dir, page_num, best_svg)
+    output_path = _write_generated_svg(svg_output_dir, page_num, best_svg)
+    GenerationCheckpoints(project_dir).save_page(page_num, output_path)
     return page_num, best_svg
 
 
@@ -4655,6 +3941,8 @@ async def generate_svg_pages_parallel(
     visual_critic_config: VisualCriticConfig | None = None,
     template_context: str | None = None,
     template_skeletons: dict[str, str] | None = None,
+    resume: bool = False,
+    retry_failed_pages: bool = False,
 ) -> AsyncIterator[tuple[int, str]]:
     """Generate SVG pages with independent page or chapter parallelism."""
     standards_path = settings.references_dir / "shared-standards-essential.md"
@@ -4697,7 +3985,12 @@ async def generate_svg_pages_parallel(
     except OSError:
         pass
 
-    claimed_paper_figures: set[str] = set()
+    resumed_pages = _resume_svg_pages(project_dir, resume)
+    figure_owners = _explicit_figure_owners(pages, figure_inventory)
+    claimed_paper_figures: set[str] = {
+        key for svg in resumed_pages.values() for href in IMAGE_HREF_RE.findall(svg)
+        if (key := _paper_figure_key_from_href(href)) is not None
+    }
     page_inputs: list[dict] = []
     for i, page_content in enumerate(pages):
         page_num = i + 1
@@ -4714,8 +4007,12 @@ async def generate_svg_pages_parallel(
                 template_vars=template_vars.get(page_num),
                 slide_plan=slide_plan_markdown(deck_plan, page_num),
                 slide_context=(slide_contexts or {}).get(page_num, ""),
+                figure_owners=figure_owners,
             )
         )
+        page_inputs[-1].update(resume=resume, retry_failed_pages=retry_failed_pages)
+        if page_num in resumed_pages:
+            page_inputs[-1]["resumed_svg"] = resumed_pages[page_num]
 
     concurrency = max(1, min(int(parallel_concurrency or 1), 8, len(page_inputs) or 1))
     queue: asyncio.Queue[tuple[int, str] | BaseException] = asyncio.Queue()
@@ -4813,6 +4110,7 @@ async def generate_svg_pages_parallel(
         for task in tasks:
             if not task.done():
                 task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 def _classify_page_type(page_content: str) -> str:
@@ -4831,6 +4129,16 @@ def _make_page_name(num: int, content: str) -> str:
     return f"page_{num}"
 
 
+def _validate_initial_svg_xml(svg_content: str, page_num: int, total_pages: int) -> None:
+    """Validate the initial artifact before preview preparation, retaining its source."""
+    try:
+        ET.fromstring(svg_content)
+    except ET.ParseError as error:
+        raise RuntimeError(
+            f"Invalid XML in first generation response for page {page_num}/{total_pages}: {error}"
+        ) from error
+
+
 def _extract_svg(text: str) -> str | None:
     """Extract SVG content from LLM response."""
     match = re.search(r"```(?:svg|xml)?\s*\n(.*?)\n```", text, re.DOTALL)
@@ -4844,32 +4152,3 @@ def _extract_svg(text: str) -> str | None:
         return match.group(1).strip()
 
     return None
-
-
-def _build_svg_extraction_retry_prompt(
-    *,
-    page_num: int,
-    total_pages: int,
-    page_name: str,
-    page_content: str,
-    attempt: int,
-) -> str:
-    """Build structured feedback when the model output is not parseable SVG."""
-    return (
-        "## Generation Validation Report\n\n"
-        f"The previous response for page {page_num}/{total_pages} ({page_name}) "
-        "did not contain a parseable complete SVG document.\n\n"
-        "## Failure\n"
-        "- No complete `<svg ...>...</svg>` block could be extracted.\n"
-        "- The current page has not been generated yet.\n\n"
-        "## Regeneration Instructions\n"
-        f"- Regenerate page {page_num}/{total_pages} only; do not move to another page.\n"
-        "- Start from a clean SVG document instead of continuing or patching the previous response; it may have been truncated.\n"
-        "- Do not spend tokens on hidden reasoning, analysis, explanations, or empty output. Emit visible SVG code immediately.\n"
-        "- Preserve the page content below; do not invent a different slide.\n"
-        "- Keep the SVG concise: prefer native text/rect/path groups, avoid excessive decorative paths, and stay well below the token limit.\n"
-        "- Return one complete SVG document, wrapped in a ```svg code block.\n"
-        "- The SVG must start with `<svg` and end with `</svg>`.\n\n"
-        f"## Page Content To Render\n\n{page_content}\n\n"
-        f"## Retry Attempt\n\n{attempt}"
-    )

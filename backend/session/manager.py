@@ -485,7 +485,9 @@ class SessionManager:
         self._tasks.pop(job_id, None)
         self._ws_queues.pop(job_id, None)
 
-        if delete_files and job.project_dir:
+        if delete_files and job.project_dir and not any(
+            other.project_dir == job.project_dir for other in self._jobs.values()
+        ):
             self._remove_workspace_dir(Path(job.project_dir))
 
         if not any(other.session_id == job.session_id for other in self._jobs.values()):

@@ -3,24 +3,15 @@ import { AlertOctagon, Copy, Check, X, ChevronDown, ChevronUp } from "lucide-rea
 import { useGeneration } from "../../hooks/useGeneration";
 import { useLocale } from "../../i18n";
 import { HoverTooltip } from "../common/HoverTooltip";
+import { describeRuntimeError } from "../../lib/runtimeErrors";
 
 /**
- * Floating, full-width error banner.
- *
- * Shown whenever the global ``useGeneration().error`` is set. Sits at the
- * top of the viewport (sticky / fixed) so the user cannot miss it the
- * way they could miss the small red `<p>` previously appended below the
- * "Start generating" button.
- *
- * Long error messages (e.g. multi-line stack traces from the backend
- * critic / pipeline) are truncated to a 3-line preview by default with a
- * one-click expand. A copy-to-clipboard control is provided so the user
- * can paste the full error into a bug report without scrolling.
+ * Show runtime causes and recovery steps above expandable original errors.
  */
 export function ErrorBanner() {
   const error = useGeneration((state) => state.error);
   const dismissError = useGeneration((state) => state.dismissError);
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
 
@@ -34,12 +25,13 @@ export function ErrorBanner() {
     () => Boolean(error && (error.includes("\n") || error.length > 160)),
     [error],
   );
+  const diagnosis = useMemo(() => error ? describeRuntimeError(error, locale) : null, [error, locale]);
 
   if (!error) return null;
 
   const handleCopy = async () => {
     try {
-      await navigator.clipboard.writeText(error);
+      await navigator.clipboard.writeText(diagnosis ? `${diagnosis.summary}\n${diagnosis.action}\n\n${error}` : error);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1800);
     } catch {
@@ -55,14 +47,20 @@ export function ErrorBanner() {
         <AlertOctagon size={20} className="error-banner-icon" aria-hidden />
         <div className="error-banner-body">
           <div className="error-banner-title">{t("error.title")}</div>
-          <pre
+          {diagnosis ? (
+            <>
+              <p className="error-banner-summary">{diagnosis.summary}</p>
+              <p className="error-banner-guidance">{diagnosis.action}</p>
+            </>
+          ) : null}
+          {!diagnosis || expanded ? <pre
             className={`error-banner-message${expanded ? " error-banner-message-expanded" : ""}`}
           >
             {error}
-          </pre>
+          </pre> : null}
         </div>
         <div className="error-banner-actions">
-          {isMultiline ? (
+          {diagnosis || isMultiline ? (
             <HoverTooltip content={expanded ? t("error.collapse") : t("error.expand")}>
               <button
                 type="button"

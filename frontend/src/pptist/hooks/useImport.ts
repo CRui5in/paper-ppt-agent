@@ -1,6 +1,7 @@
 import { ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { parse, type Shape, type Element, type ChartItem, type BaseElement } from 'pptxtojson'
+import { normalizeParagraphFontSizes } from '@/utils/normalizeParagraphFontSizes'
 import { nanoid } from 'nanoid'
 import tinycolor from 'tinycolor2'
 import { useSlidesStore } from '@/store'
@@ -163,12 +164,12 @@ const convertTextContent = (html: string, ratio: number) => {
     return `style="${newStyle}"`
   })
 
-  return promoteListTextStyle(processedHtml)
+  return normalizeParagraphFontSizes(promoteListTextStyle(processedHtml))
 }
 
 const getMaxFontSize = (html: string, defaultFontSize: number = 18): number => {
   const fontSizeRegex = /font-size\s*:\s*(\d+(?:\.\d+)?)\s*pt/gi
-  const fontSizes = [defaultFontSize]
+  const fontSizes: number[] = []
 
   let match
   while ((match = fontSizeRegex.exec(html)) !== null) {
@@ -176,7 +177,7 @@ const getMaxFontSize = (html: string, defaultFontSize: number = 18): number => {
     if (size > 0) fontSizes.push(size)
   }
 
-  return Math.max(...fontSizes)
+  return fontSizes.length ? Math.max(...fontSizes) : defaultFontSize
 }
 
 const getParagraphMetrics = (html: string, ratio: number) => {

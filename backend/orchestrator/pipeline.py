@@ -149,6 +149,9 @@ class GenerationRequest:
     # agent path stages every source into the workspace. Legacy single-file
     # requests leave this None and fall back to file_path/source_type.
     sources: list | None = None
+    resume_project_dir: str | None = None
+    retry_failed_pages: bool = False
+    resume_feedback: str = ""
 
 
 def _effective_deep_research(request: GenerationRequest) -> bool:
@@ -221,13 +224,19 @@ async def run_pipeline(
         **provider_kwargs,
     )
 
-    # Create project workspace
-    project_dir = init_project(
+    # Reuse the original workspace only for an explicit continuation request.
+    project_dir = Path(request.resume_project_dir) if request.resume_project_dir else init_project(
         name="paper_ppt",
         canvas_format=request.canvas_format,
         base_dir=settings.workspaces_dir,
         initial_subdirs=PROVIDER_PROJECT_SUBDIRS,
     )
+
+    from .checkpoints import GenerationCheckpoints
+    checkpoints = GenerationCheckpoints(project_dir)
+    resuming = bool(request.resume_project_dir)
+    cached_manuscript = checkpoints.read_text("research", "manuscript.md", legacy=True) if resuming else None
+    cached_design = checkpoints.read_text("strategy", "design_spec.md", legacy=True) if resuming else None
 
     # Attribute every LLM call inside this run to the caller's job if known.
     job_id = getattr(request, "job_id", None)
@@ -237,6 +246,7 @@ async def run_pipeline(
         page=None,
         attempt=1,
     )
+    analysis_task: asyncio.Task | None = None
 
     try:
         effective_deep_research = _effective_deep_research(request)
@@ -249,70 +259,73 @@ async def run_pipeline(
             data={"project_dir": str(project_dir)},
         )
 
-        output_dir = project_dir / "sources"
+        paper = await aoffload(checkpoints.load_paper) if resuming else None
+        parse_info = {}
+        complete_msg = "Reused parsed sources"
+        if paper is None and not (cached_manuscript and cached_design):
+            output_dir = project_dir / "sources"
 
-        # Multi-source path: when ``request.sources`` is populated, parse each
-        # through the dispatcher and merge into one ParsedPaper (figures
-        # namespaced, attribution headings, fault-tolerant). Otherwise fall
-        # back to the legacy single-file parse so existing behavior is byte-
-        # identical for single-PDF / single-LaTeX requests.
-        from backend.parser.merger import merge_sources
+            # Multi-source path: when ``request.sources`` is populated, parse each
+            # through the dispatcher and merge into one ParsedPaper (figures
+            # namespaced, attribution headings, fault-tolerant). Otherwise fall
+            # back to the legacy single-file parse so existing behavior is byte-
+            # identical for single-PDF / single-LaTeX requests.
+            from backend.parser.merger import merge_sources
 
-        parse_info: dict = {}
+            parse_info: dict = {}
 
-        async def _emit_parse_progress(src, phase: str) -> None:
-            logger.debug("source %s parse phase: %s", getattr(src, "id", "?"), phase)
+            async def _emit_parse_progress(src, phase: str) -> None:
+                logger.debug("source %s parse phase: %s", getattr(src, "id", "?"), phase)
 
-        if request.sources:
-            yield ProgressEvent(
-                "parsing",
-                "started",
-                f"Parsing {len(request.sources)} sources...",
-                0.05,
-            )
-            # merge_sources acquires the heavy-stage gate per source. Holding
-            # the same gate around the whole merge deadlocks when the limit is
-            # one because every child parse waits for its parent to release it.
-            paper, updated_sources = await merge_sources(
-                list(request.sources),
-                project_dir,
-                on_progress=_emit_parse_progress,
-            )
-            # Persist the resolved source statuses back onto the session so
-            # the Sources panel can show parse failures after the run.
-            _persist_source_parse_status(request, updated_sources)
-            failed = [s for s in updated_sources if s.parse_status == "error"]
-            if failed:
-                complete_msg = (
-                    f"Parsed: {paper.title} "
-                    f"({len(failed)} source(s) failed and were skipped)"
+            if request.sources:
+                yield ProgressEvent(
+                    "parsing",
+                    "started",
+                    f"Parsing {len(request.sources)} sources...",
+                    0.05,
                 )
+                # merge_sources acquires the heavy-stage gate per source. Holding
+                # the same gate around the whole merge deadlocks when the limit is
+                # one because every child parse waits for its parent to release it.
+                paper, updated_sources = await merge_sources(
+                    list(request.sources),
+                    project_dir,
+                    on_progress=_emit_parse_progress,
+                )
+                # Persist the resolved source statuses back onto the session so
+                # the Sources panel can show parse failures after the run.
+                _persist_source_parse_status(request, updated_sources)
+                failed = [s for s in updated_sources if s.parse_status == "error"]
+                if failed:
+                    complete_msg = (
+                        f"Parsed: {paper.title} "
+                        f"({len(failed)} source(s) failed and were skipped)"
+                    )
+                else:
+                    complete_msg = f"Parsed: {paper.title}"
             else:
+                if request.source_type == "pdf":
+                    parser = PDFParser()
+                else:
+                    parser = LaTeXParser()
+
+                async with heavy_stage_slot():
+                    paper = await parser.parse(request.file_path, output_dir)
+                if request.source_type == "pdf":
+                    parse_info = dict(
+                        getattr(parser, "last_parse_info", None)
+                        or getattr(type(parser), "last_parse_info", None)
+                        or {}
+                    )
                 complete_msg = f"Parsed: {paper.title}"
-        else:
-            if request.source_type == "pdf":
-                parser = PDFParser()
-            else:
-                parser = LaTeXParser()
+                if parse_info.get("fallback"):
+                    complete_msg += " (PDF parse fallback used)"
 
-            async with heavy_stage_slot():
-                paper = await parser.parse(request.file_path, output_dir)
-            if request.source_type == "pdf":
-                parse_info = dict(
-                    getattr(parser, "last_parse_info", None)
-                    or getattr(type(parser), "last_parse_info", None)
-                    or {}
-                )
-            complete_msg = f"Parsed: {paper.title}"
-            if parse_info.get("fallback"):
-                complete_msg += " (PDF parse fallback used)"
+            await aoffload(checkpoints.save_paper, paper)
 
-        provider_memory = build_provider_memory(paper)
-        await aoffload(
-            save_provider_memory,
-            provider_memory,
-            project_dir / "provider_memory",
-        )
+        provider_memory = build_provider_memory(paper) if paper is not None else None
+        if provider_memory is not None:
+            await aoffload(save_provider_memory, provider_memory, project_dir / "provider_memory")
 
         yield ProgressEvent(
             "parsing",
@@ -335,100 +348,106 @@ async def run_pipeline(
             },
         )
 
-        # Optional Stage 2a: external enrichment runs BEFORE Pass 1 so the
-        # related-work context is available where it actually matters
-        # (gap analysis, contribution framing). We surface per-source stats
-        # via ProgressEvent.data so the frontend can show users that the
-        # toggles they enabled actually returned something.
-        research_ctx = ResearchContext()
-        research_cfg = getattr(request, "research_config", None)
-        any_source_enabled = bool(
-            research_cfg
-            and (
-                research_cfg.arxiv_search_enabled
-                or research_cfg.semantic_scholar_enabled
-                or research_cfg.web_search_enabled
-            )
-        )
-        if any_source_enabled:
-            yield ProgressEvent(
-                "research",
-                "progress",
-                "Querying external research sources...",
-                0.10,
-                data={"enrichment": _querying_enrichment_payload(research_cfg)},
-            )
-            stats = await enrich_context(
-                research_ctx,
-                paper_title=paper.title,
-                paper_abstract=paper.abstract,
-                config=research_cfg,
-            )
-            await _write_enrichment_debug(project_dir, research_ctx, stats)
-            yield ProgressEvent(
-                "research",
-                "progress",
-                _format_enrichment_message(stats),
-                0.12,
-                data={"enrichment": stats.to_dict()},
-            )
-
-        if effective_deep_research:
-            yield ProgressEvent("research", "progress", "Pass 1/4 — Deep reading", 0.13)
+        if cached_manuscript is not None:
+            manuscript = cached_manuscript
         else:
-            yield ProgressEvent("research", "progress", "Generating manuscript", 0.13)
-
-        # Collect progress events from research_agent via queue for real-time yielding
-        _research_progress_queue: asyncio.Queue[ProgressEvent | None] = asyncio.Queue()
-
-        def _on_research_progress(message: str, fraction: float) -> None:
-            _research_progress_queue.put_nowait(
-                ProgressEvent("research", "progress", message, fraction)
-            )
-
-        async def _run_analysis() -> str:
-            try:
-                result = await research_agent.analyze_paper(
-                    paper,
-                    llm,
-                    request.model,
-                    instruction=request.instruction,
-                    num_pages=request.num_pages,
-                    language=request.language,
-                    detail_level=request.detail_level,
-                    research_context=research_ctx,
-                    enable_deep_research=effective_deep_research,
-                    provider_memory=provider_memory,
-                    debug_dir=project_dir / "debug",
-                    on_progress=_on_research_progress,
+            if request.resume_feedback:
+                request.instruction += "\n\n" + request.resume_feedback
+            # Optional Stage 2a: external enrichment runs BEFORE Pass 1 so the
+            # related-work context is available where it actually matters
+            # (gap analysis, contribution framing). We surface per-source stats
+            # via ProgressEvent.data so the frontend can show users that the
+            # toggles they enabled actually returned something.
+            research_ctx = ResearchContext()
+            research_cfg = getattr(request, "research_config", None)
+            any_source_enabled = bool(
+                research_cfg
+                and (
+                    research_cfg.arxiv_search_enabled
+                    or research_cfg.semantic_scholar_enabled
+                    or research_cfg.web_search_enabled
                 )
-                return result
-            finally:
-                # ALWAYS unblock the consumer, even if analyze_paper raised.
-                # Without this sentinel the outer ``await queue.get()`` loop
-                # would block forever on auth errors / network failures and
-                # the user would see the pipeline frozen on Pass 1 with no
-                # error in the UI until they manually cancel the job.
-                await _research_progress_queue.put(None)
+            )
+            if any_source_enabled:
+                yield ProgressEvent(
+                    "research",
+                    "progress",
+                    "Querying external research sources...",
+                    0.10,
+                    data={"enrichment": _querying_enrichment_payload(research_cfg)},
+                )
+                stats = await enrich_context(
+                    research_ctx,
+                    paper_title=paper.title,
+                    paper_abstract=paper.abstract,
+                    config=research_cfg,
+                )
+                await _write_enrichment_debug(project_dir, research_ctx, stats)
+                yield ProgressEvent(
+                    "research",
+                    "progress",
+                    _format_enrichment_message(stats),
+                    0.12,
+                    data={"enrichment": stats.to_dict()},
+                )
 
-        analysis_task = asyncio.create_task(_run_analysis())
-        manuscript: str | None = None
+            if effective_deep_research:
+                yield ProgressEvent("research", "progress", "Pass 1/4 — Deep reading", 0.13)
+            else:
+                yield ProgressEvent("research", "progress", "Generating manuscript", 0.13)
 
-        # Drain progress events; the producer always posts the sentinel in
-        # its `finally`, so this loop terminates whether analysis succeeded
-        # or raised.
-        while True:
-            event = await _research_progress_queue.get()
-            if event is None:
-                break
-            yield event
+            # Collect progress events from research_agent via queue for real-time yielding
+            _research_progress_queue: asyncio.Queue[ProgressEvent | None] = asyncio.Queue()
 
-        # Now surface the actual result (or re-raise the exception so the
-        # outer try/except in run_pipeline emits a proper error event).
-        manuscript = analysis_task.result()
+            def _on_research_progress(message: str, fraction: float) -> None:
+                _research_progress_queue.put_nowait(
+                    ProgressEvent("research", "progress", message, fraction)
+                )
 
-        # Save manuscript and deep analysis artifacts
-        await awrite_text(project_dir / "manuscript.md", manuscript, encoding="utf-8")
+            async def _run_analysis() -> str:
+                try:
+                    result = await research_agent.analyze_paper(
+                        paper,
+                        llm,
+                        request.model,
+                        instruction=request.instruction,
+                        num_pages=request.num_pages,
+                        language=request.language,
+                        detail_level=request.detail_level,
+                        research_context=research_ctx,
+                        enable_deep_research=effective_deep_research,
+                        provider_memory=provider_memory,
+                        debug_dir=project_dir / "debug",
+                        on_progress=_on_research_progress,
+                    )
+                    return result
+                finally:
+                    # ALWAYS unblock the consumer, even if analyze_paper raised.
+                    # Without this sentinel the outer ``await queue.get()`` loop
+                    # would block forever on auth errors / network failures and
+                    # the user would see the pipeline frozen on Pass 1 with no
+                    # error in the UI until they manually cancel the job.
+                    await _research_progress_queue.put(None)
+
+            analysis_task = asyncio.create_task(_run_analysis())
+            manuscript: str | None = None
+
+            # Drain progress events; the producer always posts the sentinel in
+            # its `finally`, so this loop terminates whether analysis succeeded
+            # or raised.
+            while True:
+                event = await _research_progress_queue.get()
+                if event is None:
+                    break
+                yield event
+
+            # Now surface the actual result (or re-raise the exception so the
+            # outer try/except in run_pipeline emits a proper error event).
+            manuscript = analysis_task.result()
+
+            # Save manuscript and deep analysis artifacts
+            await awrite_text(project_dir / "manuscript.md", manuscript, encoding="utf-8")
+            await aoffload(checkpoints.write, "research", {}, [project_dir / "manuscript.md"])
         yield ProgressEvent(
             "research",
             "complete",
@@ -441,7 +460,12 @@ async def run_pipeline(
         # Stage 3: Strategist agent
         set_usage_context(stage="strategy", page=None, attempt=1)
         yield ProgressEvent("strategy", "started", "Creating design specification...")
-        figure_inventory = _build_figure_inventory(paper, project_dir)
+        if paper is not None:
+            figure_inventory = _build_figure_inventory(paper, project_dir)
+            await aoffload(checkpoints.write, "figures", {"inventory": figure_inventory})
+        else:
+            saved_figures = await aoffload(checkpoints.read, "figures")
+            figure_inventory = saved_figures["inventory"] if saved_figures else await _load_figure_inventory(project_dir)
 
         # Load template context if specified
         template_context_strat = ""
@@ -466,23 +490,27 @@ async def run_pipeline(
                     f"Template '{request.template_id}' loaded: {tmpl.info.label}",
                 )
 
-        design_spec = await strategist_agent.create_design_spec(
-            manuscript,
-            llm,
-            request.model,
-            canvas_format=request.canvas_format,
-            style=request.style,
-            language=request.language,
-            detail_level=request.detail_level,
-            style_overrides=request.style_overrides,
-            figure_inventory=figure_inventory,
-            debug_dir=project_dir / "debug",
-            template_context=template_context_strat or None,
-        )
+        if cached_design is not None:
+            design_spec = cached_design
+        else:
+            design_spec = await strategist_agent.create_design_spec(
+                manuscript,
+                llm,
+                request.model,
+                canvas_format=request.canvas_format,
+                style=request.style,
+                language=request.language,
+                detail_level=request.detail_level,
+                style_overrides=request.style_overrides,
+                figure_inventory=figure_inventory,
+                debug_dir=project_dir / "debug",
+                template_context=template_context_strat or None,
+            )
 
-        # Save design spec
-        await awrite_text(project_dir / "design_spec.md", design_spec, encoding="utf-8")
-        yield ProgressEvent("strategy", "complete", "Design spec created", 0.40)
+            # Save design spec
+            await awrite_text(project_dir / "design_spec.md", design_spec, encoding="utf-8")
+            await aoffload(checkpoints.write, "strategy", {}, [project_dir / "design_spec.md"])
+        yield ProgressEvent("strategy", "complete", "Reused design spec" if cached_design is not None else "Design spec created", 0.40)
 
         # Stage 4: SVG executor
         set_usage_context(stage="generation", page=None, attempt=1)
@@ -498,6 +526,10 @@ async def run_pipeline(
             generation_deck_plan,
             detail_level=request.detail_level,
         )
+        if resuming and provider_memory is None:
+            saved_contexts = project_dir / "provider_memory" / "slide_contexts.json"
+            if saved_contexts.is_file():
+                slide_contexts = {int(key): value for key, value in json.loads(await aread_text(saved_contexts, encoding="utf-8")).items()}
         if slide_contexts:
             try:
                 await awrite_text(
@@ -563,7 +595,7 @@ async def run_pipeline(
                 style=request.style,
                 language=request.language,
                 detail_level=request.detail_level,
-                extra_instruction=_build_style_overrides_block(request.style_overrides),
+                extra_instruction="\n\n".join(filter(None, [_build_style_overrides_block(request.style_overrides), request.resume_feedback])),
                 on_critic=_on_critic,
                 on_svg_update=_on_svg_update,
                 figure_inventory=figure_inventory,
@@ -573,6 +605,8 @@ async def run_pipeline(
                 visual_qa_max_attempts=request.visual_qa_max_attempts,
                 template_context=template_context_exec or None,
                 template_skeletons=template_skeletons,
+                resume=resuming,
+                retry_failed_pages=request.retry_failed_pages,
             )
         else:
             svg_iter = svg_executor.generate_svg_pages_parallel(
@@ -586,7 +620,7 @@ async def run_pipeline(
                 style=request.style,
                 language=request.language,
                 detail_level=request.detail_level,
-                extra_instruction=_build_style_overrides_block(request.style_overrides),
+                extra_instruction="\n\n".join(filter(None, [_build_style_overrides_block(request.style_overrides), request.resume_feedback])),
                 on_critic=_on_critic,
                 on_svg_update=_on_svg_update,
                 figure_inventory=figure_inventory,
@@ -596,6 +630,8 @@ async def run_pipeline(
                 visual_qa_max_attempts=request.visual_qa_max_attempts,
                 template_context=template_context_exec or None,
                 template_skeletons=template_skeletons,
+                resume=resuming,
+                retry_failed_pages=request.retry_failed_pages,
             )
 
         async for page_num, svg_content in svg_iter:
@@ -629,6 +665,7 @@ async def run_pipeline(
                 "page": page_num,
                 "svg": preview_svg,
                 "critic": page_critic,
+                "completed_count": generated,
             }
             if request.generation_mode != "sequential":
                 progress_data["completed_count"] = generated
@@ -658,8 +695,14 @@ async def run_pipeline(
         # rewrites: minutes of synchronous CPU work. Push it to the offload
         # pool so heartbeats, the WS event bus, and the scheduler dispatcher
         # all keep ticking.
-        async with heavy_stage_slot():
-            stats = await aoffload(finalize_project, project_dir)
+        saved_final = await aoffload(checkpoints.read, "postprocess") if resuming else None
+        if saved_final is not None:
+            stats = saved_final["stats"]
+        else:
+            async with heavy_stage_slot():
+                stats = await aoffload(finalize_project, project_dir)
+            await aoffload(checkpoints.write, "postprocess", {"stats": stats},
+                          get_svg_files(project_dir, source="output") + get_svg_files(project_dir, source="final"))
         yield ProgressEvent(
             "postprocess",
             "complete",
@@ -698,6 +741,9 @@ async def run_pipeline(
         yield ProgressEvent("error", "error", describe_exception(e, "Pipeline failed"))
         raise
     finally:
+        if analysis_task is not None and not analysis_task.done():
+            analysis_task.cancel()
+            await asyncio.gather(analysis_task, return_exceptions=True)
         reset_usage_context(usage_snapshot)
 
 

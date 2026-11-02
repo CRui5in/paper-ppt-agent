@@ -23,10 +23,7 @@ TEXT_STYLE_ATTRS = {
 }
 
 MERGE_X_TOLERANCE = 1.0
-# LLM-generated inline formulas often place subscripts/superscripts about
-# 7-9 px above the main baseline. Keep enough tolerance to fold those runs
-# back into one logical line without merging genuinely separate body lines.
-MERGE_Y_TOLERANCE = 10.0
+MERGE_Y_TOLERANCE = 0.5
 
 
 def merge_adjacent_text_in_svg(svg_path: Path) -> int:
@@ -57,7 +54,7 @@ def _merge_text_groups(root: ET.Element) -> int:
         index = 0
         while index < len(parent):
             child = parent[index]
-            if not _is_text(child):
+            if not _is_mergeable_text(child):
                 index += 1
                 continue
 
@@ -66,7 +63,7 @@ def _merge_text_groups(root: ET.Element) -> int:
             next_index = index + 1
             while next_index < len(parent):
                 sibling = parent[next_index]
-                if not _is_text(sibling):
+                if not _is_mergeable_text(sibling):
                     break
                 if not _can_merge(anchor, _anchor(sibling)):
                     break
@@ -110,33 +107,24 @@ def _merge_group(group: list[ET.Element]) -> ET.Element:
 
 
 def _iter_runs(group: list[ET.Element]) -> list[tuple[str, dict[str, str]]]:
-    runs: list[tuple[str, dict[str, str]]] = []
-    for elem in group:
-        elem_styles = {k: v for k, v in elem.attrib.items() if k in TEXT_STYLE_ATTRS}
-        text = _normalize_text(elem.text)
-        if text:
-            runs.append((text, elem_styles))
+    from ..svg_text_layout import text_runs
 
-        for child in list(elem):
-            if not _is_tspan(child):
-                continue
-            styles = dict(elem_styles)
-            styles.update({k: v for k, v in child.attrib.items() if k in TEXT_STYLE_ATTRS})
-            child_text = _normalize_text(child.text)
-            if child_text:
-                runs.append((child_text, styles))
-            tail = _normalize_text(child.tail)
-            if tail:
-                runs.append((tail, elem_styles))
-
-        tail = _normalize_text(elem.tail)
-        if tail:
-            runs.append((tail, elem_styles))
-    return runs
+    return [(run.text, run.attrs) for element in group for run in text_runs(element)]
 
 
 def _is_text(elem: ET.Element) -> bool:
     return elem.tag.endswith("text")
+
+
+def _is_mergeable_text(elem: ET.Element) -> bool:
+    if not _is_text(elem) or "x" not in elem.attrib or "y" not in elem.attrib:
+        return False
+    if elem.get("transform") or elem.get("text-anchor", "start") != "start":
+        return False
+    return all(
+        not any(attr in child.attrib for attr in ("x", "y", "dx", "dy", "transform", "baseline-shift"))
+        for child in elem.iter() if child is not elem
+    )
 
 
 def _is_tspan(elem: ET.Element) -> bool:

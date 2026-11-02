@@ -192,6 +192,11 @@ class AgentFeedbackRequest(BaseModel):
     message: str = Field(min_length=1, max_length=8000)
 
 
+class ResumeGenerationRequest(BaseModel):
+    mode: Literal["resume", "retry_failed"] = "resume"
+    feedback: str = Field(default="", max_length=8000)
+
+
 class AgentFeedbackResponse(BaseModel):
     job_id: str
     status: str

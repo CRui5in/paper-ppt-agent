@@ -379,10 +379,11 @@ async def generate_presentation(request: GenerateRequest) -> GenerateResponse:
         sources=list(session.sources) if session.sources else None,
     )
 
-    if generation_backend == "provider":
-        from backend.runtime.job_event_monitor import write_generation_request
+    from backend.runtime.job_event_monitor import write_generation_request
+    request_file = await write_generation_request(job.id, pipeline_request)
+    await session_manager.flush_now()
 
-        request_file = await write_generation_request(job.id, pipeline_request)
+    if generation_backend == "provider":
         scheduler = get_scheduler()
 
         async def _runner() -> None:
