@@ -21,6 +21,10 @@ class LLMProvider(ABC):
     while preserving provider-specific capabilities.
     """
 
+    def artifact_max_tokens(self, model: str, visible_tokens: int) -> int | None:
+        """Translate a visible artifact budget into the provider's total limit."""
+        return visible_tokens
+
     @abstractmethod
     async def chat(
         self,

@@ -3,11 +3,13 @@
 from fastapi import APIRouter
 
 from .endpoints import download, font_update, generate, image_search, preview, providers, refine, session, sources, status, template_import, templates, upload, usage, versions
+from .endpoints import recovery
 
 api_router = APIRouter(prefix="/api")
 api_router.include_router(upload.router, tags=["upload"])
 api_router.include_router(sources.router, tags=["sources"])
 api_router.include_router(generate.router, tags=["generate"])
+api_router.include_router(recovery.router, tags=["recovery"])
 api_router.include_router(refine.router, tags=["refine"])
 api_router.include_router(status.router, tags=["status"])
 api_router.include_router(download.router, tags=["download"])

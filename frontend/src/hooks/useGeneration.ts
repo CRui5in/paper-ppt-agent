@@ -21,6 +21,7 @@ import type {
   SourceType,
 } from "../lib/types";
 import { openJobSocket } from "../lib/ws";
+import { resumeGeneration } from "../lib/api";
 
 type ConnectionStatus = "disconnected" | "connecting" | "connected";
 const FINAL_JOB_STATUSES = new Set(["complete", "error", "cancelled"]);
@@ -180,6 +181,7 @@ interface GenerationState {
   clearSourcesGroup: () => Promise<void>;
   startGeneration: (payload: GenerateRequestPayload) => Promise<string>;
   startRefine: (payload: RefineRequestPayload) => Promise<string>;
+  continueGeneration: (jobId: string, mode: "resume" | "retry_failed", feedback: string) => Promise<string>;
   cancelCurrentRun: () => Promise<void>;
   interruptCurrentAgent: () => Promise<void>;
   sendAgentFeedback: (message: string, jobId?: string) => Promise<void>;
@@ -876,6 +878,36 @@ export const useGeneration = create<GenerationState>()(
         }));
         sessionStorage.setItem(`${LIVE_JOB_STORAGE_PREFIX}${response.job_id}`, "1");
         get().syncHistory(response.job_id);
+        return response.job_id;
+      },
+      async continueGeneration(parentId, mode, feedback) {
+        const response = await resumeGeneration(parentId, mode, feedback);
+        const parent = get().runs[parentId];
+        const entry = get().history.find((item) => item.jobId === parentId);
+        const options = parent?.currentRunConfig?.options ?? entry?.options;
+        const job = await fetchJobStatus(response.job_id).catch(() => ({
+          status: "pending", progress: 0, message: "Queued to continue from checkpoint",
+          slides_completed: parent?.job?.slides_completed ?? 0, total_slides: parent?.job?.total_slides ?? 0,
+          provider: entry?.provider, model: entry?.model, base_url: entry?.baseUrl,
+        }));
+        const run = createRunSnapshot(response.job_id, {
+          uploadSession: parent?.uploadSession,
+          sourcesGroup: parent?.sourcesGroup,
+          job,
+          slides: parent?.slides ?? [],
+          currentRunConfig: options ? {
+            provider: job.provider ?? entry?.provider ?? "unknown",
+            model: job.model ?? entry?.model ?? "unknown",
+            baseUrl: job.base_url ?? entry?.baseUrl,
+            options,
+            parentJobId: parentId,
+          } : undefined,
+          logs: ["[generation] Queued to continue from checkpoint"],
+        });
+        set((state) => ({ ...applyRunToCurrent(run), runs: { ...state.runs, [response.job_id]: run } }));
+        sessionStorage.setItem(`${LIVE_JOB_STORAGE_PREFIX}${response.job_id}`, "1");
+        get().syncHistory(response.job_id);
+        get().connect(response.job_id);
         return response.job_id;
       },
       async startRefine(payload) {

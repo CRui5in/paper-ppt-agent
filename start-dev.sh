@@ -36,7 +36,7 @@ l() {
     subtitle)             case "$LANG_CODE" in zh) printf '%s' "本地开发启动器";; *) printf '%s' "Local development launcher";; esac ;;
     checkingPrereq)       case "$LANG_CODE" in zh) printf '%s' "正在检查前置依赖";; *) printf '%s' "Checking prerequisites";; esac ;;
     checkingRuntime)      case "$LANG_CODE" in zh) printf '%s' "AI 开发者工具（可选 - 仅 Agent 模式使用）";; *) printf '%s' "AI coding agents (optional - only used by Agent mode)";; esac ;;
-    syncBackend)          case "$LANG_CODE" in zh) printf '%s' "同步后端依赖 (uv)";; *) printf '%s' "Syncing backend dependencies (uv)";; esac ;;
+    syncBackend)          case "$LANG_CODE" in zh) printf '%s' "同步依赖并更新 Agent 运行时 (uv)";; *) printf '%s' "Syncing dependencies and updating Agent runtimes (uv)";; esac ;;
     installFrontend)      case "$LANG_CODE" in zh) printf '%s' "安装前端依赖 (npm)";; *) printf '%s' "Installing frontend dependencies (npm)";; esac ;;
     starting)             case "$LANG_CODE" in zh) printf '%s' "正在启动 Paper PPT Agent";; *) printf '%s' "Starting Paper PPT Agent";; esac ;;
     allPrereqReady)       case "$LANG_CODE" in zh) printf '%s' "所有前置依赖已就绪";; *) printf '%s' "All required prerequisites are ready.";; esac ;;
@@ -324,9 +324,10 @@ launch_dev() {
   echo ""
   step "$(l syncBackend)"
   cd "$ROOT"
-  uv sync --locked
+  # Refresh both Agent SDKs and their bundled CLI runtimes on startup.
+  uv sync --upgrade-package openai-codex --upgrade-package openai-codex-cli-bin --upgrade-package claude-agent-sdk
 
-  if [ ! -d "$FRONTEND_DIR/node_modules" ]; then
+  if [ ! -d "$FRONTEND_DIR/node_modules" ] || [ ! -f "$FRONTEND_DIR/node_modules/@mathjax/src/package.json" ]; then
     step "$(l installFrontend)"
     cd "$FRONTEND_DIR"
     npm install

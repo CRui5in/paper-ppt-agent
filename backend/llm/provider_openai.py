@@ -7,6 +7,7 @@ import json
 import time
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
+from urllib.parse import urlsplit
 
 import httpx
 from openai import AsyncOpenAI
@@ -113,6 +114,20 @@ class OpenAIProvider(LLMProvider):
 
     def _normalize_max_tokens(self, model: str, max_tokens: int | None) -> int | None:
         return max_tokens
+
+    def artifact_max_tokens(self, model: str, visible_tokens: int) -> int | None:
+        if self._is_deepseek_request(model) and urlsplit(self._base_url).hostname == "api.deepseek.com":
+            if self._artifact_thinking_mode != "default" and not self._direct_artifact_controls_unsupported:
+                return visible_tokens
+            kwargs = self._build_chat_kwargs([], model, temperature=0.3, max_tokens=None)
+            thinking = (kwargs.get("extra_body") or {}).get("thinking") or {}
+            enabled = thinking.get("type") != "disabled" and kwargs.get("reasoning_effort") != "none"
+            if enabled:
+                # DeepSeek's limit covers reasoning plus the answer. Its native
+                # thinking-mode default provides the total budget; visible SVG
+                # complexity remains bounded in the artifact prompt.
+                return None
+        return visible_tokens
 
     def _is_official_openai_request(self, model: str | None = None) -> bool:
         if self._is_deepseek_request(model):
@@ -836,6 +851,8 @@ class OpenAIProvider(LLMProvider):
         duration_ms = int((time.monotonic() - t0) * 1000)
 
         content = resp.choices[0].message.content or ""
+        finish_reason = str(getattr(resp.choices[0], "finish_reason", "") or "") or None
+        reasoning_tokens = 0
         usage = None
         if resp.usage:
             completion_details = getattr(
@@ -846,9 +863,6 @@ class OpenAIProvider(LLMProvider):
             reasoning_tokens = int(
                 getattr(completion_details, "reasoning_tokens", 0) or 0
             )
-            finish_reason = str(
-                getattr(resp.choices[0], "finish_reason", "") or ""
-            ) or None
             usage = TokenUsage(
                 prompt_tokens=resp.usage.prompt_tokens,
                 completion_tokens=resp.usage.completion_tokens,
@@ -869,7 +883,8 @@ class OpenAIProvider(LLMProvider):
                 finish_reason=finish_reason,
                 output_chars=len(content),
             )
-        return LLMResponse(content=content, usage=usage, raw=resp)
+        return LLMResponse(content=content, usage=usage, raw=resp,
+                           finish_reason=finish_reason, reasoning_tokens=reasoning_tokens)
 
     async def chat_stream(
         self,

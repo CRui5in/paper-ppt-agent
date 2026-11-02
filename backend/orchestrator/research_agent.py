@@ -51,8 +51,11 @@ PASS2_PROMPT = PROMPTS_DIR / "research_pass2_narrative.md"
 PASS3_PROMPT = PROMPTS_DIR / "research_pass3_manuscript.md"
 PASS4_PROMPT = PROMPTS_DIR / "research_pass4_review.md"
 
-# Legacy single-pass prompt (kept for revise_manuscript backward compat)
-LEGACY_PROMPT = PROMPTS_DIR / "research.md"
+REVISION_PROMPT = PROMPTS_DIR / "revise_manuscript.md"
+WRITING_PROMPT = (
+    Path(__file__).resolve().parents[2]
+    / "assets/agent_skills/paper-ppt-generate/references/writing.md"
+)
 
 DEEPSEEK_MAX_TOKENS = 24576
 MAX_MANUSCRIPT_ATTEMPTS = 3
@@ -85,6 +88,10 @@ _SOURCE_CITATION_RE = re.compile(
     re.IGNORECASE,
 )
 _SOURCE_REF_RE = re.compile(r"\bS\d+\b", re.IGNORECASE)
+
+
+def _with_writing_guidance(system_prompt: str) -> str:
+    return f"{system_prompt}\n\n{WRITING_PROMPT.read_text(encoding='utf-8')}"
 
 
 def _is_multi_source_corpus(paper: ParsedPaper) -> bool:
@@ -369,13 +376,11 @@ async def _run_single_pass_analysis(
     )
     user_parts.append(
         "\n\n## Content Depth Contract\n\n"
-        "Every `content` slide must include: (1) a clear claim sentence, preferably bold; "
-        "(2) paper-grounded evidence appropriate to the discipline, such as a metric, dataset, "
-        "quotation, case, observation, archival source, theorem, table/figure/formula reference, "
-        "method detail, comparison, or reasoning step; and (3) a short explanation of why that "
-        "evidence matters. Choose the number of content blocks from the current page's argument "
-        "and visual needs. Do not invent evidence and do not force numeric evidence "
-        "onto qualitative, theoretical, historical, or interpretive work."
+        "Develop each content page from the material the audience needs: an explanation, "
+        "derivation, method, comparison, figure, or result. Choose its opening, structure, "
+        "and amount of text from that material. Ground statements in source evidence "
+        "appropriate to the discipline. Keep planning notes separate from visible slide text. "
+        "Preserve mathematical expressions in LaTeX, including indices, limits, and operators."
     )
     user_parts.append(
         "\n\n## Exact Evidence Coverage Contract\n\n"
@@ -401,7 +406,7 @@ async def _run_single_pass_analysis(
         "`---` lines only as slide delimiters."
     )
     base_messages = [
-        LLMMessage.system(SINGLE_PASS_SYSTEM_PROMPT),
+        LLMMessage.system(_with_writing_guidance(SINGLE_PASS_SYSTEM_PROMPT)),
         LLMMessage.user("\n".join(user_parts)),
     ]
     _debug_write_messages(debug_dir, "research_single_pass_prompt.md", base_messages)
@@ -919,7 +924,7 @@ async def analyze_paper(
 
     # ── Pass 1: Deep Reading ───────────────────────────────────────────────
     logger.info("Research Pass 1: Deep reading...")
-    pass1_system = PASS1_PROMPT.read_text(encoding="utf-8")
+    pass1_system = _with_writing_guidance(PASS1_PROMPT.read_text(encoding="utf-8"))
 
     content_label = "Source Corpus Content" if _is_multi_source_corpus(paper) else "Paper Content"
     pass1_user_parts = [f"## {content_label}\n\n{paper_md}"]
@@ -984,7 +989,7 @@ async def analyze_paper(
 
     # ── Pass 2: Narrative Arc Design ───────────────────────────────────────
     logger.info("Research Pass 2: Narrative arc design...")
-    pass2_system = PASS2_PROMPT.read_text(encoding="utf-8")
+    pass2_system = _with_writing_guidance(PASS2_PROMPT.read_text(encoding="utf-8"))
 
     pass2_user_parts = [
         f"## Deep Analysis of the Source Corpus\n\n{deep_analysis}",
@@ -994,7 +999,7 @@ async def analyze_paper(
         pass2_user_parts.append(f"\n{multi_source_contract}")
     pass2_user_parts.append(
         "\n\nDesign the narrative arc for this source corpus presentation. Choose the best narrative strategy "
-        "and specify each slide's role, core insight, and visual strategy."
+        "and specify each slide's purpose, source material, and visual strategy."
     )
 
     pass2_messages = [
@@ -1016,7 +1021,7 @@ async def analyze_paper(
 
     # ── Pass 3: Manuscript Generation ──────────────────────────────────────
     logger.info("Research Pass 3: Manuscript generation...")
-    pass3_system = PASS3_PROMPT.read_text(encoding="utf-8")
+    pass3_system = _with_writing_guidance(PASS3_PROMPT.read_text(encoding="utf-8"))
 
     pass3_user_parts = [
         f"## Deep Analysis\n\n{deep_analysis}",
@@ -1119,7 +1124,7 @@ async def analyze_paper(
 
     # ── Pass 4: Self-Evaluation & Revision ─────────────────────────────────
     logger.info("Research Pass 4: Self-evaluation...")
-    pass4_system = PASS4_PROMPT.read_text(encoding="utf-8")
+    pass4_system = _with_writing_guidance(PASS4_PROMPT.read_text(encoding="utf-8"))
     pass4_source_context = paper_md
 
     pass4_user_parts = [
@@ -1135,7 +1140,7 @@ async def analyze_paper(
         pass4_user_parts.append(f"\n{multi_source_contract}")
     pass4_user_parts.append(
         "\n\nEvaluate the manuscript against the seven dimensions. "
-        "If the total score is below 28/35 or any dimension is below 3, "
+        "If any blocking evidence issue remains, the total score is below 28/35, or any dimension is below 3, "
         "revise the problematic slides and output the complete revised manuscript. "
         "Otherwise, output QUALITY_CHECK_PASSED followed by the unchanged manuscript. "
         "Preserve valid paper figure tokens exactly; never introduce a FIG token that is not in the Valid Paper Figure Tokens list."
@@ -1308,7 +1313,7 @@ def _target_slides_guidance(
     return f"{page_type_budget_guidance(num_pages, detail_level)}\n{delimiter_rule}"
 
 
-# ── Legacy single-pass for backward compat (revise pipeline) ────────────────
+# ── Manuscript revision ───────────────────────────────────────────────────
 
 
 async def revise_manuscript(
@@ -1328,7 +1333,7 @@ async def revise_manuscript(
     revise only the requested scope. When true, the model may insert, remove,
     or reorder slides to satisfy the feedback.
     """
-    system_prompt = LEGACY_PROMPT.read_text(encoding="utf-8")
+    system_prompt = _with_writing_guidance(REVISION_PROMPT.read_text(encoding="utf-8"))
     target_pages = sorted({page for page in (target_pages or []) if page > 0})
 
     scope_guidance = (

@@ -17,15 +17,16 @@ Layout:
 - Shared colors, typography, margins, and recurring chrome may be repeated directly. They are not permission to reuse a universal page skeleton or card grid for unrelated content.
 - Put styling directly on SVG elements. Do not use `<style>` blocks or `class=` attributes in final slide SVGs; inline `fill`, `stroke`, `font-family`, `font-size`, opacity, and line attributes instead.
 - Use local icons from the configured icons path; verify files exist before referencing them.
-- Design each slide's spatial layout before drawing. Choose a layout family from the Slide Plan, then place figures, text, cards, charts, and callouts in aligned rectangular regions with 24-40px gutters.
-- For ordinary content slides, aim for 65-85% meaningful occupancy of the content area. Whitespace is useful for hierarchy, but do not leave an empty quadrant, a short bullet list floating in a large blank field, or a bottom callout visually detached from the main grid.
-- Use 24-40px gutters between major regions and align edges across repeated layout families.
-- **Visual depth is required** — flat pages without elevation look unfinished. Use filter shadows on cards/panels, gradients for backgrounds/overlays, accent top-bars on cards, and subtle decorative elements. Every card should have a shadow, an accent element, and proper inner padding — not just a plain flat rect with a stroke border.
-- **Visual hierarchy**: use large bold numbers with small gray labels for KPI/metrics. Use color-coded status indicators. Use accent callout boxes with tinted backgrounds for key takeaways.
-- **Color rules**: 60-30-10 rule (primary 60%, secondary 30%, accent 10%). Maximum 4 colors per page. Use monochromatic opacity variations for chart series.
+- Design each slide around the relationship its audience needs to see. The Slide Plan's layout family is a starting idea; choose the final composition from the material within explicit template boundaries. Use paths, curves, connectors, direct annotations, spatial grouping, and typography to express that relationship.
+- Size regions from their text and figures. Use whitespace for separation and hierarchy; keep related edges aligned.
+- Align related elements and use spacing to show grouping. Choose gutters from the density and reading order of the page.
+- Establish hierarchy through typography, contrast, alignment, and spacing. Use shadows, gradients, or accent bars when they serve the selected style or clarify grouping. Cards need clear grouping and inner padding; a flat layout is valid. Optional shadows must be simple convertible drop shadows attached directly to one shape. Group filters, text glow, complex blur effects, and offset duplicate rectangles used as shadows are prohibited.
+- Use emphasis and grouping where they clarify the current page's evidence or explanation.
+- Follow `visual-design.md` for composition and finish. Ornament is optional; develop the documented deck motif as a coherent composition with controlled curvature, spacing, contrast, and placement. Keep explanatory content grounded in the manuscript and source figures, preserving scientific spatial geometry.
+- Keep colors consistent in meaning across the deck. Use distinguishable series colors when a chart needs them; use colors according to their roles.
 - For figure slides, reserve the figure frame first and fit the image inside that frame preserving aspect ratio. Do not stretch the paper figure to fill a convenient box.
-- If content is sparse, fill space with a supported visual explanation: enlarge the paper figure, split bullets into labeled callouts, add a mechanism/process diagram grounded in the paper, or use a comparison strip. Do not invent data, axes, or decorative mini charts.
-- Before writing markup, check actual text geometry for each box. At minimum, require `text_right <= box_right - padding` and `last_baseline + font_size*0.25 <= box_bottom - padding`.
+- Give the main visual room to explain the material. Whitespace can separate ideas; a supported mechanism, comparison, or direct figure annotation can reveal relationships that prose obscures. Containers are optional grouping tools.
+- Before writing markup, check actual text geometry for each box. Keep the complete glyph bounds inside the region, with room for padding and line spacing.
 - Reserve vertical space explicitly: heading, heading-to-body gap, `line_count * line_height`, caption/source, and bottom padding. Do not use an 80px card for a heading plus two body lines merely because the first baseline fits.
 - For tables, measure the longest visible cell in each column, assign column widths first, and right-align numeric columns. Do not position rows by guessed x coordinates that let labels and values overlap.
 
@@ -40,12 +41,17 @@ Icons:
 Text:
 
 - Use normal SVG `<text>` elements.
+- Give each body paragraph a parent group with `data-textbox="x y width height"` and `data-role="body"`. Write continuous paragraph text and inline `<tspan>` emphasis; the renderer measures fonts and wraps to the declared width. Use separate text elements for separate paragraphs and reserve neighboring regions for figures or captions.
+- Paragraphs sharing a declared text box flow vertically in document order and share its capacity. Use separate boxes for independently positioned text.
+- For mathematical expressions, use a `<g>` with `data-math-box="x y width height"`, `font-size`, and `fill`. Put the source LaTeX without dollar delimiters in a `<desc data-math="latex"><![CDATA[...]]></desc>` child. CDATA preserves TeX alignment separators and comparison symbols literally. The rendering pipeline typesets it as vector paths inside that box. Preserve the source's indices, limits, operators, and grouping.
+- Put the complete formula on a separate line inside CDATA and the XML terminator `]]>` on the next line. Keep closing TeX delimiters inside the formula: a source ending in `\right]` needs its own final `]`, distinct from the two XML brackets. Check every `\left`/`\right` pair before saving.
 - Avoid excessive nested `tspan` complexity.
 - Do not use `foreignObject`, `<style>`, CSS classes, masks, clip paths, scripts, event handlers, or remote URLs.
 - Wrap against each text box's actual width and font size.
-- For Chinese body copy, let ordinary non-final lines use most of the available width, break at semantic boundaries, and allow light raggedness. Do not force a fixed characters-per-line target.
+- For Chinese body copy, use the box width and a consistent line height. Align related paragraphs on common left edges. Header labels, titles, and dividers need distinct rows and spacing.
+- Mark the header group with `data-role="header"`. Centered labels share their enclosing shape's center and stay within its height.
 - If wrapping is clearly wasteful or clips, widen or reallocate the text region, tune gaps, or adjust typography. Do not create huge blank bands with unnecessarily narrow text boxes.
-- Preserve exact source numbers and units. Do not use K/M/B shorthand, reduce decimal precision, or manufacture chart ticks unless the source itself does so. Put transparent derivations and their inputs on the same slide.
+- Preserve exact source values, precision, notation, and units. Charts may calculate plot positions and readable axis ticks from those values; scale guides are distinct from observations. Show derivations with their inputs, and use qualitative diagrams when no numeric data is supplied.
 
 Images:
 
@@ -54,7 +60,7 @@ Images:
 - Avoid remote URLs.
 - For paper figures, read `source_assets/figures.json` or `source_assets/figures.md`.
 - Use the exact manifest `href` in `<image href="...">`; from `svg_output/` it normally starts with `../source_assets/images/`.
-- Preserve the listed natural aspect ratio. If you need a different visual box, letterbox or crop deliberately with SVG clipping; do not stretch the image.
+- Preserve the listed natural aspect ratio and fit the complete figure within its box using letterboxing or a resized box. Final Agent SVGs prohibit `clipPath`; keep figure content intact.
 - Choose figures by caption, page number, section/context, and slide claim. Do not choose a figure only because the filename looks convenient.
 
 Consistency:
@@ -62,6 +68,10 @@ Consistency:
 - Write `design_spec.md` before drafting many slides.
 - For parallel slide authoring, treat `design_spec.md` as the single source of visual truth.
 - For a chapter slide, inspect at most the two latest earlier chapter-slide SVGs. For a content slide, inspect at most the two latest earlier content-slide SVGs, skipping structural pages.
-- Structural slides (cover, TOC, chapter, ending) should be sparse.
+- Structural pages organize titles, metadata, or agenda items. Develop their visual identity through typography, vector illustration, depth, and background composition as the page calls for.
 - Content slides should prioritize method, evidence, results, and takeaways.
 - Consistency means common visual rules, not identical page construction. Select each content slide's layout from its own evidence shape: figure, process, comparison, table, equation, or argument.
+
+SVG vocabulary:
+
+Use native Bezier/arc paths, polygons, dashed connectors, direct labels, and gradients to communicate relationships. A continuous diagram or open typographic composition is as valid as a grid. Choose geometry for the explanation and group related elements through alignment and spacing.

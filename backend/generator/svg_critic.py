@@ -86,6 +86,7 @@ class CriticReport:
     passed: bool
     violations: list[Violation] = field(default_factory=list)
     canvas: tuple[float, float] | None = None
+    prompt_limit: int = 20
 
     @property
     def error_count(self) -> int:
@@ -104,7 +105,7 @@ class CriticReport:
             "violations": [v.to_dict() for v in self.violations],
         }
 
-    def to_prompt_block(self) -> str:
+    def to_prompt_block(self, *, output_format: str = 'svg') -> str:
         """Render the report as a targeted repair instruction block.
 
         Returns a non-empty string whenever there are violations, even if
@@ -128,8 +129,8 @@ class CriticReport:
         lines.append("")
 
         # Separate errors from warnings for clearer repair guidance.
-        errors = [v for v in self.violations if v.severity == "error"]
-        warnings = [v for v in self.violations if v.severity == "warning"]
+        errors = [v for v in self.violations if v.severity == "error"][:self.prompt_limit]
+        warnings = [v for v in self.violations if v.severity == "warning"][:max(0, self.prompt_limit-len(errors))]
 
         if errors:
             lines.append("### Errors (must fix)")
@@ -158,16 +159,18 @@ class CriticReport:
             "- Fix all errors first. Then address as many warnings as practical."
         )
         lines.append(
-            "- When fixing an issue, adjust only the elements directly involved. "
-            "If moving a text element, also shift any closely-related decorative "
-            "elements (connecting lines, background rects) to maintain alignment."
+            "- Preserve the manuscript's facts, values, notation, and comparison conditions."
         )
         lines.append(
-            "- Do NOT restructure the page or change the overall layout, color "
-            "scheme, or information density unless a local overflow/container "
-            "violation explicitly requires resizing or re-wrapping that area."
+            "- Recompose the affected regions to fit their complete content. "
+            "Adjust text, containers, equations, and connectors together; reallocate "
+            "space and reading order where capacity, overlap, or occlusion requires it. "
+            "Carry the deck's typography, palette, and visual identity through the repair."
         )
-        lines.append("- Return the complete corrected SVG only, wrapped in ```svg code block.")
+        if output_format == 'edits':
+            lines.append('- Return JSON edits using the element IDs in the supplied authoring SVG.')
+        else:
+            lines.append("- Return the complete corrected SVG only, wrapped in ```svg code block.")
         return "\n".join(lines)
 
 
@@ -304,15 +307,7 @@ def _text_width_estimate(text: str, font_size: float) -> float:
 
 
 def _text_of(el: ET.Element) -> str:
-    parts: list[str] = []
-    if el.text:
-        parts.append(el.text)
-    for child in el:
-        if _strip_ns(child.tag) == "tspan" and child.text:
-            parts.append(child.text)
-        if child.tail:
-            parts.append(child.tail)
-    return "".join(parts).strip()
+    return "".join(el.itertext()).strip()
 
 
 def _looks_numeric_cell(text: str) -> bool:
@@ -342,63 +337,64 @@ def _font_size_of(el: ET.Element, inherited: float) -> float:
     return inherited
 
 
-def _text_bbox(el: ET.Element, font_size: float) -> tuple[float, float, float, float]:
-    """Estimate text bbox, including direct tspan line positioning."""
-    x = _float_attr(el, "x", 0.0)
-    y = _float_attr(el, "y", 0.0)
-    anchor = (el.get("text-anchor") or "").strip().lower()
-    tspans = [child for child in list(el) if _strip_ns(child.tag) == "tspan"]
-    if not tspans:
-        text = _text_of(el)
-        w = _text_width_estimate(text, font_size)
-        h = font_size * 1.25
-        if anchor == "middle":
-            x = x - w / 2
-        elif anchor == "end":
-            x = x - w
-        return x, y - font_size, w, h
+class _Geometry:
+    """World coordinates for one parsed SVG; authoring attributes stay intact."""
 
-    current_x = x
-    current_y = y
-    line_boxes: list[tuple[float, float, float, float]] = []
-    for tspan in tspans:
-        if tspan.get("x") is not None:
-            current_x = _float_attr(tspan, "x", current_x)
-        elif tspan.get("dx") is not None:
-            current_x += _float_attr(tspan, "dx", 0.0)
-        if tspan.get("y") is not None:
-            current_y = _float_attr(tspan, "y", current_y)
-        elif tspan.get("dy") is not None:
-            current_y += _float_attr(tspan, "dy", 0.0)
+    def __init__(self, root):
+        from .svg_text_layout import TEXT_ATTRIBUTES, _bounds, number, text_runs
+        from .svg_to_pptx.utils import identity_matrix, multiply_matrices, parse_transform_matrix, transform_point
 
-        child_font_size = _font_size_of(tspan, font_size)
-        text = _text_of(tspan)
-        if not text:
-            continue
-        width = _text_width_estimate(text, child_font_size)
-        child_anchor = (tspan.get("text-anchor") or anchor).strip().lower()
-        left = current_x
-        if child_anchor == "middle":
-            left -= width / 2
-        elif child_anchor == "end":
-            left -= width
-        line_boxes.append(
-            (
-                left,
-                current_y - child_font_size,
-                width,
-                child_font_size * 1.25,
-            )
-        )
-        if tspan.get("x") is None:
-            current_x += width
+        self.matrices = {}
+        self.boxes = {}
+        self.anchors = {}
+        self.font_sizes = {}
 
-    if not line_boxes:
-        return x, y - font_size, 0.0, font_size * 1.25
-    left = min(box[0] for box in line_boxes)
-    top = min(box[1] for box in line_boxes)
-    right = max(box[0] + box[2] for box in line_boxes)
-    bottom = max(box[1] + box[3] for box in line_boxes)
+        def visit(element, parent_matrix, inherited):
+            matrix = multiply_matrices(parent_matrix, parse_transform_matrix(element.get('transform', '')))
+            self.matrices[element] = matrix
+            attrs = dict(inherited)
+            attrs.update({k: v for k, v in element.attrib.items() if k in TEXT_ATTRIBUTES})
+            for declaration in element.get('style', '').split(';'):
+                name, separator, value = declaration.partition(':')
+                if separator and name.strip() in TEXT_ATTRIBUTES:
+                    attrs[name.strip()] = value.strip()
+            box = None
+            if _strip_ns(element.tag) == 'text':
+                bounds = _bounds(element, attrs)
+                self.font_sizes[element] = number(attrs.get('font-size'), 16)
+                if bounds:
+                    x, y, right, bottom = bounds
+                    box = (x, y, right-x, bottom-y)
+                runs = text_runs(element, attrs)
+                if runs:
+                    self.anchors[element] = transform_point(matrix, runs[0].x, runs[0].y - self.font_sizes[element] * .4)
+            else:
+                box = _shape_bbox(element)
+            if box is not None:
+                self.boxes[element] = self.transform_box(element, box)
+            for child in element:
+                visit(child, matrix, attrs)
+        visit(root, identity_matrix(), {})
+
+    def transform_box(self, element, box):
+        from .svg_to_pptx.utils import transform_point
+        x, y, width, height = box
+        points = [transform_point(self.matrices[element], px, py)
+                  for px, py in ((x,y),(x+width,y),(x,y+height),(x+width,y+height))]
+        left, top = min(p[0] for p in points), min(p[1] for p in points)
+        return left, top, max(p[0] for p in points)-left, max(p[1] for p in points)-top
+
+
+def _text_bbox(el: ET.Element, font_size: float, geometry=None) -> tuple[float, float, float, float]:
+    """Measure every styled run, including parent text and descendant tails."""
+    if geometry is not None and el in geometry.boxes:
+        return geometry.boxes[el]
+    from .svg_text_layout import _bounds
+
+    box = _bounds(el, {"font-size": str(font_size)})
+    if box is None:
+        return _float_attr(el, "x"), _float_attr(el, "y"), 0.0, 0.0
+    left, top, right, bottom = box
     return left, top, right - left, bottom - top
 
 
@@ -421,12 +417,35 @@ def _iou(a: tuple[float, float, float, float], b: tuple[float, float, float, flo
 
 
 def _element_identifier(el: ET.Element) -> str:
+    if el.get('data-editor-id'):
+        return f'{_strip_ns(el.tag)}[data-editor-id={el.get("data-editor-id")}]'
     if el.get("id"):
         return f'{_strip_ns(el.tag)}#{el.get("id")}'
     cls = el.get("class")
     if cls:
         return f'{_strip_ns(el.tag)}.{cls}'
     return _strip_ns(el.tag)
+
+
+def _check_equation_text_overlap(root, text_boxes, violations, geometry=None):
+    from .svg_finalize.render_math import math_content_bounds, math_expression
+
+    for element in root.iter():
+        if math_expression(element) is None:
+            continue
+        try:
+            box = math_content_bounds(element)
+            if geometry is not None:
+                box = geometry.transform_box(element, box)
+        except (ValueError, TypeError):
+            continue
+        descendants = {id(child) for child in element.iter()}
+        for _order, text, text_box in text_boxes:
+            if id(text) in descendants or _coverage_ratio(text_box, box) < .2:
+                continue
+            violations.append(Violation(rule='equation_overlaps_text', severity='error',
+                detail=f'Equation {_element_identifier(element)} occupies {box} and intersects text {_element_identifier(text)}. Allocate distinct space for the expression and its neighboring diagram or explanation.',
+                element=_element_identifier(text), bbox=text_box))
 
 
 def _collect_colors(el: ET.Element) -> list[str]:
@@ -446,6 +465,33 @@ def _normalize_hex(value: str) -> str:
     if len(v) == 3:
         v = "".join(c * 2 for c in v)
     return v
+
+
+def check_paragraph_layout(svg_content: str) -> CriticReport:
+    """Check the measured capacity of explicit paragraph flow boxes."""
+    from .svg_text_layout import paragraph_layout_issues
+    from .svg_text_flow import text_flow_issues
+
+    try:
+        root = ET.fromstring(svg_content)
+    except ET.ParseError:
+        return CriticReport(passed=True)
+    violations = [
+        Violation(
+            rule="paragraph_capacity",
+            severity="error",
+            detail=(
+                f"Paragraph box {issue['box']} contains {issue['paragraphs']} paragraph(s) "
+                f"wrapping to {issue['lines']} lines. Measured space required: "
+                f"{issue['required_width']:.1f}px wide and {issue['required_height']:.1f}px high. "
+                "Recompose the region or edit the copy to fit the complete text."
+            ),
+            element=issue["element"],
+            bbox=issue["box"],
+        )
+        for issue in paragraph_layout_issues(root) + text_flow_issues(root)
+    ]
+    return CriticReport(passed=not violations, violations=violations)
 
 
 def check_svg(svg_content: str, config: CriticConfig | None = None) -> CriticReport:
@@ -475,6 +521,7 @@ def check_svg(svg_content: str, config: CriticConfig | None = None) -> CriticRep
         )
 
     canvas = _parse_viewbox(root)
+    geometry = _Geometry(root)
     ordered_elements = list(_iter_all(root))
     element_order = {id(el): index for index, el in enumerate(ordered_elements)}
     filter_defs = {
@@ -591,7 +638,7 @@ def check_svg(svg_content: str, config: CriticConfig | None = None) -> CriticRep
         if _strip_ns(el.tag) != "text":
             continue
         # Inherit font-size of nearest ancestor if not set.
-        font_size = _font_size_of(el, 16.0)
+        font_size = geometry.font_sizes.get(el, _font_size_of(el, 16.0))
         text = _text_of(el)
         if not text:
             continue
@@ -609,7 +656,7 @@ def check_svg(svg_content: str, config: CriticConfig | None = None) -> CriticRep
                     element=_element_identifier(el),
                 )
             )
-        bbox = _text_bbox(el, font_size)
+        bbox = _text_bbox(el, font_size, geometry)
         text_boxes.append((element_order[id(el)], el, bbox))
 
         # Out-of-bounds.
@@ -680,6 +727,7 @@ def check_svg(svg_content: str, config: CriticConfig | None = None) -> CriticRep
             text_boxes,
             canvas,
             violations,
+            geometry,
         )
 
     # 4. Text-to-text overlap (coarse; tolerates small padding).
@@ -708,9 +756,11 @@ def check_svg(svg_content: str, config: CriticConfig | None = None) -> CriticRep
                         rule="text_line_overlap",
                         severity="error",
                         detail=(
-                            "Two text elements collide on the same visual line. "
-                            "Reallocate table columns or merge intentional inline "
-                            "styling into one text element with tspans."
+                            f"This text {_text_of(el_a)[:60]!r} intersects "
+                            f"{_element_identifier(el_b)} {_text_of(el_b)[:60]!r} "
+                            f"at bbox {box_b} on the same visual line. "
+                            "Reposition the conflicting blocks together, or combine "
+                            "inline runs belonging to one sentence."
                         ),
                         element=_element_identifier(el_a),
                         bbox=box_a,
@@ -754,45 +804,13 @@ def check_svg(svg_content: str, config: CriticConfig | None = None) -> CriticRep
                         severity="error",
                         detail=(
                             f"Text overlaps (IoU={iou:.2f}) with another text element "
-                            f"{_element_identifier(el_b)}. Separate them or shrink one."
+                            f"{_element_identifier(el_b)} {_text_of(el_b)[:60]!r} at bbox {box_b}. "
+                            "Allocate distinct space for both complete blocks."
                         ),
                         element=_element_identifier(el_a),
                         bbox=box_a,
                     )
                 )
-
-    # 4b. Accent-line-under-title detector.
-    #
-    # Find titles (the largest font_size text on the page, or any text whose
-    # font-size >= min_title_font_size). Then look for any <line> or thin
-    # horizontal <rect> sitting directly below it within the configured gap.
-    title_boxes: list[tuple[ET.Element, tuple[float, float, float, float]]] = [
-        (el, bbox)
-        for _, el, bbox in text_boxes
-        if _font_size_of(el, 16.0) >= cfg.min_title_font_size
-    ]
-    if title_boxes:
-        for el, bbox in _iter_horizontal_strokes(root):
-            for title_entry in title_boxes:
-                title_bbox = title_entry[1]
-                if _is_accent_line_under_title(
-                    title_bbox, bbox, cfg
-                ):
-                    violations.append(
-                        Violation(
-                            rule="accent_line_under_title",
-                            severity="warning",
-                            detail=(
-                                "A near-horizontal line/thin rectangle is positioned "
-                                "directly under a title. This is a hallmark of AI-generated "
-                                "slides. Remove it and use whitespace, a left-side accent "
-                                "bar, or a tinted background block instead."
-                            ),
-                            element=_element_identifier(el),
-                            bbox=bbox,
-                        )
-                    )
-                    break
 
     # 4c. Low-contrast detector.
     #
@@ -802,7 +820,7 @@ def check_svg(svg_content: str, config: CriticConfig | None = None) -> CriticRep
     # SVG root background, which we infer from the first full-canvas <rect>
     # if present, otherwise assume white.
     if canvas:
-        bg_layers = _collect_background_layers(root, canvas)
+        bg_layers = _collect_background_layers(root, canvas, geometry)
         for _, el, bbox in text_boxes:
             text_color = _resolve_text_color(el)
             if text_color is None:
@@ -833,7 +851,7 @@ def check_svg(svg_content: str, config: CriticConfig | None = None) -> CriticRep
     # are placed on top of prose. It only considers shapes that appear later in
     # document order, so normal backgrounds drawn before their labels are not
     # flagged.
-    covering_shapes = _collect_covering_shapes(root, element_order)
+    covering_shapes = _collect_covering_shapes(root, element_order, geometry)
     for text_order, text_el, text_bbox in text_boxes:
         for shape_order, shape_el, shape_bbox in covering_shapes:
             if shape_order <= text_order:
@@ -846,7 +864,7 @@ def check_svg(svg_content: str, config: CriticConfig | None = None) -> CriticRep
                     rule="shape_covers_text",
                     severity="error",
                     detail=(
-                        "A later-drawn visible shape overlaps this text enough to "
+                        f"Later-drawn shape {_element_identifier(shape_el)} overlaps this text enough to "
                         "cover or obscure it. Move the shape away, resize it, or "
                         "increase the text/container spacing."
                     ),
@@ -861,8 +879,10 @@ def check_svg(svg_content: str, config: CriticConfig | None = None) -> CriticRep
     #     but overflow a local card or column.
     if canvas:
         _check_text_container_overflow(
-            root, text_boxes, element_order, canvas, violations
+            root, text_boxes, element_order, canvas, violations, geometry
         )
+
+    _check_equation_text_overlap(root, text_boxes, violations, geometry)
 
     # 4f. Empty bullet detector: a bullet marker without a nearby text line
     #     usually means finalization dropped or misplaced the bullet content.
@@ -876,7 +896,6 @@ def check_svg(svg_content: str, config: CriticConfig | None = None) -> CriticRep
     # 4h. Bold tspan in CJK text: using font-weight="bold" on a tspan
     #     inside CJK text causes uneven character spacing because bold
     #     CJK glyphs are wider than regular ones.
-    _check_bold_tspan_in_cjk(root, violations)
 
     # 4i. Inline emphasis drift: short colored keywords should not be
     #     separated from their surrounding sentence as distant sibling text.
@@ -913,14 +932,13 @@ def check_svg(svg_content: str, config: CriticConfig | None = None) -> CriticRep
                 )
                 break  # one palette violation per element is enough
 
-    # Trim to avoid prompt bloat.
-    if len(violations) > cfg.max_violations_in_report:
-        violations = violations[: cfg.max_violations_in_report]
+    violations[0:0] = check_paragraph_layout(svg_content).violations
 
     error_count = sum(1 for v in violations if v.severity == "error")
     warning_count = sum(1 for v in violations if v.severity == "warning")
     blocking = error_count > 0 or (cfg.warnings_are_blocking and warning_count > 0)
-    return CriticReport(passed=not blocking, violations=violations, canvas=canvas)
+    return CriticReport(passed=not blocking, violations=violations, canvas=canvas,
+                        prompt_limit=cfg.max_violations_in_report)
 
 
 def _is_neutral(hex_value: str) -> bool:
@@ -1014,6 +1032,7 @@ def _resolve_text_color(el: ET.Element) -> str | None:
 def _collect_background_layers(
     root: ET.Element,
     canvas: tuple[float, float],
+    geometry=None,
 ) -> list[tuple[tuple[float, float, float, float], str]]:
     """Collect filled rects ordered front-to-back (later in document = on top)."""
     layers: list[tuple[tuple[float, float, float, float], str]] = []
@@ -1035,10 +1054,7 @@ def _collect_background_layers(
                 hex_color = _normalize_hex(m.group(1))
         if hex_color is None or len(hex_color) != 6:
             continue
-        x = _float_attr(el, "x", 0.0)
-        y = _float_attr(el, "y", 0.0)
-        w = _float_attr(el, "width", 0.0)
-        h = _float_attr(el, "height", 0.0)
+        x, y, w, h = _shape_bbox(el, geometry)
         if w <= 0 or h <= 0:
             continue
         layers.append(((x, y, w, h), hex_color))
@@ -1087,13 +1103,14 @@ def _contrast_ratio(fg_hex: str, bg_hex: str) -> float:
 def _collect_covering_shapes(
     root: ET.Element,
     element_order: dict[int, int],
+    geometry=None,
 ) -> list[tuple[int, ET.Element, tuple[float, float, float, float]]]:
     """Collect simple visible shapes that can cover earlier text."""
     shapes: list[tuple[int, ET.Element, tuple[float, float, float, float]]] = []
     for el in _iter_all(root):
         if not _is_visible_filled_shape(el):
             continue
-        bbox = _shape_bbox(el)
+        bbox = _shape_bbox(el, geometry)
         if bbox is None:
             continue
         x, y, w, h = bbox
@@ -1133,9 +1150,11 @@ def _is_visible_filled_shape(el: ET.Element) -> bool:
     return True
 
 
-def _shape_bbox(el: ET.Element) -> tuple[float, float, float, float] | None:
+def _shape_bbox(el: ET.Element, geometry=None) -> tuple[float, float, float, float] | None:
+    if geometry is not None:
+        return geometry.boxes.get(el)
     tag = _strip_ns(el.tag)
-    if tag == "rect":
+    if tag in {"rect", "image"}:
         x = _float_attr(el, "x", 0.0)
         y = _float_attr(el, "y", 0.0)
         w = _float_attr(el, "width", 0.0)
@@ -1152,6 +1171,9 @@ def _shape_bbox(el: ET.Element) -> tuple[float, float, float, float] | None:
         rx = _float_attr(el, "rx", 0.0)
         ry = _float_attr(el, "ry", 0.0)
         return cx - rx, cy - ry, rx * 2, ry * 2
+    if tag == 'line':
+        x1, y1, x2, y2 = [_float_attr(el, key) for key in ('x1','y1','x2','y2')]
+        return min(x1,x2), min(y1,y2), abs(x1-x2), abs(y1-y2)
     return None
 
 
@@ -1204,6 +1226,7 @@ def _collect_text_containers(
     root: ET.Element,
     element_order: dict[int, int],
     canvas: tuple[float, float],
+    geometry=None,
 ) -> list[tuple[int, ET.Element, tuple[float, float, float, float]]]:
     """Collect filled rects that can act as local text containers."""
     cw, ch = canvas
@@ -1211,7 +1234,7 @@ def _collect_text_containers(
     for el in _iter_all(root):
         if _strip_ns(el.tag) != "rect" or not _is_visible_filled_shape(el):
             continue
-        bbox = _shape_bbox(el)
+        bbox = _shape_bbox(el, geometry)
         if bbox is None:
             continue
         x, y, w, h = bbox
@@ -1232,8 +1255,9 @@ def _check_text_container_overflow(
     element_order: dict[int, int],
     canvas: tuple[float, float],
     violations: list[Violation],
+    geometry=None,
 ) -> None:
-    containers = _collect_text_containers(root, element_order, canvas)
+    containers = _collect_text_containers(root, element_order, canvas, geometry)
     if not containers:
         return
 
@@ -1243,6 +1267,8 @@ def _check_text_container_overflow(
             continue
         anchor_x = _float_attr(text_el, "x", 0.0)
         anchor_y = _float_attr(text_el, "y", 0.0) - _font_size_of(text_el, 16.0) * 0.4
+        if geometry is not None:
+            anchor_x, anchor_y = geometry.anchors.get(text_el, (anchor_x, anchor_y))
         owner: tuple[int, ET.Element, tuple[float, float, float, float]] | None = None
         owner_area = float("inf")
         for container in containers:
@@ -1308,21 +1334,38 @@ def _check_default_content_area_overflow(
     text_boxes: list[tuple[int, ET.Element, tuple[float, float, float, float]]],
     canvas: tuple[float, float],
     violations: list[Violation],
+    geometry=None,
 ) -> None:
-    """Catch content containers crossing into the default footer band.
-
-    The executor contract reserves y=100..canvas_height-100 for content. Footer
-    text may live below that band, so only elements that start inside the
-    content area and cross its bottom boundary are flagged.
-    """
+    """Catch content crossing the page's actual footer."""
     cw, ch = canvas
     content_top = 100.0
-    content_bottom = ch - 100.0
+    footer_tops = []
+    footer_elements = set()
+    for group in _iter_all(root):
+        if _strip_ns(group.tag) != "g" or group.get("data-role", group.get("id")) != "footer":
+            continue
+        footer_elements.update(group.iter())
+        for element in group.iter():
+            tag = _strip_ns(element.tag)
+            if tag == "text":
+                top = _text_bbox(element, _font_size_of(element, 16), geometry)[1]
+            else:
+                box = _shape_bbox(element, geometry)
+                if box is None:
+                    continue
+                top = box[1]
+            if ch / 2 < top < ch:
+                footer_tops.append(top)
+    if not footer_tops:
+        return
+    content_bottom = min(footer_tops)
     slack = 2.0
 
     for _order, text_el, bbox in text_boxes:
+        if text_el in footer_elements:
+            continue
         x, y, w, h = bbox
-        if y < content_top or y >= content_bottom:
+        if y < content_top:
             continue
         if y + h <= content_bottom + slack:
             continue
@@ -1341,9 +1384,11 @@ def _check_default_content_area_overflow(
         )
 
     for element in _iter_all(root):
+        if element in footer_elements:
+            continue
         if _strip_ns(element.tag) not in {"rect", "image"}:
             continue
-        bbox = _shape_bbox(element)
+        bbox = _shape_bbox(element, geometry)
         if bbox is None:
             continue
         x, y, w, h = bbox
@@ -1351,7 +1396,7 @@ def _check_default_content_area_overflow(
             continue
         if w < 80 or h < 32:
             continue
-        if y < content_top or y >= content_bottom:
+        if y < content_top:
             continue
         if y + h <= content_bottom + slack:
             continue
@@ -1375,17 +1420,17 @@ def _check_empty_bullets(
     text_boxes: list[tuple[int, ET.Element, tuple[float, float, float, float]]],
     violations: list[Violation],
 ) -> None:
+    parents = {child: parent for parent in root.iter() for child in parent}
     for el in _iter_all(root):
         if _strip_ns(el.tag) != "circle":
+            continue
+        owner = parents.get(el)
+        if el.get('data-role') != 'bullet' and (owner is None or owner.get('data-role') != 'list-item'):
             continue
         cx = _float_attr(el, "cx", 0.0)
         cy = _float_attr(el, "cy", 0.0)
         r = _float_attr(el, "r", 0.0)
-        if r < 3.0 or r > 8.0:
-            continue
-        # Likely list bullets. Larger diagram nodes, scatter points, and icon
-        # circles deeper in charts are ignored.
-        if cx > 120:
+        if r <= 0:
             continue
         has_text = False
         for _order, text_el, bbox in text_boxes:
@@ -1585,46 +1630,6 @@ def _check_icon_text_misalign(
                     )
 
 
-def _check_bold_tspan_in_cjk(
-    root: ET.Element,
-    violations: list[Violation],
-) -> None:
-    """Flag tspan elements with font-weight='bold' inside CJK text,
-    because bold CJK glyphs are wider than regular ones and cause
-    uneven character spacing."""
-    for el in _iter_all(root):
-        if _strip_ns(el.tag) != "tspan":
-            continue
-
-        fw = (el.get("font-weight") or "").strip().lower()
-        if fw not in ("bold", "700", "800", "900"):
-            continue
-
-        # Check if the tspan contains CJK characters
-        text = el.text or ""
-        if not _CJK_RE.search(text):
-            # Also check parent <text> for CJK context
-            parent = _parent_of(el, root)
-            if parent is not None:
-                text = _text_of(parent)
-            if not _CJK_RE.search(text):
-                continue
-
-        violations.append(
-            Violation(
-                rule="bold_tspan_in_cjk",
-                severity="warning",
-                detail=(
-                    "Bold <tspan> in CJK text causes uneven character spacing "
-                    "because bold CJK glyphs are wider than regular ones. "
-                    "Use fill color instead of font-weight to emphasize keywords "
-                    '(e.g., fill="#C53030" instead of font-weight="bold").'
-                ),
-                element=_element_identifier(el),
-            )
-        )
-
-
 def _check_inline_emphasis_drift(
     root: ET.Element,
     text_boxes: list[tuple[int, ET.Element, tuple[float, float, float, float]]],
@@ -1698,13 +1703,12 @@ def _check_inline_emphasis_drift(
             violations.append(
                 Violation(
                     rule="inline_emphasis_drift",
-                    severity="error",
+                    severity="warning",
                     detail=(
-                        "A short colored keyword appears far from the preceding text "
-                        f"on the same baseline (estimated gap {gap:.0f}px). This is "
-                        "usually caused by using a separate `<text>` element for inline "
-                        "emphasis. Merge the sentence into one `<text>` and style the "
-                        "keyword with an inline `<tspan fill=\"...\">...</tspan>`."
+                        "Separated colored text shares a baseline with another text "
+                        f"element (estimated gap {gap:.0f}px). Check whether they are "
+                        "independent labels or parts of one sentence. Keep independent "
+                        "labels positioned separately; use inline tspans for a sentence."
                     ),
                     element=_element_identifier(cur_el),
                     bbox=cur_box,
@@ -1713,6 +1717,8 @@ def _check_inline_emphasis_drift(
 
 
 def _looks_like_inline_emphasis(el: ET.Element, text: str) -> bool:
+    if el.get("text-anchor", "start") != "start":
+        return False
     value = text.strip()
     if not value:
         return False

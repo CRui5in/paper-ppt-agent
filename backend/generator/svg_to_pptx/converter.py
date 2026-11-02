@@ -7,6 +7,7 @@ suitable for embedding in a PPTX slide.
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
+import re
 from pathlib import Path
 from typing import Any
 
@@ -57,6 +58,8 @@ def convert_svg_to_slide_shapes(
     """
     tree = ET.parse(svg_path)
     root = tree.getroot()
+    from ..svg_text_layout import normalize_inline_scripts
+    normalize_inline_scripts(root)
 
     # Collect <defs>
     defs = _collect_defs(root)
@@ -73,6 +76,15 @@ def convert_svg_to_slide_shapes(
 
     # Wrap in slide XML
     slide_xml = _build_slide_xml(shapes_xml)
+
+    expected = "".join(
+        "".join(element.itertext())
+        for element in root.iter()
+        if element.tag.rsplit("}", 1)[-1] == "text"
+    )
+    actual = "".join(ET.fromstring(slide_xml).itertext())
+    if re.sub(r"\s+", "", expected) != re.sub(r"\s+", "", actual):
+        raise ValueError(f"SVG text content changed during native PPTX conversion: {svg_path.name}")
 
     return slide_xml, ctx.media_files, ctx.rel_entries
 

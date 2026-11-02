@@ -6,10 +6,7 @@ Orchestrates all finalization steps in sequence:
 3. Fix image aspect ratios
 4. Embed external images as Base64
 5. Flatten tspan text elements
-5.5. Merge overlapping sibling text nodes
-5.55. Fix icon-text alignment & merge underfilled text lines
-5.6. Normalize CSS font fallback stacks
-6. Remove rasterizing SVG filters
+5.6. Normalize CSS font fallback stacks and verify text preservation
 7. Convert rounded rects to paths
 """
 
@@ -26,11 +23,10 @@ from .embed_icons import embed_icons_in_file
 from .embed_images import build_image_index, embed_images_in_svg
 from .fix_image_aspect import fix_image_aspect_in_svg
 from .flatten_tspan import flatten_text_in_svg
-from .merge_adjacent_text import merge_adjacent_text_in_svg
 from .normalize_fonts import normalize_text_fonts_in_svg
-from .svg_text_reflow import reflow_text_in_svg
-from .strip_filters import strip_filters_in_svg
-from .repair_svg import repair_svg_file
+from .render_math import render_math_in_svg
+from ..svg_text_layout import reflow_declared_paragraphs, layout_text_groups, normalize_inline_scripts
+from ..svg_text_flow import layout_text_flows
 from .svg_rect_to_path import convert_rounded_rects_in_svg
 from ..project_manager import prepare_for_finalize, get_svg_files
 
@@ -81,12 +77,15 @@ def finalize_project(
         "text_integrity_restored": 0,
         "filters_removed": 0,
         "rects_converted": 0,
+        "equations_rendered": 0,
     }
 
     for svg_path in svg_files:
-        # Step 0.5: Repair common malformed XML so downstream parse-based
-        # finalizers and PPT export can continue instead of failing hard.
-        stats["svgs_repaired"] += repair_svg_file(svg_path)
+        ET.parse(svg_path)
+        stats["equations_rendered"] += render_math_in_svg(svg_path)
+        text_tree = ET.parse(svg_path)
+        if normalize_inline_scripts(text_tree.getroot()) + layout_text_flows(text_tree.getroot()) + reflow_declared_paragraphs(text_tree.getroot()) + layout_text_groups(text_tree.getroot()):
+            text_tree.write(svg_path, encoding="unicode")
 
         # Step 1: Embed icons
         stats["icons_embedded"] += embed_icons_in_file(svg_path, icons_dir)
@@ -105,33 +104,17 @@ def finalize_project(
             image_index=image_index,
         )
 
-        text_safe_checkpoint = _read_svg_text(svg_path)
-        text_signature_before = _visible_text_signature(text_safe_checkpoint)
+        text_signature_before = _visible_text_signature(_read_svg_text(svg_path))
 
         # Step 5: Flatten tspan text
         stats["texts_flattened"] += flatten_text_in_svg(svg_path)
-
-        # Step 5.5: Merge overlapping sibling text nodes emitted by the LLM
-        stats["texts_merged"] += merge_adjacent_text_in_svg(svg_path)
-
-        # Step 5.55: Fix icon-text alignment & merge underfilled text lines
-        stats["texts_reflowed"] += reflow_text_in_svg(svg_path)
 
         # Step 5.6: Normalize CSS font fallback stacks to concrete PPT fonts
         stats["fonts_normalized"] += normalize_text_fonts_in_svg(svg_path)
 
         text_signature_after = _visible_text_signature(_read_svg_text(svg_path))
-        if (
-            text_signature_before
-            and text_signature_after
-            and text_signature_before != text_signature_after
-        ):
-            svg_path.write_text(text_safe_checkpoint, encoding="utf-8")
-            stats["text_integrity_restored"] += 1
-            stats["fonts_normalized"] += normalize_text_fonts_in_svg(svg_path)
-
-        # Step 6: Remove filters that would force full-slide raster fallback.
-        stats["filters_removed"] += strip_filters_in_svg(svg_path)
+        if text_signature_before != text_signature_after:
+            raise ValueError(f"SVG text changed during finalization: {svg_path.name}")
 
         # Step 7: Convert rounded rects to paths
         stats["rects_converted"] += convert_rounded_rects_in_svg(svg_path)

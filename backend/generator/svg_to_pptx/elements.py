@@ -6,6 +6,7 @@ Each function converts a specific SVG element type to DrawingML XML.
 from __future__ import annotations
 
 import base64
+import copy
 import hashlib
 import re
 from pathlib import Path
@@ -248,71 +249,43 @@ def convert_text(elem: Any, ctx: ConvertContext) -> str:
     font_size = parse_svg_length(font_size_str, 16)
     effect = build_effect_xml(elem, ctx)
 
-    # PowerPoint does not reliably preserve positioned tspans, so split them
-    # into independent text boxes when x/y/dx/dy is involved.
+    from backend.generator.svg_text_layout import text_runs, text_anchor_offsets
+
+    defaults = dict(ctx.inherited_styles)
+    defaults.setdefault("font-size", str(font_size))
+    positioned = text_runs(elem, defaults)
     segments: list[dict[str, Any]] = []
-    has_positioned_tspan = False
-    cur_x = x
-    cur_y = y
-
-    if elem.text and elem.text.strip():
-        segments.append({
-            "x": cur_x,
-            "y": cur_y,
-            "anchor": ctx.get_attr(elem, "text-anchor", "start"),
-            "runs": [_make_run(elem.text.strip(), elem, ctx, font_size)],
-        })
-
-    ns = elem.tag.split("}")[0] + "}" if "}" in elem.tag else ""
-    for child in elem:
-        tag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
-        if tag == "tspan":
-            positioned = any(child.get(attr) is not None for attr in ("x", "y", "dx", "dy"))
-            has_positioned_tspan = has_positioned_tspan or positioned
-            if child.get("x") is not None:
-                cur_x = parse_svg_length(child.get("x", cur_x), cur_x)
-            elif child.get("dx") is not None:
-                cur_x += parse_svg_length(child.get("dx", 0), 0)
-            if child.get("y") is not None:
-                cur_y = parse_svg_length(child.get("y", cur_y), cur_y)
-            elif child.get("dy") is not None:
-                cur_y += parse_svg_length(child.get("dy", 0), 0)
-
-            text = (child.text or "").strip()
-            if text:
-                child_size = get_style_attr(child, "font-size")
-                if child_size:
-                    fs = parse_svg_length(child_size, font_size)
-                else:
-                    fs = font_size
-                run = _make_run(text, child, ctx, fs)
-                segments.append({
-                    "x": cur_x,
-                    "y": cur_y,
-                    "anchor": ctx.get_attr(child, "text-anchor", ctx.get_attr(elem, "text-anchor", "start")),
-                    "runs": [run],
-                })
-                cur_x += estimate_text_width(text, fs, run["bold"])
-            if child.tail and child.tail.strip():
-                tail_run = _make_run(child.tail.strip(), elem, ctx, font_size)
-                segments.append({
-                    "x": cur_x,
-                    "y": cur_y,
-                    "anchor": ctx.get_attr(elem, "text-anchor", "start"),
-                    "runs": [tail_run],
-                })
-                cur_x += estimate_text_width(child.tail.strip(), font_size, tail_run["bold"])
-
-    if not segments:
-        return ""
-
-    if has_positioned_tspan:
-        parts = []
-        for segment in segments:
+    for fragment in positioned:
+        styled = copy.copy(elem)
+        styled.attrib = dict(fragment.attrs)
+        fs = parse_svg_length(fragment.attrs.get("font-size", str(font_size)), font_size)
+        run = _make_run(fragment.text, styled, ctx, fs)
+        anchor = fragment.attrs.get("text-anchor", "start")
+        if segments and segments[-1]["line"] == fragment.line and segments[-1]["anchor"] == anchor and abs(segments[-1]["y"] - fragment.y) < .01:
+            segments[-1]["runs"].append(run)
+        else:
+            segments.append({
+                "line": fragment.line,
+                "chunk": fragment.chunk,
+                "x": fragment.x,
+                "y": fragment.y,
+                "anchor": anchor,
+                "runs": [run],
+            })
+    parts = []
+    offsets = text_anchor_offsets(positioned)
+    chunk_segments: dict[int, int] = {}
+    for segment in segments:
+        chunk_segments[segment['chunk']] = chunk_segments.get(segment['chunk'], 0) + 1
+    for segment in segments:
+        if chunk_segments[segment['chunk']] > 1:
+            segment['x'] -= offsets[segment['chunk']]
+            segment['anchor'] = 'start'
+        segment["runs"][0]["text"] = segment["runs"][0]["text"].lstrip()
+        segment["runs"][-1]["text"] = segment["runs"][-1]["text"].rstrip()
+        if any(run["text"] for run in segment["runs"]):
             parts.append(_build_text_shape(segment["x"], segment["y"], segment["runs"], ctx, segment["anchor"], effect))
-        return "".join(parts)
-
-    return _build_text_shape(x, y, [run for segment in segments for run in segment["runs"]], ctx, ctx.get_attr(elem, "text-anchor", "start"), effect)
+    return "".join(parts)
 
 
 def convert_image(elem: Any, ctx: ConvertContext) -> str:
@@ -528,7 +501,11 @@ def _build_text_shape(x: float, y: float, runs: list[dict], ctx: ConvertContext,
         f'<p:txBody>'
         f'<a:bodyPr wrap="none" anchor="t" lIns="0" tIns="0" rIns="0" bIns="0"><a:noAutofit/></a:bodyPr>'
         f'<a:lstStyle/>'
-        f'<a:p><a:pPr algn="{algn}"/>{runs_xml}</a:p>'
+        f'<a:p><a:pPr algn="{algn}">'
+        f'<a:lnSpc><a:spcPct val="100000"/></a:lnSpc>'
+        f'<a:spcBef><a:spcPts val="0"/></a:spcBef>'
+        f'<a:spcAft><a:spcPts val="0"/></a:spcAft>'
+        f'</a:pPr>{runs_xml}</a:p>'
         f'</p:txBody>'
         f'</p:sp>'
     )

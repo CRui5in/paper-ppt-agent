@@ -5,6 +5,7 @@ import type {
   DeckScene,
   GenerateRequestPayload,
   GenerateResponse,
+  GenerationRecovery,
   GenerationAgentFeedbackResponse,
   ImageApplyRequest,
   ImageApplyResponse,
@@ -52,6 +53,18 @@ import type {
 } from "./types";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
+
+export function fetchGenerationRecovery(jobId: string): Promise<GenerationRecovery> {
+  return request(`/api/generate/${jobId}/recovery`);
+}
+
+export function resumeGeneration(jobId: string, mode: "resume" | "retry_failed", feedback: string): Promise<GenerateResponse> {
+  return request(`/api/generate/${jobId}/resume`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mode, feedback }),
+  });
+}
 
 export interface UsageSummaryResponse {
   total_calls: number;

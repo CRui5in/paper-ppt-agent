@@ -65,6 +65,20 @@ def _flatten_text_with_tspans(root: ET.Element) -> int:
         tspans = list(text_elem.iter(tspan_tag))
         if not tspans:
             continue
+        # Relative offsets encode inline geometry, including mathematical
+        # scripts. They are not paragraph line breaks.
+        if any(span.get("dx") is not None or span.get("dy") is not None or span.get('baseline-shift') is not None for span in tspans):
+            continue
+        if any(len(span) for span in tspans):
+            continue
+        if (text_elem.text or "").strip():
+            continue
+        # Only explicit paragraph lines can be separated without calculating
+        # glyph advances. Keep inline and independently positioned runs intact.
+        if any(span.get("x") is None or span.get("y") is None or span.get("transform") for span in tspans):
+            continue
+        if len({_parse_num(span.get("y", "0")) for span in tspans}) != len(tspans):
+            continue
 
         parent = parent_map.get(text_elem)
         if parent is None:
@@ -72,7 +86,7 @@ def _flatten_text_with_tspans(root: ET.Element) -> int:
 
         # Build new text elements for each line
         new_elements = _split_into_lines(text_elem, tspans, ns)
-        if len(new_elements) <= 1:
+        if not new_elements:
             continue
 
         # Replace original text element
@@ -94,7 +108,7 @@ def _split_into_lines(
     """
     text_tag = f"{ns}text"
     parent_styles = {
-        k: v for k, v in text_elem.attrib.items() if k in TEXT_STYLE_ATTRS
+        k: v for k, v in text_elem.attrib.items() if k not in {"x", "y", "dx", "dy"}
     }
     base_x = _parse_num(text_elem.get("x", "0"))
     base_y = _parse_num(text_elem.get("y", "0"))
@@ -131,7 +145,7 @@ def _split_into_lines(
         starts_new_line = False
         if line_parts:
             if has_y:
-                starts_new_line = True
+                starts_new_line = abs(next_y - line_y) > 0.01
             elif dy_raw is not None:
                 starts_new_line = abs(_parse_num(dy_raw)) > 0.01
             elif has_x:
@@ -176,6 +190,8 @@ def _split_into_lines(
         new_text.set("y", _fmt(y))
         for k, v in parent_styles.items():
             new_text.set(k, v)
+        if len(lines) > 1:
+            new_text.attrib.pop("id", None)
 
         if len(parts) == 1 and not parts[0][1]:
             new_text.text = parts[0][0]

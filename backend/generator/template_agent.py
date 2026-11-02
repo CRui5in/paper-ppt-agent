@@ -885,8 +885,16 @@ class TemplateAgentManager:
                 sandbox=Sandbox.full_access,
             )
             try:
+                completed = False
                 async for event in turn.stream():
+                    error = _codex_turn_error_message(event)
+                    if error:
+                        raise RuntimeError(error)
+                    if str(getattr(event, "method", "")) == "turn/completed":
+                        completed = True
                     yield event
+                if not completed:
+                    raise RuntimeError("Codex Agent stream ended without a completed turn. Check the connection and retry.")
             except asyncio.CancelledError:
                 try:
                     await turn.interrupt()
@@ -1264,6 +1272,7 @@ async def _iter_client_in_worker_loop(
                 while not cancel_event.is_set():
                     await client.query(next_prompt)
                     hit_turn_limit = False
+                    result_seen = False
                     try:
                         async for message in _iter_template_agent_stream_with_timeout(
                             client.receive_response(),
@@ -1271,6 +1280,11 @@ async def _iter_client_in_worker_loop(
                         ):
                             if cancel_event.is_set():
                                 break
+                            if message.__class__.__name__ == "ResultMessage":
+                                result_seen = True
+                            error = _claude_result_error_message(message)
+                            if error:
+                                raise RuntimeError(error)
                             _put_threadsafe(message)
                             if _is_claude_turn_limit_result(message):
                                 hit_turn_limit = True
@@ -1280,6 +1294,8 @@ async def _iter_client_in_worker_loop(
                         except Exception:
                             pass
                         raise
+                    if not result_seen and not cancel_event.is_set():
+                        raise RuntimeError("Claude Code Agent stream ended without a result. Check the connection and retry.")
                     if cancel_event.is_set() or not hit_turn_limit:
                         break
                     next_prompt = continuation_prompt
@@ -1501,33 +1517,38 @@ def _claude_result_error_message(message: Any) -> str | None:
         return None
     subtype = str(getattr(message, "subtype", "") or "").lower()
     result = str(getattr(message, "result", "") or "").strip()
-    if subtype == "success" or result.lower() == "success":
-        return None
-    if not bool(getattr(message, "is_error", False)):
+    if not bool(getattr(message, "is_error", False)) and not subtype.startswith("error"):
         return None
     if _is_claude_turn_limit_result(message):
         return None
-    return result or subtype or "Agent failed."
+    errors = getattr(message, "errors", None)
+    details = "; ".join(str(error) for error in errors) if isinstance(errors, list) else str(errors or "")
+    status = getattr(message, "api_error_status", None)
+    reason = "\n".join(part for part in (result, details, f"HTTP {status}" if status else "") if part)
+    return f"Claude Code Agent failed: {reason or subtype or 'Unknown runtime error.'}"
 
 
 def _codex_turn_error_message(message: Any) -> str | None:
-    if str(getattr(message, "method", "") or "") != "turn/completed":
-        return None
     from backend.orchestrator import agent_pipeline as agent_runtime
 
+    method = str(getattr(message, "method", "") or "")
+    if method == "error":
+        if agent_runtime._event_attr(message, ("payload", "will_retry")) or agent_runtime._event_attr(message, ("payload", "willRetry")):
+            return None
+        error = agent_runtime._event_attr(message, ("payload", "error"))
+    elif method == "turn/completed":
+        error = agent_runtime._event_attr(message, ("payload", "turn", "error")) or agent_runtime._event_attr(message, ("payload", "error"))
+    else:
+        return None
     status = agent_runtime._enum_value(
         agent_runtime._event_attr(message, ("payload", "turn", "status"))
         or agent_runtime._event_attr(message, ("payload", "status"))
     ).lower()
-    if status not in {"failed", "cancelled", "canceled"}:
+    if method != "error" and status not in {"failed", "cancelled", "canceled", "interrupted"} and not error:
         return None
-    error = (
-        agent_runtime._event_attr(message, ("payload", "turn", "error", "message"))
-        or agent_runtime._event_attr(message, ("payload", "error", "message"))
-        or agent_runtime._event_attr(message, ("payload", "error"))
-        or status
-    )
-    return f"Codex Agent turn {status}: {str(error)[:1000]}"
+    reason = agent_runtime._event_attr(error, ("message",)) or str(error or status or "Unknown runtime error.")
+    details = agent_runtime._event_attr(error, ("additional_details",)) or agent_runtime._event_attr(error, ("additionalDetails",))
+    return f"Codex Agent failed: {reason}" + (f"\n{details}" if details else "")
 
 
 def _review_snapshot(import_dir: Path) -> str:

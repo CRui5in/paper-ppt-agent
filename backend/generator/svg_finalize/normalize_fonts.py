@@ -44,10 +44,15 @@ def normalize_text_fonts_in_svg(svg_path: Path) -> int:
     except ET.ParseError:
         return 0
 
-    changed = _normalize_element(tree.getroot(), inherited_font=None)
+    changed = normalize_text_fonts_in_tree(tree.getroot())
     if changed:
         tree.write(str(svg_path), xml_declaration=True, encoding="unicode")
     return changed
+
+
+def normalize_text_fonts_in_tree(root: ET.Element) -> int:
+    """Resolve the same concrete fonts before measuring and rendering text."""
+    return _normalize_element(root, inherited_font=None)
 
 
 def _normalize_element(elem: ET.Element, inherited_font: str | None) -> int:
