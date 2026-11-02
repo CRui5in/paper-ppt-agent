@@ -30,6 +30,7 @@ EXPRESSIONS = {
     'substack': r'\sum_{\substack{i>0\\j<0}}a_{ij}',
     'binomial': r'\binom{n}{k}=\frac{n!}{k!(n-k)!}',
     'nested_delimiters': r'\left\lVert\frac{A_i}{\sqrt{B_i}}\right\rVert_2',
+    'vae_loss': r'\mathcal{L}=\lVert x-\hat{x}\rVert_1+\frac{\beta}{2}\sum_{j=1}^{J}\left[\mu_j^2+\sigma_j^2-\ln(\sigma_j^2)-1\right]',
     'overset_underset': r'\overset{a}{=}_b+\underset{x\to0}{\lim} f(x)',
     'spacing': r'a\,b\;c\!d\quad e',
     'cancel': r'\cancel{x}+\boxed{y}',
@@ -39,6 +40,20 @@ EXPRESSIONS = {
 
 
 class StandardTexTests(unittest.TestCase):
+    def test_trailing_tex_bracket_is_distinct_from_cdata_terminator(self):
+        expression = EXPRESSIONS['vae_loss']
+        prefix = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720"><g data-math-box="80 180 1100 120" font-size="28">'
+        valid = prefix + f'<desc data-math="latex"><![CDATA[\n{expression}\n]]></desc></g></svg>'
+        root = ET.fromstring(valid)
+        self.assertEqual(math_expression(root.find(NS+'g')).strip(), expression)
+        self.assertEqual(render_math_in_tree(root), 1)
+        self.assertIsNotNone(root.find(NS+'g').find(NS+'path'))
+        broken = prefix + '<desc data-math="latex"><![CDATA[' + expression[:-1] + ']]></desc></g></svg>'
+        root = ET.fromstring(broken)
+        self.assertTrue(math_expression(root.find(NS+'g')).endswith(r'\right'))
+        with self.assertRaisesRegex(ValueError, r'delimiter.*right'):
+            render_math_in_tree(root)
+
     def test_cdata_source_preserves_alignment_and_reserved_xml_characters(self):
         expression = r'f(x)=\begin{cases}x & x<0\\x^2 & x\ge0\end{cases}'
         source = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720">' \

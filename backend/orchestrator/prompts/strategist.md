@@ -85,3 +85,5 @@ Specify tone and useful explanation for oral delivery. Notes can carry transitio
 Use the native SVG export vocabulary: shapes, Bezier/arc paths, connectors, inline text, local images, gradients, and simple per-shape shadows. Equations use a `data-math-box` group with the source TeX in a `desc data-math="latex"` CDATA child for vector typesetting. Paragraph groups use `data-textbox` for measured wrapping. Successive text blocks can use `data-layout="text-flow"` with a `data-flow-box="x y width height"` and `data-gap` for measured vertical placement.
 
 Keep SVG static and use inline styling. CSS stylesheets/classes, masks, clip paths, patterns, text paths, `foreignObject`, animation, scripts, group filters, and complex blur effects are outside the export contract. Plan the same visual explanation using supported geometry.
+
+Preserve complete paired TeX delimiters in formula sources, including a trailing `\right]`. In SVG examples, put the CDATA terminator `]]>` on its own line after the formula; its brackets are XML syntax, not part of the formula.

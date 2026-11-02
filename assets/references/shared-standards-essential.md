@@ -11,6 +11,7 @@ The generated document uses well-formed XML element markup. Use descriptive grou
 - Text flows: `g data-layout="text-flow" data-flow-box="x y width height" data-gap="12"` positions its direct `text` children vertically using measured font metrics, wrapping, and the declared gap. Children carry their typography and inline `tspan` styles; backgrounds and graphics are separate siblings. Frame dimensions remain fixed and excess capacity is reported.
 - Inline scripts: use `tspan` with a relative `font-size` and `baseline-shift="sub"` or `baseline-shift="super"`; the surrounding text keeps its baseline.
 - Math: `g data-math-box="x y width height"` with a `desc data-math="latex"` child containing the source TeX in `<![CDATA[...]]>`. Expressions are typeset as vector paths during preparation.
+- Keep the complete TeX expression on its own line inside CDATA and place the XML terminator `]]>` on the following line. A formula ending in `\right]` retains that final `]`; the two brackets of `]]>` do not belong to the formula. Preserve all paired `\left`/`\right` delimiters.
 - Images: assigned existing local paths via `image href="..."`, preserving the complete paper figure with `preserveAspectRatio="xMidYMid meet"`.
 - Styling: solid HEX colors, fill/stroke opacity on individual shapes, dashed strokes, linear and radial gradients in `defs`. Use distinct semantic or series colors when needed.
 - Simple shape shadows: `feDropShadow` referenced directly by one shape. Filters on groups, glow, and complex blur effects require unsupported rendering behavior.

@@ -63,11 +63,13 @@ Place source LaTeX without dollar delimiters in a `desc` CDATA section within it
 
 ```xml
 <g data-math-box="80 180 600 100" font-size="32" fill="#1A365D">
-  <desc data-math="latex"><![CDATA[\frac{a_i}{b_i}]]></desc>
+  <desc data-math="latex"><![CDATA[
+\left[\frac{a_i}{b_i}\right]
+]]></desc>
 </g>
 ```
 
-`data-math-box` is `x y width height`. CDATA carries the TeX source literally, including alignment separators and comparison symbols. Place term explanations beside the corresponding expression where useful.
+`data-math-box` is `x y width height`. CDATA carries the TeX source literally, including alignment separators and comparison symbols. Put the CDATA terminator `]]>` on its own line, after the complete formula. Keep every TeX closing delimiter inside the formula: `\left[` pairs with `\right]`; the brackets in `]]>` belong to XML and do not close the TeX expression. Place term explanations beside the corresponding expression where useful.
 
 ## SVG and template contract
 

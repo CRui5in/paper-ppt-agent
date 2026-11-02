@@ -44,6 +44,7 @@ Text:
 - Give each body paragraph a parent group with `data-textbox="x y width height"` and `data-role="body"`. Write continuous paragraph text and inline `<tspan>` emphasis; the renderer measures fonts and wraps to the declared width. Use separate text elements for separate paragraphs and reserve neighboring regions for figures or captions.
 - Paragraphs sharing a declared text box flow vertically in document order and share its capacity. Use separate boxes for independently positioned text.
 - For mathematical expressions, use a `<g>` with `data-math-box="x y width height"`, `font-size`, and `fill`. Put the source LaTeX without dollar delimiters in a `<desc data-math="latex"><![CDATA[...]]></desc>` child. CDATA preserves TeX alignment separators and comparison symbols literally. The rendering pipeline typesets it as vector paths inside that box. Preserve the source's indices, limits, operators, and grouping.
+- Put the complete formula on a separate line inside CDATA and the XML terminator `]]>` on the next line. Keep closing TeX delimiters inside the formula: a source ending in `\right]` needs its own final `]`, distinct from the two XML brackets. Check every `\left`/`\right` pair before saving.
 - Avoid excessive nested `tspan` complexity.
 - Do not use `foreignObject`, `<style>`, CSS classes, masks, clip paths, scripts, event handlers, or remote URLs.
 - Wrap against each text box's actual width and font size.
